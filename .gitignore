@@ -35,3 +35,6 @@ Thumbs.db
 /local/
 字典/
 词典/
+
+# Local agent workspace (not project code, see .qoder/workspace/README.md)
+.qoder/
