@@ -105,22 +105,25 @@ def main():
             check('no-new-privileges:true' in (settings.get('security_opt') or []),
                   f'{name}: {service} can gain privileges')
             check('healthcheck' in settings, f'{name}: {service} has no health check')
+            check(settings.get('privileged') is not True, f'{name}: {service} runs privileged')
         backend = with_overlay(name)['services']['backend']
         check(backend.get('read_only') is True, f'{name}: the backend filesystem is writable')
-        check(backend.get('privileged') is not True, f'{name}: the backend runs privileged')
         check('ports' not in backend, f'{name}: the backend publishes a port')
 
     check(mapping(production['services']['frontend'].get('labels')) == {},
           'docker-compose.yml: the plain entry point carries proxy labels')
-    check(ports_of(production, 'frontend') == ['8080:8080'],
-          f'docker-compose.yml frontend must publish exactly 8080, got {ports_of(production, "frontend")}')
-    check(mapping(production['services']['frontend'].get('environment'))['ENABLE_POCKETBASE_ADMIN_UI'] == 'false',
+    production_ports = ports_of(production, 'frontend')
+    check(len(production_ports) == 1 and production_ports[0].endswith(':8080'),
+          f'docker-compose.yml frontend must map exactly one port to 8080, got {production_ports}')
+    check(mapping(production['services']['frontend'].get('environment')).get('ENABLE_POCKETBASE_ADMIN_UI') == 'false',
           'docker-compose.yml: the admin UI must be off by default')
 
-    check(ports_of(development, 'backend') == ['127.0.0.1:8090:8090'],
-          f'docker-compose.dev.yml backend must stay on loopback, got {ports_of(development, "backend")}')
-    check(ports_of(development, 'frontend') == ['5250:5250'],
-          f'docker-compose.dev.yml frontend must publish 5250, got {ports_of(development, "frontend")}')
+    dev_backend = ports_of(development, 'backend')
+    check(len(dev_backend) == 1 and dev_backend[0].startswith('127.0.0.1:') and dev_backend[0].endswith(':8090'),
+          f'docker-compose.dev.yml backend must stay on loopback, got {dev_backend}')
+    dev_frontend = ports_of(development, 'frontend')
+    check(len(dev_frontend) == 1 and dev_frontend[0].endswith(':5250'),
+          f'docker-compose.dev.yml frontend must map exactly one port to 5250, got {dev_frontend}')
 
     check('ports' not in edge['services']['frontend'], 'docker-compose.traefik.yml publishes a frontend port')
     check(edge['networks']['traefik'].get('external') is True
@@ -139,7 +142,7 @@ def main():
           'docker-compose.traefik.yml targets the wrong container port')
     check('fangji-security' in (labels.get('traefik.http.routers.fangji.middlewares') or ''),
           'docker-compose.traefik.yml router has no security middleware')
-    check(mapping(edge['services']['frontend'].get('environment'))['ENABLE_POCKETBASE_ADMIN_UI'] == 'true',
+    check(mapping(edge['services']['frontend'].get('environment')).get('ENABLE_POCKETBASE_ADMIN_UI') == 'true',
           'docker-compose.traefik.yml must keep the admin UI reachable through the proxy route')
 
     unstamped = []

@@ -58,8 +58,9 @@ export async function listProjectMembers(projectId) {
   })
 }
 
-export async function listMemberCandidates(projectId) {
-  return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/member-candidates`, {
+export async function listMemberCandidates(projectId, term = '') {
+  const query = term.trim() ? `?term=${encodeURIComponent(term.trim())}` : ''
+  return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/member-candidates${query}`, {
     requestKey: null
   })
 }

@@ -85,6 +85,15 @@
           <span class="section-count">{{ members.length }} 人</span>
         </div>
         <form class="member-add-form" @submit.prevent="addMember">
+          <div class="member-candidate-search">
+            <input v-model="candidateTerm" class="form-control" type="search"
+                   placeholder="按用户名或昵称查找" aria-label="查找要添加的用户"
+                   @keyup.enter.prevent="searchCandidates">
+            <button class="btn btn-secondary" type="button" :disabled="searchingCandidates" @click="searchCandidates">查找</button>
+          </div>
+          <p v-if="candidateSearched && !availableCandidates.length" class="field-hint">
+            没有查找到可添加的用户。对方也可以用项目口令自助加入，或由平台管理员分配账号。
+          </p>
           <select v-model="newMember.userId" class="form-control" required>
             <option value="">选择用户</option>
             <option v-for="candidate in availableCandidates" :key="candidate.id" :value="candidate.id">
@@ -212,6 +221,9 @@ const detailsSuccess = ref('')
 const detailsDirty = computed(() => details.name.trim() !== project.value?.name || details.description.trim() !== (project.value?.description || ''))
 const settings = reactive({ accessMode: 'members_only', password: '', requiredProofreads: 2 })
 const newMember = reactive({ userId: '', role: 'proofreader' })
+const candidateTerm = ref('')
+const searchingCandidates = ref(false)
+const candidateSearched = ref(false)
 const volunteerForm = reactive({ count: 10, usernamePattern: 'volunteer-{n}', startNumber: 1, digits: 3, nicknamePattern: '志愿者 {n}' })
 const accessModes = [
   { value: 'members_only', label: '指定成员', description: '只有所有者或项目管理员添加的用户可以进入。' },
@@ -247,6 +259,16 @@ async function load() {
     defaultKeyboardId.value = keyboardConfig.defaultKeyboardId || ''
   } catch (e) { error.value = getPbMessage(e, e.message || '项目配置加载失败。') }
   finally { loading.value = false }
+}
+
+async function searchCandidates() {
+  searchingCandidates.value = true
+  try {
+    candidates.value = await listMemberCandidates(projectId, candidateTerm.value)
+    candidateSearched.value = true
+    newMember.userId = ''
+  } catch (e) { error.value = getPbMessage(e, e.message || '查找用户失败。') }
+  finally { searchingCandidates.value = false }
 }
 
 async function saveDetails() {

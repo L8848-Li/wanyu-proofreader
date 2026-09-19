@@ -55,6 +55,22 @@ function capabilities(dao, projectRecord, authRecord) {
   }
 }
 
+// Projects a record can manage, matching capabilities().canManage: an explicit
+// manager membership, an owned project, or every project for a platform admin.
+function managedProjectIds(dao, authRecord) {
+  const ids = new Set()
+  if (isPlatformAdmin(authRecord)) {
+    for (const record of dao.findRecordsByFilter("projects", 'id != ""', "name", 500, 0)) ids.add(record.id)
+    return [...ids]
+  }
+  for (const record of dao.findRecordsByFilter("projects", `admin = "${authRecord.id}"`, "name", 500, 0)) ids.add(record.id)
+  for (const record of dao.findRecordsByFilter(
+    "project_memberships", `user = "${authRecord.id}" && role = "manager"`, "created", 500, 0)) {
+    ids.add(record.getString("project"))
+  }
+  return [...ids]
+}
+
 function requireManager(dao, projectId, authRecord) {
   const projectRecord = project(dao, projectId)
   const permissions = capabilities(dao, projectRecord, authRecord)
@@ -342,6 +358,7 @@ module.exports = {
   project,
   capabilities,
   requireManager,
+  managedProjectIds,
   requireOwner,
   canManage,
   canProofread,

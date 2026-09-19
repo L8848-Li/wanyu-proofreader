@@ -114,6 +114,16 @@ class GuardFailsOnRealViolations(unittest.TestCase):
         self.write(root, 'docker-compose.yml', broken)
         self.assertEqual(self.run_guard(root), 1)
 
+    def test_privileged_frontend_fails(self):
+        # `privileged` was once checked for the backend only, so a frontend
+        # override passed every assertion in this file.
+        root = self.scaffold()
+        broken = (guard.ROOT / 'docker-compose.yml').read_text().replace(
+            '  frontend:\n', '  frontend:\n    privileged: true\n', 1)
+        assert broken != (guard.ROOT / 'docker-compose.yml').read_text()
+        self.write(root, 'docker-compose.yml', broken)
+        self.assertEqual(self.run_guard(root), 1)
+
     def test_missing_commit_stamp_fails(self):
         root = self.scaffold()
         broken = (guard.ROOT / 'docker-compose.yml').read_text().replace(

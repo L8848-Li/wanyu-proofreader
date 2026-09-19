@@ -12,7 +12,7 @@
 ```sh
 docker compose stop frontend backend
 python3 backend/ops/backup.py backup ./pb_data /secure-backups/fangji-20260909 \
-  --version "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' fangji-backend:latest)" --application-stopped
+  --version "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$(docker compose ps -q backend)")" --application-stopped
 docker compose start backend frontend
 ```
 

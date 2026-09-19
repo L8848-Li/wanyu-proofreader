@@ -212,6 +212,37 @@ try {
   assert.equal(twinPair.length, 2, 'both same-name accounts must be listed')
   assert.ok(codeUnitOrder(twinPair[0], twinPair[1]) < 0, 'equal names must fall through to the username tiebreak')
 
+  // An owner holds no `role = "manager"` membership row, so the pool must be
+  // derived from projects they own as well as ones they manage.
+  const asOwner = await request(candidatesPath, { token: creator.token })
+  const ownerSeen = new Set(asOwner.map((item) => item.id))
+  for (const user of [manager, proofreader]) {
+    assert.ok(ownerSeen.has(user.id), `a project owner must be offered ${user.email}`)
+  }
+  assert.ok(!ownerSeen.has(outsider.id), 'an owner still must not browse the whole platform')
+
+  // A freshly created project has no members to draw candidates from, so the
+  // documented "add this specific person" flow goes through a bounded `term`
+  // lookup rather than a listing that could enumerate the platform.
+  const secondProject = await request(`/api/fangji/projects/${privateProject.id}/members`, { token: creator.token })
+  assert.ok(secondProject.some((item) => item.user === proofreader.id))
+  const browsePath = `${candidatesPath}?term=`
+  const browsed = await request(browsePath, { token: creator.token })
+  assert.ok(!browsed.some((item) => item.id === outsider.id),
+    'an empty term must stay scoped, not fall back to a platform listing')
+  const searched = await request(`${candidatesPath}?term=${encodeURIComponent('outsider')}`, { token: creator.token })
+  assert.ok(searched.some((item) => item.id === outsider.id),
+    'term lookup must find a known account so a first member can still be added')
+  assert.ok(searched.length < (await request(candidatesPath, { token: platform.token })).length,
+    'a lookup must return fewer accounts than a platform-admin listing')
+  assert.ok(searched.every((item) => !JSON.stringify(item).includes('@')), 'lookups must not return email either')
+
+  // A term is interpolated into a filter, so anything able to break out is refused.
+  for (const bad of ['a', 'x'.repeat(65), '" OR id != ""', 'a" || "1"="1', '50%', 'bo\\bs', '张三;drop']) {
+    const rejected = await rawRequest(`${candidatesPath}?term=${encodeURIComponent(bad)}`, { token: creator.token })
+    assert.equal(rejected.status, 400, `term ${JSON.stringify(bad)} must be rejected`)
+  }
+
   for (const [label, token] of [['proofreader', proofreader.token], ['outsider', outsider.token]]) {
     const refused = await rawRequest(candidatesPath, { token })
     assert.equal(refused.status, 403, `${label} must not enumerate member candidates`)

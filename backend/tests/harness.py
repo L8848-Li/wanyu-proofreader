@@ -116,8 +116,8 @@ def run_suite(name, env, cwd=None):
 
 
 def _race_excerpt(text):
-    start = text.index('WARNING: DATA RACE')
-    return text[start:start + 4000]
+    start = text.find('WARNING: DATA RACE')
+    return text[start if start >= 0 else 0:][:4000]
 
 
 def _log_tail(root, size=20000):
