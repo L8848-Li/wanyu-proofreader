@@ -39,11 +39,25 @@ def node_majors():
 def pocketbase_claims(go_mod):
     declared = re.search(r'github.com/pocketbase/pocketbase v(\d+\.\d+\.\d+)', go_mod).group(1)
     problems = []
-    for name in ('README.md', 'docs/operations.md'):
+    found = 0
+    # Match 0.40 as well as 0.40.4: prose is allowed to name only the minor line,
+    # but a doc that drops to 0.21 must not slip through an over-strict pattern.
+    pattern = re.compile(r'PocketBase\s+(\d+\.\d+(?:\.\d+)?)')
+    # docs/dependency-upgrades.md is deliberately excluded: it is a dated decision
+    # record that quotes the versions it upgraded *from*, which a text match cannot
+    # tell apart from a current claim.
+    for name in ('README.md', 'docs/operations.md', 'CONTRIBUTING.md'):
         text = (ROOT / name).read_text()
-        for match in re.finditer(r'PocketBase\s+(\d+\.\d+\.\d+)', text):
-            if match.group(1) != declared:
-                problems.append(f'{name} says PocketBase {match.group(1)} but backend/go.mod pins {declared}')
+        for match in pattern.finditer(text):
+            found += 1
+            claim = match.group(1)
+            if claim.split('.')[:2] != declared.split('.')[:2]:
+                problems.append(f'{name}:{text[:match.start()].count(chr(10)) + 1} says PocketBase {claim} '
+                                f'but backend/go.mod pins {declared}')
+            elif '.' in claim[4:] and claim != declared:
+                problems.append(f'{name} says PocketBase {claim} but backend/go.mod pins {declared}')
+    if not found:
+        problems.append('no PocketBase version is stated anywhere, so this check proves nothing')
     return problems, declared
 
 
@@ -56,15 +70,30 @@ def main():
         problems.append('frontend/package.json declares no engines.node range')
     else:
         low, high = engines_range(engines)
-        for source, major in sorted(node_majors().items()):
+        declared = node_majors()
+        if not declared:
+            problems.append('no Node version is declared in the image, .nvmrc or CI, so engines cannot be verified')
+        for source, major in sorted(declared.items()):
             if not low <= int(major) <= high:
                 problems.append(f'{source} uses Node {major}, outside engines.node "{engines}"')
+        # Whatever the image builds with must also be exercised by CI, or the
+        # shipped configuration has never been tested.
+        image_major = declared.get('frontend/Dockerfile')
+        tested = {major for source, major in declared.items() if 'workflows' in source}
+        if image_major and image_major not in tested:
+            problems.append(f'frontend/Dockerfile builds on Node {image_major} but CI only tests {sorted(tested)}')
 
     go_version = re.search(r'^go (\d+)\.(\d+)', go_mod, re.MULTILINE)
-    image = re.search(r'FROM\s+golang:(\d+)\.(\d+)', (ROOT / 'backend' / 'Dockerfile').read_text())
-    if go_version and image and (int(image.group(1)), int(image.group(2))) < (int(go_version.group(1)), int(go_version.group(2))):
-        problems.append(f'backend/Dockerfile builds with golang {image.group(1)}.{image.group(2)} '
-                        f'but go.mod needs {go_version.group(1)}.{go_version.group(2)}')
+    image = re.search(r'FROM\s+golang:(\d+)(?:\.(\d+))?', (ROOT / 'backend' / 'Dockerfile').read_text())
+    if not go_version:
+        problems.append('backend/go.mod declares no go directive')
+    if not image:
+        problems.append('backend/Dockerfile pins no golang image version to compare against go.mod')
+    if go_version and image:
+        minor = int(image.group(2) or 0)
+        if (int(image.group(1)), minor) < (int(go_version.group(1)), int(go_version.group(2))):
+            problems.append(f'backend/Dockerfile builds with golang {image.group(1)}.{image.group(2) or 0} '
+                            f'but go.mod needs {go_version.group(1)}.{go_version.group(2)}')
 
     version_problems, pocketbase = pocketbase_claims(go_mod)
     problems += version_problems

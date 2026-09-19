@@ -126,7 +126,7 @@ assert.equal(settled.status, 'completed', `import job did not finish: ${JSON.str
 
 const pages = await request(`/api/collections/pages/records?filter=${encodeURIComponent(`project="${project.id}"`)}&perPage=50&sort=page_number`,
   { token: staffAuth.token })
-assert.ok(pages.items.length >= 5, `expected imported pages, got ${pages.items.length}`)
+assert.equal(pages.items.length, 13, `every CSV row must become an entry, got ${pages.items.length}`)
 console.log(`  imported ${pages.items.length} entries`)
 
 async function submit(page, reader, overrides) {
@@ -150,6 +150,9 @@ await submit(diverging, proofreaders[1], { 释义: '肉', 读音: 'lih' })
 
 const pending = await request(`/api/collections/pages/records?filter=${encodeURIComponent(`project="${project.id}" && status="arbitration"`)}`,
   { token: staffAuth.token })
+assert.ok(pending.totalItems >= 1,
+  `the divergent submission must leave an arbitration case, got ${pending.totalItems}`)
+
 console.log(`
 seeded demo project ${project.id}
   agreed entry   : ${agreeing.id} -> proofread
@@ -158,6 +161,3 @@ seeded demo project ${project.id}
   password       : ${DEMO_PASSWORD}
   project        : ${projectName}
 Open ${base} and sign in as ${staff.email} to arbitrate, or as a reader to keep proofreading.`)
-if (!pending.totalItems) {
-  console.log('note: no page reached arbitration; check the quorum setting for this project.')
-}

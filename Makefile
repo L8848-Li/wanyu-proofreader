@@ -44,8 +44,11 @@ verify-static:
 	@cd $(BACKEND) && go vet ./...
 	@echo 'test inventory (suites.json vs disk vs ci vs CONTRIBUTING)'
 	@cd $(BACKEND)/tests && python3 check_test_inventory.py
-	@echo 'whitespace (git diff --check)'
+	@echo 'compose guard self-tests'
+	@python3 -m unittest discover -s scripts -p 'test_*.py'
+	@echo 'whitespace (working tree and index)'
 	@git diff --check
+	@git diff --cached --check
 
 lint:
 	@echo 'eslint (correctness rules only; no style sweep yet)'
@@ -92,7 +95,7 @@ verify-migrations:
 coverage:
 	@cd $(BACKEND) && go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1
 	@cd $(BACKEND) && go tool cover -html=coverage.out -o coverage.html && printf 'wrote %s\n' $(BACKEND)/coverage.html
-	@cd $(FRONTEND) && node --test --experimental-test-coverage tests/*.test.js
+	@npm --prefix $(FRONTEND) run --silent test:coverage
 
 # ---------------------------------------------------------------- local data
 

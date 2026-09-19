@@ -32,7 +32,6 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args, extra = parse_args(argv)
-    from pathlib import Path
     suite = Path(args.suite)
     script = suite if suite.is_absolute() else harness.BACKEND / 'tests' / suite.name
     if not script.exists():

@@ -1,0 +1,2 @@
+# Local gates and CI guard scripts.
+PyYAML==6.0.3

@@ -21,8 +21,16 @@ def main():
     registered = {entry['suite']: entry for entry in entries}
     on_disk = sorted(path.name for path in tests.glob('*_integration.mjs'))
     ci_text = CI.read_text()
-    generated = 'suites.json' in ci_text
-    problems = []
+    # Trust a structural link, not the mere appearance of the filename: a stale
+    # comment mentioning suites.json must not mark every suite as covered.
+    generated = ('fromJson(needs.prepare-matrix.outputs.suites)' in ci_text
+                 and 'needs: prepare-matrix' in ci_text)
+    if generated:
+        problems = []
+    else:
+        problems = ['ci.yml does not build the pocketbase-compatibility matrix from suites.json']
+        if 'suites.json' in ci_text:
+            problems.append('ci.yml mentions suites.json but no longer consumes it as a matrix')
 
     for suite in sorted(set(on_disk) - set(registered)):
         problems.append(f'{suite}: exists on disk but is not registered in suites.json')
@@ -54,7 +62,7 @@ def main():
         for problem in problems:
             print(f'  - {problem}', file=sys.stderr)
         return 1
-    print(f'PASS: {len(on_disk)} integration suites registered, listed in CI and documented')
+    print(f'PASS: {len(on_disk)} integration suites registered on disk and reachable from CI')
     return 0
 
 

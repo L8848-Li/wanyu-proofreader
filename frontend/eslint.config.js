@@ -26,18 +26,13 @@ export default [
     languageOptions: { globals: { ...globals.node } }
   },
   {
-    files: ['scripts/**/*.cjs'],
+    files: ['scripts/**/*.cjs', 'tests/browser/**/*.cjs'],
     languageOptions: { sourceType: 'commonjs', globals: { ...globals.node } }
   },
   {
     // These suites import Vue sources with node:test and stub globals on purpose.
     files: ['tests/**/*.test.js'],
-    rules: { 'no-undef': 'off', 'no-empty': 'off' }
-  },
-  {
-    // Browser suites mount real components and assert on them.
-    files: ['tests/browser/**/*.cjs', 'scripts/**/*.cjs'],
-    rules: { 'no-undef': 'off', 'no-empty': 'off' }
+    rules: { 'no-empty': 'off' }
   },
   { ignores: ['dist/**', 'node_modules/**', 'public/pdfjs/**'] }
 ]

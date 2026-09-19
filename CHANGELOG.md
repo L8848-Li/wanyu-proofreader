@@ -16,6 +16,9 @@
 - 后端镜像现在注入 `version`/`commit`/`build_date` 并在启动日志打印，补齐运维备份记录所需的构建版本；三个 Compose 入口与 `backend/.dockerignore` 同步更新。
 - 前端补齐权限判定与任务定位单测：`src/lib/access.js` 抽出登录态、落地页与路由守卫判定，`tests/accessControl.test.js`、`tests/taskNeighbors.test.js`、`tests/structuredRow.test.js` 覆盖此前 0 覆盖的角色门禁与 `n/m` 计数器。
 - `member-candidates` 路由加入集成断言：字段形状、姓名排序以及非管理者 403、未登录 401。
+- 新增 `frontend-image-parity` job：前端镜像以 Node 26 构建，而 CI 此前只在 24 上验证，发布用的构建环境从未被测过；守卫现在要求镜像的大版本必须有对应 job 覆盖。
+- 集成测试服务器以 `-race` 构建时设 `GORACE=halt_on_error=1` 并在日志中检出 `DATA RACE` 即失败；独立二进制默认只打警告并退出 0，否则竞态永远测不出来。
+- CI 的 `git diff --check` 改为对比 PR base（裸命令比较工作树与索引，检出后必然干净）；镜像构建注入 `COMMIT` 并写入 OCI 标签，备份记录可直接读取。
 - 修正文档与配置漂移：README 技术栈版本、Dependabot 更新频率描述、项目结构树、`pocketbase` 二进制来源说明；`frontend` 镜像 Node 26 与 `engines` 约束现已一致。
 
 - 校对员项目大厅和编辑器不再显示一校、二校等轮次线索，只呈现可领取任务、进行中任务和独立校对操作。

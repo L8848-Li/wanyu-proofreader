@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Report on the storage a running instance accumulates. Read-only, never deletes.
 
-docs/operations.md documents the 1 GiB upload budget and the 512 MiB /tmp
-mount, but nothing checked them. Point this at a data directory from cron and
-it exits non-zero once a watermark is crossed; the human decides what to prune.
+docs/operations.md gives single uploads a 1 GiB budget and /tmp 512 MiB, but
+nothing watched the data directory as a whole. --budget is that whole-directory
+limit and defaults well above one upload; point it at a data directory from cron
+and this exits non-zero once the watermark is crossed, leaving a human to decide
+what to prune.
 
   python3 ops/audit_storage.py --data-dir ./pb_data
   python3 ops/audit_storage.py --data-dir /var/lib/fangji/pb_data --json
@@ -24,21 +26,32 @@ DEFAULT_BUDGET = 2 * 1024 ** 3
 
 
 def human(size):
-    for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
-        if abs(size) < 1024 or unit == 'TiB':
+    for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'):
+        if abs(size) < 1024 or unit == 'PiB':
             return f'{size:,.1f} {unit}'
         size /= 1024
-    return f'{size:,.1f} TiB'
+    return f'{size:,.1f} PiB'
+
+
+def size_of(path):
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0  # the in-process sweep may have just reclaimed it
 
 
 def directory_size(path):
     total = 0
-    for entry in path.rglob('*'):
-        if entry.is_file() and not entry.is_symlink():
-            try:
-                total += entry.stat().st_size
-            except OSError:
-                pass
+    try:
+        entries = list(path.rglob('*'))
+    except OSError:
+        return total
+    for entry in entries:
+        try:
+            if entry.is_file() and not entry.is_symlink():
+                total += size_of(entry)
+        except OSError:
+            continue
     return total
 
 
@@ -65,11 +78,16 @@ def audit(data_dir, now, budget):
     for name, ttl in TTLs.items():
         root = data_dir / name
         if not root.is_dir():
+            # A renamed directory would otherwise switch these findings off silently.
+            findings.append({'level': 'note', 'what': f'{name} is absent, so its TTL is not audited'})
             continue
         size = directory_size(root)
         summary[name] = {'bytes': size, 'entries': len([p for p in root.iterdir() if p.is_dir() or p.is_file()])}
         for entry in sorted(root.iterdir()):
-            age = now - entry.stat().st_mtime
+            try:
+                age = now - entry.stat().st_mtime
+            except OSError:
+                continue
             if entry.name.startswith('building-') and age > 3600:
                 findings.append({'level': 'warn',
                                  'what': f'{entry} is a crashed page-split left for {age / 3600:.0f}h'})
@@ -84,9 +102,12 @@ def audit(data_dir, now, budget):
     if storage.is_dir():
         summary['storage'] = {'bytes': directory_size(storage)}
 
-    largest = sorted((path for path in data_dir.rglob('*') if path.is_file()),
-                     key=lambda path: path.stat().st_size, reverse=True)[:10]
-    summary['largest'] = [{'path': str(path), 'bytes': path.stat().st_size} for path in largest]
+    try:
+        files = [path for path in data_dir.rglob('*') if path.is_file()]
+    except OSError:
+        files = []
+    largest = sorted(files, key=size_of, reverse=True)[:10]
+    summary['largest'] = [{'path': str(path), 'bytes': size_of(path)} for path in largest]
     return findings, summary
 
 
@@ -112,7 +133,8 @@ def main():
         for entry in summary.get('largest', [])[:5]:
             print(f'{"  " + Path(entry["path"]).name:30} {human(entry["bytes"])}')
         for finding in findings:
-            print(f'{finding["level"].upper():5} {finding["what"]}', file=sys.stderr)
+            stream = sys.stderr if finding['level'] == 'error' else sys.stdout
+            print(f'{finding["level"].upper():5} {finding["what"]}', file=stream)
         if not findings:
             print('no storage findings')
     return 1 if any(finding['level'] == 'error' for finding in findings) else 0

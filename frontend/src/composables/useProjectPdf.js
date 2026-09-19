@@ -95,12 +95,9 @@ export function useProjectPdf(page) {
   function switchPdfPage(delta) {
     currentPdfPage.value = clampPdfPage(currentPdfPage.value + delta)
   }
-  function syncToBasePage() {
-    currentPdfPage.value = basePdfPage.value
-  }
   return {
     pdfLoading, pdfError, currentPdfPage, basePdfPage, pdfPageWarning,
     allowedPdfPages, pdfUrl, localPdfPage, totalPdfPages,
-    resetPdf, resolveProjectPdf, clampPdfPage, switchPdfPage, syncToBasePage
+    resetPdf, resolveProjectPdf, clampPdfPage, switchPdfPage
   }
 }

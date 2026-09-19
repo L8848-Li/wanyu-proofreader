@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run every backend integration suite with one shared build.
 
-Suites are discovered from backend/tests/*_integration.mjs, so this file and CI
-cannot drift apart from the files on disk. Each suite still gets its own data
-directory and server process.
+Suites come from suites.json, the same registry CI builds its matrix from; a suite
+that is missing from it fails check_test_inventory.py. Each suite still gets its
+own data directory and server process.
 
 Usage:
   python3 backend/tests/run_all.py                 # every suite, sequentially

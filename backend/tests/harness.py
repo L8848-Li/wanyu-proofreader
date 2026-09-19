@@ -35,7 +35,11 @@ def integration_env(base_url, extra=None):
            'PB_SUPER_EMAIL': SUPER_EMAIL,
            'PB_SUPER_PASSWORD': SUPER_PASSWORD,
            'FANGJI_SKIP_ADMIN_BOOTSTRAP': '0',
-           'HINGHWA_IDENTITY_BASE_URL': ''}
+           'HINGHWA_IDENTITY_BASE_URL': '',
+           # A standalone -race binary only prints WARNING: DATA RACE and exits 0;
+           # this makes a race abort the server so the suite cannot pass over it.
+           # Ignored entirely by binaries built without the race detector.
+           'GORACE': 'halt_on_error=1'}
     if extra:
         env.update(extra)
     return env
@@ -67,11 +71,11 @@ def apply_migrations_individually(binary, data, migrations=MIGRATIONS):
 
 
 @contextmanager
-def server(binary, root, extra_env=None, data=None, migrations=MIGRATIONS, hooks=HOOKS, race=False):
+def server(binary, root, extra_env=None, data=None, migrations=MIGRATIONS, hooks=HOOKS):
     """Serve a freshly migrated instance and yield its base URL."""
     root = Path(root)
     data = Path(data) if data else root / 'data'
-    binary = build_binary(root / 'pocketbase', race=race) if binary is None else binary
+    binary = build_binary(root / 'pocketbase') if binary is None else binary
     apply_migrations_individually(binary, data, migrations)
     port = free_port()
     env = integration_env(f'http://127.0.0.1:{port}', extra_env)
@@ -97,6 +101,9 @@ def server(binary, root, extra_env=None, data=None, migrations=MIGRATIONS, hooks
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 process.kill()
+        log_text = _log_tail(root, size=10 ** 6)
+        if 'DATA RACE' in log_text:
+            raise RuntimeError('race detector reported a data race:\n' + _race_excerpt(log_text))
         if process.returncode not in (0, -15, 143):
             raise RuntimeError(f'server exited {process.returncode}\n{_log_tail(root)}')
 
@@ -106,6 +113,11 @@ def run_suite(name, env, cwd=None):
     if callable(name):
         return name(env)
     return subprocess.run(['node', str(BACKEND / 'tests' / name)], env=env, check=True, cwd=cwd)
+
+
+def _race_excerpt(text):
+    start = text.index('WARNING: DATA RACE')
+    return text[start:start + 4000]
 
 
 def _log_tail(root, size=20000):

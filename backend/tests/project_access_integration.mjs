@@ -39,7 +39,7 @@ async function request(path, { expected = 200, ...options } = {}) {
 const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
 const password = 'ProjectAccess123!'
 
-async function createUser(label) {
+async function createUser(label, displayName = label) {
   const email = `${label}-${suffix}@example.com`
   const record = await request('/api/collections/users/records', {
     method: 'POST',
@@ -48,7 +48,7 @@ async function createUser(label) {
       email,
       password,
       passwordConfirm: password,
-      name: label,
+      name: displayName,
       role: 'platform_admin'
     }
   })
@@ -169,19 +169,36 @@ try {
   assert.equal(members.find((item) => item.user === proofreader.id).role, 'proofreader')
 
   // The member picker reads this route, so its shape and gate are load-bearing.
+  const twins = [await createUser('twin-a', '重名候选'), await createUser('twin-b', '重名候选')]
   const candidatesPath = `/api/fangji/projects/${privateProject.id}/member-candidates`
   const candidates = await request(candidatesPath, { token: manager.token })
   assert.ok(Array.isArray(candidates), 'candidates must be a plain array, not a paginated result')
+  assert.equal(new Set(candidates.map((item) => item.id)).size, candidates.length,
+    'a duplicated id would let a Map silently hide it')
   const byId = new Map(candidates.map((item) => [item.id, item]))
   for (const user of [creator, manager, proofreader, outsider]) {
     const listed = byId.get(user.id)
-    assert.ok(listed, `${user.email} must be offered as a candidate`)
+    // KNOWN DEFECT, pinned rather than endorsed: this route returns the whole
+    // platform roster to any project manager, ignoring the users.listRule that
+    // limits a manager to users connected to their own projects, and it hand
+    // serialises `email`, bypassing emailVisibility redaction. Narrowing it is a
+    // product/security decision, so these assertions must be rewritten with it.
+    assert.ok(listed, `${user.email} is currently offered as a candidate`)
     assert.deepEqual(Object.keys(listed).sort(), ['email', 'id', 'name', 'username'])
     assert.equal(listed.email, user.email)
   }
-  const ordered = [...candidates].sort((a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email))
-  assert.deepEqual(candidates.map((item) => `${item.name}:${item.email}`),
-    ordered.map((item) => `${item.name}:${item.email}`), 'candidates must arrive name-then-email ordered')
+  // ORDER BY name,email under SQLite's BINARY collation, i.e. code-unit order.
+  // localeCompare is a different total order and would disagree on punctuation.
+  const binaryOrder = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1
+    : a.email < b.email ? -1 : a.email > b.email ? 1 : 0)
+  for (let index = 1; index < candidates.length; index++) {
+    assert.ok(binaryOrder(candidates[index - 1], candidates[index]) <= 0,
+      `candidates must be ordered name-then-email, but ${candidates[index - 1].name}:${candidates[index - 1].email} `
+      + `preceded ${candidates[index].name}:${candidates[index].email}`)
+  }
+  const twinPair = candidates.filter((item) => item.name === '重名候选')
+  assert.equal(twinPair.length, 2, 'the two same-name accounts must both be listed')
+  assert.ok(binaryOrder(twinPair[0], twinPair[1]) < 0, 'equal names must fall through to the email tiebreak')
   for (const [label, token] of [['proofreader', proofreader.token], ['outsider', outsider.token]]) {
     const refused = await rawRequest(candidatesPath, { token })
     assert.equal(refused.status, 403, `${label} must not enumerate member candidates`)

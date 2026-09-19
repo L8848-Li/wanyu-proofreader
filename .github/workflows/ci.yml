@@ -48,6 +48,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The whitespace gate diffs against the PR base, which the default
+          # shallow checkout does not contain.
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
@@ -61,7 +65,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install Python dependencies for the repository guards
-        run: python3 -m pip install --quiet PyYAML
+        run: python3 -m pip install --quiet -r requirements-dev.txt
       - name: gofmt and go vet
         working-directory: backend
         run: |
@@ -75,9 +79,21 @@ jobs:
         working-directory: backend/tests
         run: python3 check_test_inventory.py
       - name: Compose invariants
-        run: python3 scripts/check_compose_structure.py
+        run: |
+          python3 scripts/check_compose_structure.py
+          python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Whitespace hygiene
-        run: git diff --check
+        # A bare `git diff --check` compares the working tree to the index, which
+        # is always clean right after checkout, so it can never fail in CI.
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            git diff --check "$BASE" HEAD
+          else
+            git diff --check HEAD~1 HEAD
+          fi
 
   pocketbase-compatibility:
     name: PocketBase compatibility (${{ matrix.suite }})
@@ -216,10 +232,33 @@ jobs:
         run: npm ci
 
       - name: Run frontend tests
-        run: npm test --if-present -- --experimental-test-coverage
+        run: npm test --if-present
+
+      - name: Frontend coverage (reports on every file the suites load)
+        run: npm run --silent test:coverage
 
       - name: Build frontend
         run: npm run build
+
+  frontend-image-parity:
+    name: Frontend on the image Node
+    # The frontend image builds on the major version this job runs; check_runtime_versions.py
+    # fails if the two drift apart, so a shipped-but-never-tested Node cannot come back.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
 
   backend-unicode:
     name: Backend Unicode workflow
@@ -340,6 +379,9 @@ jobs:
           push: false
           load: true
           tags: fangji-backend:ci
+          build-args: |
+            VERSION=${{ github.run_number }}
+            COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 

@@ -17,8 +17,10 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-# ${VAR}, ${VAR:-default} and ${VAR:?message}, which compose treats as required.
-SUBSTITUTION = re.compile(r'\$\{(\w+)(?::([-?])(.*?))?\}')
+# Compose substitution: ${VAR}, ${VAR:-default}, ${VAR-default}, ${VAR:?err}, ${VAR?err}.
+# The colon forms also fire on a set-but-empty value, which compose distinguishes.
+BRACE = re.compile(r'\$\{([^{}]*)\}')
+EXPRESSION = re.compile(r'^(\w+)(?:(:-|:\?|-|\?)(.*))?$', re.DOTALL)
 PRODUCTION = ('docker-compose.yml', 'docker-compose.traefik.yml')
 ENTRY_POINTS = PRODUCTION + ('docker-compose.dev.yml',)
 NAMED_VOLUMES = 'docker-compose.named-volume.yml'
@@ -33,15 +35,22 @@ def resolve(value, missing):
         return value
 
     def substitute(match):
-        name, operator, fallback = match.group(1), match.group(2), match.group(3)
-        if name in os.environ:
-            return os.environ[name]
-        if operator == ':':
+        expression = EXPRESSION.match(match.group(1))
+        if not expression:
+            missing.add(f'unparsable {match.group(0)!r}')
+            return ''
+        name, operator, fallback = expression.groups()
+        current = os.environ.get(name)
+        empty_counts_as_unset = operator in (':-', ':?')
+        if current is not None and not (empty_counts_as_unset and current == ''):
+            return current
+        if operator in (':?', '?'):
+            # compose refuses to render the file at all in this case.
             missing.add(name)
             return ''
         return fallback or ''
 
-    return SUBSTITUTION.sub(substitute, value)
+    return BRACE.sub(substitute, value)
 
 
 def load(name, missing):
@@ -55,7 +64,12 @@ def mapping(value):
         return {}
     if isinstance(value, dict):
         return {str(key): str(item) for key, item in value.items()}
-    return dict(str(item).split('=', 1) for item in value)
+    result = {}
+    for item in value:
+        # A bare NAME means "take NAME from the environment" in compose.
+        key, _, entry = str(item).partition('=')
+        result[key] = entry
+    return result
 
 
 def ports_of(document, service):
@@ -76,15 +90,25 @@ def main():
     development = documents['docker-compose.dev.yml']
     edge = documents['docker-compose.traefik.yml']
 
+    def with_overlay(name):
+        base = documents[name]
+        overlay = documents[NAMED_VOLUMES]
+        merged = {key: dict(value) for key, value in base.items() if key == 'services'}
+        for service, settings in overlay.get('services', {}).items():
+            merged['services'][service] = {**base['services'][service], **settings}
+        merged['networks'] = {**base.get('networks', {}), **overlay.get('networks', {})}
+        return merged
+
     for name in PRODUCTION:
-        for service, settings in documents[name]['services'].items():
+        for service, settings in with_overlay(name)['services'].items():
             check(settings.get('cap_drop') == ['ALL'], f'{name}: {service} does not drop all capabilities')
             check('no-new-privileges:true' in (settings.get('security_opt') or []),
                   f'{name}: {service} can gain privileges')
             check('healthcheck' in settings, f'{name}: {service} has no health check')
-        check(documents[name]['services']['backend'].get('read_only') is True,
-              f'{name}: the backend filesystem is writable')
-        check('ports' not in documents[name]['services']['backend'], f'{name}: the backend publishes a port')
+        backend = with_overlay(name)['services']['backend']
+        check(backend.get('read_only') is True, f'{name}: the backend filesystem is writable')
+        check(backend.get('privileged') is not True, f'{name}: the backend runs privileged')
+        check('ports' not in backend, f'{name}: the backend publishes a port')
 
     check(mapping(production['services']['frontend'].get('labels')) == {},
           'docker-compose.yml: the plain entry point carries proxy labels')
@@ -118,11 +142,14 @@ def main():
     check(mapping(edge['services']['frontend'].get('environment'))['ENABLE_POCKETBASE_ADMIN_UI'] == 'true',
           'docker-compose.traefik.yml must keep the admin UI reachable through the proxy route')
 
+    unstamped = []
     for name in ENTRY_POINTS:
         merged = {**documents[name]['services']['backend'], **documents[NAMED_VOLUMES]['services']['backend']}
         check(merged.get('volumes'), f'{name} + {NAMED_VOLUMES} has no backend data volume')
-        build = documents[name]['services']['backend'].get('build') or {}
-        check('COMMIT' in (build.get('args') or {}), f'{name}: the backend build passes no COMMIT stamp')
+        args = (documents[name]['services']['backend'].get('build') or {}).get('args') or {}
+        check('COMMIT' in args, f'{name}: the backend build passes no COMMIT stamp')
+        if args.get('COMMIT') == 'unknown':
+            unstamped.append(name)
 
     if missing:
         problems.append('required compose variables are unset: ' + ', '.join(sorted(missing)))
@@ -132,7 +159,12 @@ def main():
         for problem in problems:
             print(f'  - {problem}', file=sys.stderr)
         return 1
-    print('PASS: compose entry points keep privilege, port, network and stamp boundaries')
+    print('PASS: compose entry points keep privilege, port, network and stamp plumbing')
+    if unstamped:
+        # A plain `docker compose build` produces an unidentifiable image; the
+        # backups asked for by docs/operations.md then have no revision to record.
+        print('note: COMMIT resolves to "unknown" unless FANGJI_COMMIT is set in '
+              + ', '.join(unstamped))
     return 0
 
 
