@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import pb from '@/lib/pocketbase'
+import { isPlatformAdmin as platformAdmin, projectRoles } from '../lib/access.js'
 import { clearAuth, loginWithExternalProvider, loginWithPassword, registerProofreader } from '@/services/authService'
 import { getAccessContext } from '@/services/projectsService'
 
@@ -18,12 +19,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLoggedIn = computed(() => pb.authStore.isValid)
   const role = computed(() => user.value?.role || null)
-  const isPlatformAdmin = computed(() => role.value === 'platform_admin')
+  const isPlatformAdmin = computed(() => platformAdmin(role.value))
   const isAdmin = isPlatformAdmin
-  const isProofreader = computed(() => Boolean(accessContext.value?.proofreadingProjectIds?.length))
-  const canCreateProjects = computed(() => Boolean(accessContext.value?.canCreateProjects))
-  const hasManagedProjects = computed(() => Boolean(accessContext.value?.managedProjectIds?.length))
-  const hasProofreadingProjects = computed(() => Boolean(accessContext.value?.proofreadingProjectIds?.length))
+  const capabilities = computed(() => projectRoles(accessContext.value))
+  const isProofreader = computed(() => capabilities.value.hasProofreadingProjects)
+  const canCreateProjects = computed(() => capabilities.value.canCreateProjects)
+  const hasManagedProjects = computed(() => capabilities.value.hasManagedProjects)
+  const hasProofreadingProjects = computed(() => capabilities.value.hasProofreadingProjects)
   const mustChangePassword = computed(() => Boolean(user.value?.must_change_password))
 
   async function loadAccessContext({ force = false } = {}) {

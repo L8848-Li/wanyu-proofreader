@@ -1,23 +1,14 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import pb from '@/lib/pocketbase'
+import { authState, homePath, resolveNavigation } from '../lib/access.js'
 
-// 获取当前登录状态（直接读 PocketBase，避免时序问题）
 function getAuthState() {
-  const isLoggedIn = pb.authStore.isValid
-
-  return {
-    isLoggedIn,
-    mustChangePassword: Boolean(pb.authStore.model?.must_change_password)
-  }
+  return authState({ isValid: pb.authStore.isValid, model: pb.authStore.model })
 }
 
 // 登录后该去哪里
 function getHomePath() {
-  const auth = getAuthState()
-
-  if (!auth.isLoggedIn) return '/login'
-  if (auth.mustChangePassword) return '/change-password'
-  return '/workspace'
+  return homePath(getAuthState())
 }
 
 const routes = [
@@ -131,21 +122,6 @@ const router = createRouter({
 })
 
 // ✅ 修复核心：直接用 pb.authStore 判断（不是 store）
-router.beforeEach((to) => {
-  const auth = getAuthState()
-
-  if (to.meta.guest && auth.isLoggedIn) {
-    return getHomePath()
-  }
-
-  if (to.meta.requiresAuth && !auth.isLoggedIn) {
-    return `/login?redirect=${encodeURIComponent(to.fullPath)}`
-  }
-
-  if (auth.isLoggedIn && auth.mustChangePassword && !to.meta.allowInitialPassword) {
-    return '/change-password'
-  }
-
-})
+router.beforeEach((to) => resolveNavigation(to, getAuthState()))
 
 export default router

@@ -46,7 +46,7 @@
 
 ## 依赖监控
 
-Dependabot 按前端、Go、Actions 独立每周更新，Go 仅分组 patch。
+Dependabot 按前端、Go、Actions 独立每日更新，Go 仅分组 patch。
 每周审计保存 npm audit、govulncheck 和过期版本结果；漏洞或扫描失败会使任务失败。
 严重/高危可达漏洞 24 小时内分诊，72 小时内修复或给出经评审的缓解措施。
 超时须记录负责人、影响和下次复查日期，不得无期限忽略。

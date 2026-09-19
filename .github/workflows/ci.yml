@@ -15,14 +15,79 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare-matrix:
+    name: Plan integration suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      suites: ${{ steps.plan.outputs.suites }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - id: plan
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import json, pathlib, re
+          entries = json.loads(pathlib.Path('backend/tests/suites.json').read_text())
+          matrix = [{'suite': entry['suite'].removesuffix('_integration.mjs')}
+                    for entry in entries if entry.get('ci_matrix')]
+          assert len(matrix) >= 11, f'suites.json lost matrix entries: {len(matrix)}'
+          # A fork may edit suites.json on a pull_request run, so these strings
+          # must stay inert before they reach any shell step below.
+          for item in matrix:
+              assert re.fullmatch(r'[a-z0-9_]+', item['suite']), item
+
+          print('suites=' + json.dumps(matrix))
+          PY
+
+  static-analysis:
+    name: Static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Python dependencies for the repository guards
+        run: python3 -m pip install --quiet PyYAML
+      - name: gofmt and go vet
+        working-directory: backend
+        run: |
+          test -z "$(gofmt -l .)" || { echo 'not gofmt-clean:'; gofmt -l .; exit 1; }
+          go vet ./...
+      - name: Frontend lint
+        run: npm --prefix frontend ci && npm --prefix frontend run lint
+      - name: Runtime version and documentation agreement
+        run: python3 backend/tests/check_runtime_versions.py
+      - name: Integration suite inventory
+        working-directory: backend/tests
+        run: python3 check_test_inventory.py
+      - name: Compose invariants
+        run: python3 scripts/check_compose_structure.py
+      - name: Whitespace hygiene
+        run: git diff --check
+
   pocketbase-compatibility:
     name: PocketBase compatibility (${{ matrix.suite }})
+    needs: prepare-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        suite: [core_logic, upload_jobs, proofreading_quorum, task_leases, project_access, phase1, pdf_access, pdf_reuse, keyboards, column_order, volunteer_accounts]
+        include: ${{ fromJson(needs.prepare-matrix.outputs.suites) }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -32,7 +97,52 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-      - run: python3 backend/tests/run_integration.py ${{ matrix.suite }}_integration.mjs
+      - name: Run against a freshly migrated disposable database
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: python3 backend/tests/run_integration.py "${SUITE}_integration.mjs"
+
+  race-integration:
+    name: Concurrency under the race detector (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # The durable import worker and the claim/lease transactions are the two
+        # paths that touch shared maps and rows concurrently.
+        suite: [upload_jobs, task_leases]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Go unit tests with the race detector
+        working-directory: backend
+        run: go test -race ./...
+      - name: Integration suite with a race-detected server
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: python3 backend/tests/run_integration.py "${SUITE}_integration.mjs" --race
+
+  seed-demo:
+    name: Demo seed remains runnable
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: python3 backend/tests/run_integration.py seed_demo.mjs
 
   core-workflows:
     name: Core workflow (${{ matrix.suite }})
@@ -106,7 +216,7 @@ jobs:
         run: npm ci
 
       - name: Run frontend tests
-        run: npm test --if-present
+        run: npm test --if-present -- --experimental-test-coverage
 
       - name: Build frontend
         run: npm run build
@@ -127,16 +237,24 @@ jobs:
       - name: Run backend tests
         working-directory: backend
         run: go test ./...
-      - name: Verify PDF affinity migration and rollback
-        run: python3 backend/tests/check_pdf_affinity.py
-      - name: Verify join retention migration and rollback
-        run: python3 backend/tests/check_join_retention.py
+      - name: Verify every migration up, down and up again
+        run: python3 backend/tests/check_migrations.py
       - name: Verify offline backup and restore
         run: python3 -m unittest discover -s backend/tests -p test_backup.py
       - name: Test keyboard CSV coverage audit
         run: python3 -m unittest discover -s backend/tests -p test_keyboard_audit.py
       - name: Verify Unicode import, proofreading, arbitration and restart persistence
         run: python3 backend/tests/run_rare_characters_integration.py
+      - name: Publish Go coverage summary
+        working-directory: backend
+        run: |
+          go test -coverprofile=coverage.out ./... >coverage.log
+          go tool cover -func=coverage.out | tail -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.out
+          retention-days: 7
 
   containers:
     name: Containers

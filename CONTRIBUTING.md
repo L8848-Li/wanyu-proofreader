@@ -27,42 +27,45 @@
 
 ## 本地开发与检查
 
-前端：
+推送前先跑一条命令：
 
 ```bash
-cd frontend
-npm ci
-npm test --if-present
-npm run build
+make check
 ```
 
-Compose 与镜像：
+它依次执行 gofmt/`go vet`、前端 ESLint、运行时版本与文档一致性、集成套件清单校验、
+Compose 不变量、`git diff --check`、Go 与前端单测以及迁移 up/down/up 校验。
+本机没有 Docker 时，`verify-compose` 会显式打印 `SKIP` 并改跑纯 Python 结构检查，
+真正的 `docker compose config` 断言仍由 CI 执行。
 
-```bash
-docker compose config
-docker compose build backend frontend
-```
+其余入口：
 
-如果分支包含 Go 后端（存在 `backend/go.mod`），还需执行：
+| 命令 | 用途 |
+| --- | --- |
+| `make test-go` | Go 单测；`RACE=1 make test-go` 启用竞态检测 |
+| `make test-node` | 前端 `node:test` 单测 |
+| `make test-integration` | 全部后端集成套件，共享一次编译 |
+| `make test-integration SUITES=pdf_` | 只跑名字包含 `pdf_` 的套件 |
+| `make coverage` | Go 与前端覆盖率报告 |
+| `make seed` | 向运行中的实例灌入可复核的演示项目 |
+| `make ci` | `check` + 集成套件 + 前端构建 + 镜像构建 |
 
-```bash
-cd backend
-go test ./...
-```
-
-涉及导入、权限、盲校、仲裁或迁移时，应运行相应集成测试，并使用临时数据目录，不能覆盖真实 `pb_data`。
-
-CI 的 `Core workflow` 矩阵与本地使用同一入口：
+单个套件也可以照旧直接调用；它会构建后端、在新临时目录按数字顺序逐条执行迁移、
+启动测试服务，并在成功或失败后停止服务、删除数据：
 
 ```bash
 python3 backend/tests/run_integration.py upload_jobs_integration.mjs
-python3 backend/tests/run_integration.py core_logic_integration.mjs
-python3 backend/tests/run_integration.py proofreading_quorum_integration.mjs
-python3 backend/tests/run_integration.py task_leases_integration.mjs
+python3 backend/tests/run_integration.py task_leases_integration.mjs --race
 ```
 
-每个命令会构建后端、在新临时目录按数字顺序执行全部迁移、启动测试服务，并在成功或失败后停止服务、删除数据。
-失败时输出测试名称和后端日志尾部；测试身份均为临时身份。Go 缓存按 `backend/go.sum`、npm 缓存按锁文件管理；数据库不缓存。
+套件清单以 `backend/tests/suites.json` 为唯一来源，CI 矩阵由它生成。
+新增 `backend/tests/*_integration.mjs` 却忘记登记时，`check_test_inventory.py` 会让构建失败，
+避免文档、CI 与磁盘上的套件再次各说各话。
+
+涉及导入、权限、盲校、仲裁或迁移时，应运行相应集成测试，并使用临时数据目录，不能覆盖真实 `pb_data`。
+
+每个命令失败时会输出测试名称和后端日志尾部；测试身份均为临时身份。Go 缓存按 `backend/go.sum`、
+npm 缓存按锁文件管理；数据库不缓存。
 贡献者应运行本文列出的适用本地检查；PR 中所有适用的 required checks 都必须通过后才能合并。当前 required checks 与 review requirement 以 GitHub branch protection / ruleset 显示为最终真源，不在 CONTRIBUTING 中维护固定数量。
 
 提交前执行 `git diff --check`（暂存后使用 `git diff --cached --check`）。

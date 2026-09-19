@@ -14,7 +14,7 @@ export function safeParseRowJson(raw) {
 // JSON object enumeration reorders integer-like keys; keep CSV order explicitly.
 export function orderedRowHeaders(page, row) {
   let saved = []
-  try { saved = JSON.parse(page?.row_headers_json || '[]') } catch {}
+  try { saved = JSON.parse(page?.row_headers_json || '[]') } catch { /* corrupt saved order must not block rendering; fall back to key order */ }
   const keys = Object.keys(row || {})
   return [...new Set([...(Array.isArray(saved) ? saved.filter(key => typeof key === 'string' && keys.includes(key)) : []), ...keys])]
 }

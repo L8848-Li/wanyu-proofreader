@@ -18,11 +18,12 @@
 
 <!-- 列出实际执行的命令和结果；未运行的检查要说明原因。 -->
 
-- [ ] `git diff --check`
-- [ ] `cd frontend && npm test --if-present`
+- [ ] `make check`（gofmt、`go vet`、ESLint、版本与套件一致性、Compose 不变量、单测、迁移 up/down/up）
 - [ ] `cd frontend && npm run build`
 - [ ] `docker compose config`
-- [ ] 相关后端或集成测试已运行，或本 PR 不涉及
+- [ ] 涉及并发或后台任务时：`RACE=1 make test-go`
+- [ ] 涉及导入、权限、盲校、仲裁或迁移时：`make test-integration SUITES=<套件前缀>`
+- [ ] 未运行的检查已在此说明原因
 
 ## UI 证据
 

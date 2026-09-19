@@ -1,0 +1,9 @@
+# Keep the build context to what the Dockerfile actually copies. Without this
+# a locally built ./pocketbase binary (~50 MB) and the live data directory ride
+# along into every backend build.
+pocketbase
+pb_data/
+coverage.out
+coverage.html
+.git/
+*.md

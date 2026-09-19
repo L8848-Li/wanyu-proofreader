@@ -4,6 +4,20 @@
 
 ## Unreleased
 
+### 工程质量与开发工具（2026-09-19）
+
+- 新增根目录 `Makefile`：`make check` 一次跑完推送前应执行的全部门禁，`make ci` 追加集成套件、前端构建与镜像构建。
+- 新增 `backend/tests/run_all.py` 与 `backend/tests/harness.py`：一次编译共享给全部集成套件，每套仍使用独立临时数据目录；套件清单集中在 `backend/tests/suites.json`，CI 矩阵由它生成。
+- 新增静态检查门禁：`gofmt -l`、`go vet ./...`、前端 ESLint（`eslint:recommended` + `vue/essential`，仅正确性规则）、`go test -race` 与竞态下的导入/租约集成套件。
+- 新增三个一致性守卫：`check_test_inventory.py`（磁盘套件 vs `suites.json` vs CI vs 文档）、`check_runtime_versions.py`（Node/Go/PocketBase/Dependabot 声明互相印证）、`scripts/check_compose_structure.py`（把 CI 里四段无法本地复用的 jq 断言变成可执行检查）。
+- 迁移校验改为通用 `check_migrations.py`：逐条 up/down/up，覆盖此前从未被执行过的 `1788941000_pagination_indexes.js`，并断言初始 schema 拒绝回滚；替换两个各自硬编码单一索引名的 `check_pdf_affinity.py` 与 `check_join_retention.py`。
+- 新增 `backend/tests/seed_demo.mjs`：经真实 CSV 导入链路灌入一个可复核的演示项目，含一致结果与一条待仲裁分歧。
+- 新增 `ops/audit_storage.py`：只读巡检 `pb_data` 体积、PDF 预览缓存与上传暂存残留、磁盘水位，超限非零退出以便接入调度。
+- 后端镜像现在注入 `version`/`commit`/`build_date` 并在启动日志打印，补齐运维备份记录所需的构建版本；三个 Compose 入口与 `backend/.dockerignore` 同步更新。
+- 前端补齐权限判定与任务定位单测：`src/lib/access.js` 抽出登录态、落地页与路由守卫判定，`tests/accessControl.test.js`、`tests/taskNeighbors.test.js`、`tests/structuredRow.test.js` 覆盖此前 0 覆盖的角色门禁与 `n/m` 计数器。
+- `member-candidates` 路由加入集成断言：字段形状、姓名排序以及非管理者 403、未登录 401。
+- 修正文档与配置漂移：README 技术栈版本、Dependabot 更新频率描述、项目结构树、`pocketbase` 二进制来源说明；`frontend` 镜像 Node 26 与 `engines` 约束现已一致。
+
 - 校对员项目大厅和编辑器不再显示一校、二校等轮次线索，只呈现可领取任务、进行中任务和独立校对操作。
 - 管理员仲裁复用 PDF 双栏审阅工作区，可对照条目实际关联的 PDF，动态比较全部校对结果并使用字符板编辑最终值。
 - 管理员控制台新增异常优先排序与项目管线概览；项目状态可直达筛选结果，仲裁要求显式确认全部差异并提供批量来源选择与离开保护。

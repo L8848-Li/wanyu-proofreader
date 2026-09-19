@@ -1,6 +1,12 @@
 services:
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        # Images must be identifiable after the fact; see docs/operations.md.
+        VERSION: ${FANGJI_VERSION:-dev}
+        COMMIT: ${FANGJI_COMMIT:-unknown}
+        BUILD_DATE: ${FANGJI_BUILD_DATE:-unknown}
     ports:
       - "${BACKEND_PORT:-127.0.0.1:8090}:8090"
     environment:

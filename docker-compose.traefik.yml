@@ -2,7 +2,13 @@
 # Legacy slow whole-file uploads: see docs/operations.md and ops/prepare_upload_timeout.py.
 services:
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        # Images must be identifiable after the fact; see docs/operations.md.
+        VERSION: ${FANGJI_VERSION:-dev}
+        COMMIT: ${FANGJI_COMMIT:-unknown}
+        BUILD_DATE: ${FANGJI_BUILD_DATE:-unknown}
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=512m

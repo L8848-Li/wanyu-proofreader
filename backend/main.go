@@ -9,7 +9,15 @@ import (
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 )
 
+// Injected by -ldflags; docs/operations.md asks operators to record the build revision.
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+)
+
 func main() {
+	log.Printf("fangji backend %s (commit %s, built %s)", version, commit, buildDate)
 	app := pocketbase.New()
 
 	var hooksDir string

@@ -155,8 +155,7 @@ const {
   resetPdf,
   resolveProjectPdf,
   clampPdfPage,
-  switchPdfPage,
-  syncToBasePage
+  switchPdfPage
 } = useProjectPdf(pageRef)
 
 watch(currentPdfPage, (value) => {

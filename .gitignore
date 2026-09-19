@@ -38,3 +38,11 @@ Thumbs.db
 
 # Local agent workspace (not project code, see .qoder/workspace/README.md)
 .qoder/
+
+# make coverage
+backend/coverage.out
+backend/coverage.html
+
+# Python bytecode from the local test runners
+__pycache__/
+*.pyc

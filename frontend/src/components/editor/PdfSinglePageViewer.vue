@@ -106,7 +106,7 @@ async function loadPdf(src) {
     lib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.js'
 
     if (pdfDocTask) {
-      try { await pdfDocTask.destroy() } catch {}
+      try { await pdfDocTask.destroy() } catch { /* the previous document may already be gone */ }
     }
     pdfDocTask = lib.getDocument({ url: src, cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', isEvalSupported: false })
     const document = await pdfDocTask.promise
@@ -157,7 +157,7 @@ async function renderCurrentPage() {
   const safePage = safePageLabel.value
 
   if (renderTask) {
-    try { renderTask.cancel() } catch {}
+    try { renderTask.cancel() } catch { /* the task may have already settled */ }
     renderTask = null
   }
 
@@ -247,7 +247,7 @@ function cleanupRenderOnly() {
   renderGeneration++
   rendering.value = false
   if (renderTask) {
-    try { renderTask.cancel() } catch {}
+    try { renderTask.cancel() } catch { /* the task may have already settled */ }
     renderTask = null
   }
 }
@@ -261,7 +261,7 @@ onBeforeUnmount(async () => {
     resizeObserver = null
   }
   if (pdfDocTask) {
-    try { await pdfDocTask.destroy() } catch {}
+    try { await pdfDocTask.destroy() } catch { /* the previous document may already be gone */ }
     pdfDocTask = null
   }
   pdfDoc = null

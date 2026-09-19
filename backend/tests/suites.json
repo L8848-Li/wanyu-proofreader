@@ -1,0 +1,15 @@
+[
+  { "suite": "core_logic_integration.mjs", "ci_matrix": true },
+  { "suite": "upload_jobs_integration.mjs", "ci_matrix": true },
+  { "suite": "proofreading_quorum_integration.mjs", "ci_matrix": true },
+  { "suite": "task_leases_integration.mjs", "ci_matrix": true },
+  { "suite": "project_access_integration.mjs", "ci_matrix": true },
+  { "suite": "phase1_integration.mjs", "ci_matrix": true },
+  { "suite": "pdf_access_integration.mjs", "ci_matrix": true },
+  { "suite": "pdf_reuse_integration.mjs", "ci_matrix": true },
+  { "suite": "keyboards_integration.mjs", "ci_matrix": true },
+  { "suite": "column_order_integration.mjs", "ci_matrix": true },
+  { "suite": "volunteer_accounts_integration.mjs", "ci_matrix": true },
+  { "suite": "pdf_chunks_integration.mjs", "ci_matrix": false, "note": "also runs in core-workflows and the chunk-upload-browser job" },
+  { "suite": "rare_characters_integration.mjs", "ci_matrix": false, "ci_runner": "run_rare_characters_integration.py", "note": "restarts the server to prove persistence" }
+]

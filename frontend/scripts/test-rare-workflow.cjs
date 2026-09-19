@@ -4,7 +4,7 @@ const {chromium}=require('playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const f=JSON.parse(fs.readFileSync(process.env.RARE_BROWSER_FIXTURE || '/tmp/fangji-rare-fixture.json','utf8'));
-const {sample,key,sourceRow,project,users,admin,baseUrl}=f;
+const {sample,key,project,users,admin,baseUrl}=f;
 const pageId=f.pages[2].id;
 async function api(path,token,body){
  const r=await fetch(baseUrl+path,{method:body?'POST':'GET',headers:{Authorization:token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});

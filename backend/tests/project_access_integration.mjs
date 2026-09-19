@@ -168,6 +168,27 @@ try {
   assert.equal(members.find((item) => item.user === manager.id).role, 'manager')
   assert.equal(members.find((item) => item.user === proofreader.id).role, 'proofreader')
 
+  // The member picker reads this route, so its shape and gate are load-bearing.
+  const candidatesPath = `/api/fangji/projects/${privateProject.id}/member-candidates`
+  const candidates = await request(candidatesPath, { token: manager.token })
+  assert.ok(Array.isArray(candidates), 'candidates must be a plain array, not a paginated result')
+  const byId = new Map(candidates.map((item) => [item.id, item]))
+  for (const user of [creator, manager, proofreader, outsider]) {
+    const listed = byId.get(user.id)
+    assert.ok(listed, `${user.email} must be offered as a candidate`)
+    assert.deepEqual(Object.keys(listed).sort(), ['email', 'id', 'name', 'username'])
+    assert.equal(listed.email, user.email)
+  }
+  const ordered = [...candidates].sort((a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email))
+  assert.deepEqual(candidates.map((item) => `${item.name}:${item.email}`),
+    ordered.map((item) => `${item.name}:${item.email}`), 'candidates must arrive name-then-email ordered')
+  for (const [label, token] of [['proofreader', proofreader.token], ['outsider', outsider.token]]) {
+    const refused = await rawRequest(candidatesPath, { token })
+    assert.equal(refused.status, 403, `${label} must not enumerate member candidates`)
+  }
+  const unauthenticated = await rawRequest(candidatesPath)
+  assert.equal(unauthenticated.status, 401, 'candidate enumeration must not be public')
+
   const detailsPath = `/api/fangji/projects/${privateProject.id}`
   const rareName = '项目𠮷𰻞𱁬'
   let updated = await request(detailsPath, { method: 'PATCH', token: manager.token, body: { name: rareName } })

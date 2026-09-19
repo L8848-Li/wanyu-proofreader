@@ -12,7 +12,13 @@ COPY *.go ./
 COPY pb_migrations/ ./pb_migrations/
 COPY keyboards/ ./keyboards/
 RUN go test ./...
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/pocketbase .
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+RUN CGO_ENABLED=0 go build -trimpath \
+  -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+  -o /out/pocketbase .
 
 FROM alpine:3.24
 

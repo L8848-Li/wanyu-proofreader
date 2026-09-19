@@ -81,7 +81,7 @@ const keyCount = computed(() => countKeyboardValues(sections.value))
 watch(() => props.projectId, load, { immediate: true })
 watch(selectedKeyboardId, (keyboardId) => {
   if (!keyboardId || !props.projectId) return
-  try { localStorage.setItem(keyboardPreferenceKey(currentUserId(), props.projectId), keyboardId) } catch {}
+  try { localStorage.setItem(keyboardPreferenceKey(currentUserId(), props.projectId), keyboardId) } catch { /* private mode or quota: a lost preference must not break the editor */ }
 })
 
 async function load(projectId) {
@@ -95,7 +95,7 @@ async function load(projectId) {
     keyboards.value = Array.isArray(result.items) ? result.items : []
     projectDefaultId.value = result.defaultKeyboardId || ''
     let remembered = ''
-    try { remembered = localStorage.getItem(keyboardPreferenceKey(currentUserId(), projectId)) || '' } catch {}
+    try { remembered = localStorage.getItem(keyboardPreferenceKey(currentUserId(), projectId)) || '' } catch { /* an unreadable preference falls back to the project default */ }
     selectedKeyboardId.value = chooseProjectKeyboard(keyboards.value, projectDefaultId.value, remembered)?.keyboardId || ''
   } catch {
     if (generation === loadGeneration) keyboards.value = []

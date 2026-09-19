@@ -90,7 +90,7 @@
 
 ## PocketBase 0.40 重建升级
 
-当前后端使用 PocketBase 0.40.3 / Go 1.27，前端使用 Node 24 LTS / PocketBase SDK 0.28.1。
+当前后端使用 PocketBase 0.40（补丁版本以 `backend/go.mod` 为准）/ Go 1.27，前端使用 Node 24 LTS / PocketBase SDK 0.28.1。
 旧版本尚无正式运营数据，本次采用新目录重建；不要直接复用旧 pb_data。
 部署切换、回滚及验证证据见 [升级决策](docs/dependency-upgrades.md)。
 
@@ -223,8 +223,10 @@ docker compose -f docker-compose.dev.yml down
 
 ```bash
 cd backend
-# 将 PocketBase 二进制文件放到 backend/ 目录后执行
-./pocketbase serve
+# 集成测试会自动构建一次性二进制；手工调试时自行构建到 backend/pocketbase
+# （该路径已被 .gitignore 排除，仓库不提供预编译二进制）
+go build -o pocketbase .
+./pocketbase serve --hooksDir=pb_hooks --migrationsDir=pb_migrations
 ```
 
 前端：
@@ -539,19 +541,29 @@ PDF页码,词条,读音,释义,例句
 wanyu-proofreader/
 ├── README.md
 ├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── Makefile                      # make check / test-integration / seed / coverage
 ├── .env.example
 ├── .env.dev.example
 ├── docker-compose.yml
 ├── docker-compose.dev.yml
 ├── docker-compose.traefik.yml
 ├── docker-compose.named-volume.yml
+├── ops/
+│   ├── audit_storage.py          # 只读的磁盘与缓存水位巡检
+│   └── prepare_upload_timeout.py # Traefik 读取超时配置
+├── scripts/
+│   └── check_compose_structure.py
+├── docs/                         # 运维、依赖升级、计划与验证截图
 ├── frontend/
+│   ├── eslint.config.js
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   ├── package.json
 │   ├── vite.config.js
 │   ├── public/
 │   │   └── pdfjs/                  # PDF.js 静态资源
+│   ├── tests/                    # node:test 单测与浏览器/fixture 资源
 │   └── src/
 │       ├── components/             # 导航、编辑器、PDF 预览、项目键盘
 │       ├── composables/            # PDF、结构化字段、任务导航复用逻辑
@@ -569,9 +581,13 @@ wanyu-proofreader/
     ├── external_identity.go        # 外部身份 provider、映射、登录和绑定
     ├── hinghwa_identity.go         # 兴化语记 /login 安全适配器
     ├── docker-entrypoint.sh
-    ├── pb_hooks/                   # PocketBase hooks
+    ├── pb_hooks/                   # PocketBase hooks（路由与权限判定）
     ├── keyboards/                  # 版本化内置键盘 JSON 与格式说明
-    └── pb_migrations/              # Schema、权限、导入作业、键盘和多人校对迁移
+    ├── pb_migrations/              # Schema、权限、导入作业、键盘和多人校对迁移
+    ├── legacy_migrations/          # 已废弃的 0.22 时代迁移，仅作参考
+    ├── ops/
+    │   └── backup.py               # 离线校验式备份与恢复
+    └── tests/                      # run_all.py、suites.json、集成套件与守卫脚本
 ```
 
 ## 开发说明
@@ -579,7 +595,7 @@ wanyu-proofreader/
 ### 技术栈
 
 - 前端：Vue 3、Vite、Vue Router、Pinia
-- 后端：PocketBase 0.21.3 自定义 Go 构建
+- 后端：PocketBase 0.40 自定义 Go 构建
 - 样式：纯 CSS
 - PDF 预览：静态引入 PDF.js
 - 部署：Docker Compose
