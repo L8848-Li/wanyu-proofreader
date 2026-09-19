@@ -3,7 +3,7 @@ module fangji/backend
 go 1.27
 
 require (
-	github.com/labstack/echo/v5 v5.0.0-20230722203903-ec5b858dab61
+	github.com/labstack/echo/v5 v5.3.1
 	github.com/pdfcpu/pdfcpu v0.15.0
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.40.4
