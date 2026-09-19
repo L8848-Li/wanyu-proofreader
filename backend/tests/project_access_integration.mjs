@@ -168,37 +168,50 @@ try {
   assert.equal(members.find((item) => item.user === manager.id).role, 'manager')
   assert.equal(members.find((item) => item.user === proofreader.id).role, 'proofreader')
 
-  // The member picker reads this route, so its shape and gate are load-bearing.
+  // The member picker reads this route. users.listRule limits account listing to
+  // platform admins, so a project manager must only see accounts already
+  // connected to projects they manage, and never an email address.
   const twins = [await createUser('twin-a', '重名候选'), await createUser('twin-b', '重名候选')]
   const candidatesPath = `/api/fangji/projects/${privateProject.id}/member-candidates`
   const candidates = await request(candidatesPath, { token: manager.token })
   assert.ok(Array.isArray(candidates), 'candidates must be a plain array, not a paginated result')
   assert.equal(new Set(candidates.map((item) => item.id)).size, candidates.length,
     'a duplicated id would let a Map silently hide it')
-  const byId = new Map(candidates.map((item) => [item.id, item]))
-  for (const user of [creator, manager, proofreader, outsider]) {
-    const listed = byId.get(user.id)
-    // KNOWN DEFECT, pinned rather than endorsed: this route returns the whole
-    // platform roster to any project manager, ignoring the users.listRule that
-    // limits a manager to users connected to their own projects, and it hand
-    // serialises `email`, bypassing emailVisibility redaction. Narrowing it is a
-    // product/security decision, so these assertions must be rewritten with it.
-    assert.ok(listed, `${user.email} is currently offered as a candidate`)
-    assert.deepEqual(Object.keys(listed).sort(), ['email', 'id', 'name', 'username'])
-    assert.equal(listed.email, user.email)
+  for (const item of candidates) {
+    assert.deepEqual(Object.keys(item).sort(), ['id', 'name', 'username'],
+      `candidates must not carry email, got ${JSON.stringify(item)}`)
   }
-  // ORDER BY name,email under SQLite's BINARY collation, i.e. code-unit order.
-  // localeCompare is a different total order and would disagree on punctuation.
-  const binaryOrder = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1
-    : a.email < b.email ? -1 : a.email > b.email ? 1 : 0)
+  const candidateIds = new Set(candidates.map((item) => item.id))
+  for (const user of [creator, manager, proofreader]) {
+    assert.ok(candidateIds.has(user.id), `${user.email} is connected to this project and must be offered`)
+  }
+  for (const user of [outsider, ...twins, passwordUser, rateLimitedUser]) {
+    assert.ok(!candidateIds.has(user.id), `${user.email} is unrelated and must not be enumerable by a project manager`)
+  }
+  assert.ok(candidates.every((item) => !JSON.stringify(item).includes('@')), 'no candidate row may contain an email')
+
+  // Ordered by name then username, compared as code units.
+  const codeUnitOrder = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1
+    : a.username < b.username ? -1 : a.username > b.username ? 1 : 0)
   for (let index = 1; index < candidates.length; index++) {
-    assert.ok(binaryOrder(candidates[index - 1], candidates[index]) <= 0,
-      `candidates must be ordered name-then-email, but ${candidates[index - 1].name}:${candidates[index - 1].email} `
-      + `preceded ${candidates[index].name}:${candidates[index].email}`)
+    assert.ok(codeUnitOrder(candidates[index - 1], candidates[index]) <= 0,
+      `candidates must be ordered name-then-username, but ${candidates[index - 1].name}:${candidates[index - 1].username} `
+      + `preceded ${candidates[index].name}:${candidates[index].username}`)
   }
-  const twinPair = candidates.filter((item) => item.name === '重名候选')
-  assert.equal(twinPair.length, 2, 'the two same-name accounts must both be listed')
-  assert.ok(binaryOrder(twinPair[0], twinPair[1]) < 0, 'equal names must fall through to the email tiebreak')
+
+  // A platform admin may list accounts, per users.listRule, but still not by email.
+  const asPlatformAdmin = await request(candidatesPath, { token: platform.token })
+  const adminSeen = new Set(asPlatformAdmin.map((item) => item.id))
+  for (const user of [outsider, ...twins]) {
+    assert.ok(adminSeen.has(user.id), `${user.email} must be visible to a platform admin`)
+  }
+  assert.ok(asPlatformAdmin.length > candidates.length,
+    'the platform admin view must be broader than the project-scoped one')
+  // Same-name accounts must fall through to the username tiebreak, not collapse.
+  const twinPair = asPlatformAdmin.filter((item) => item.name === '重名候选')
+  assert.equal(twinPair.length, 2, 'both same-name accounts must be listed')
+  assert.ok(codeUnitOrder(twinPair[0], twinPair[1]) < 0, 'equal names must fall through to the username tiebreak')
+
   for (const [label, token] of [['proofreader', proofreader.token], ['outsider', outsider.token]]) {
     const refused = await rawRequest(candidatesPath, { token })
     assert.equal(refused.status, 403, `${label} must not enumerate member candidates`)

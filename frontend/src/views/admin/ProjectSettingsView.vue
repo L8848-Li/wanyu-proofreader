@@ -88,7 +88,7 @@
           <select v-model="newMember.userId" class="form-control" required>
             <option value="">选择用户</option>
             <option v-for="candidate in availableCandidates" :key="candidate.id" :value="candidate.id">
-              {{ candidate.name || candidate.username || candidate.email }} · {{ [candidate.username, candidate.email].filter(Boolean).join(' · ') }}
+              {{ [candidate.name, candidate.username].filter(Boolean).join(' · ') }}
             </option>
           </select>
           <select v-model="newMember.role" class="form-control">
@@ -155,7 +155,7 @@
           <div class="member-add-form">
             <select v-model="nextOwnerId" class="form-control">
               <option value="">选择新所有者</option>
-              <option v-for="candidate in transferCandidates" :key="candidate.id" :value="candidate.id">{{ candidate.name || candidate.username || candidate.email }} · {{ [candidate.username, candidate.email].filter(Boolean).join(' · ') }}</option>
+              <option v-for="candidate in transferCandidates" :key="candidate.id" :value="candidate.id">{{ [candidate.name, candidate.username].filter(Boolean).join(' · ') }}</option>
             </select>
             <button class="btn btn-secondary" :disabled="!nextOwnerId || transferring" @click="transferOwner">转移所有权</button>
           </div>

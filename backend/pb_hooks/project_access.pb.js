@@ -295,20 +295,47 @@ routerAdd("GET", "/api/fangji/projects/{projectId}/members", (c) => {
 }, $apis.requireAuth("users"))
 
 routerAdd("GET", "/api/fangji/projects/{projectId}/member-candidates", (c) => {
-  const { auth: fangjiAuth, assertId: fangjiAssertId, requireManager: fangjiRequireManager } = require(`${__hooks}/lib/project_access.js`)
+  const {
+    auth: fangjiAuth, assertId: fangjiAssertId, requireManager: fangjiRequireManager,
+    isPlatformAdmin: fangjiIsPlatformAdmin
+  } = require(`${__hooks}/lib/project_access.js`)
   const auth = fangjiAuth(c)
   const projectId = fangjiAssertId(c.request.pathValue("projectId"), "项目")
   const dao = $app
-  fangjiRequireManager(dao, projectId, auth)
-  const result = []
-  for (const user of dao.findRecordsByFilter("users", 'id != ""', "name,email", 1000000, 0)) {
-    result.push({
-      id: user.id,
-      name: user.getString("name"),
-      username: user.getString("username"),
-      email: user.getString("email")
-    })
+  const { project: managedProject } = fangjiRequireManager(dao, projectId, auth)
+
+  // users.listRule grants account listing to platform admins only, and email is
+  // redacted outside emailVisibility, so a project manager is offered the people
+  // already connected to projects they manage — never the platform roster.
+  const connected = new Set([auth.id, managedProject.getString("admin")])
+  const platformAdmin = fangjiIsPlatformAdmin(auth)
+  if (platformAdmin) {
+    for (const user of dao.findRecordsByFilter("users", 'id != ""', "name,email", 500, 0)) connected.add(user.id)
+  } else {
+    const managedProjects = dao.findRecordsByFilter(
+      "project_memberships", `user = "${auth.id}" && role = "manager"`, "created", 200, 0)
+    for (const managed of managedProjects) {
+      for (const member of dao.findRecordsByFilter(
+        "project_memberships", `project = "${managed.getString("project")}"`, "created", 500, 0)) {
+        connected.add(member.getString("user"))
+      }
+    }
   }
+  for (const member of dao.findRecordsByFilter(
+    "project_memberships", `project = "${projectId}"`, "created", 500, 0)) {
+    connected.add(member.getString("user"))
+  }
+
+  const result = []
+  for (const userId of connected) {
+    let user = null
+    try { user = dao.findRecordById("users", userId) } catch { continue }
+    result.push({ id: user.id, name: user.getString("name"), username: user.getString("username") })
+    if (result.length >= 200) break
+  }
+  // Code-unit order so the list is stable regardless of the caller's locale.
+  result.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1
+    : a.username < b.username ? -1 : a.username > b.username ? 1 : 0))
   return c.json(200, result)
 }, $apis.requireAuth("users"))
 

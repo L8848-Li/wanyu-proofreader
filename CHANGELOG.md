@@ -19,6 +19,7 @@
 - 新增 `frontend-image-parity` job：前端镜像以 Node 26 构建，而 CI 此前只在 24 上验证，发布用的构建环境从未被测过；守卫现在要求镜像的大版本必须有对应 job 覆盖。
 - 集成测试服务器以 `-race` 构建时设 `GORACE=halt_on_error=1` 并在日志中检出 `DATA RACE` 即失败；独立二进制默认只打警告并退出 0，否则竞态永远测不出来。
 - CI 的 `git diff --check` 改为对比 PR base（裸命令比较工作树与索引，检出后必然干净）；镜像构建注入 `COMMIT` 并写入 OCI 标签，备份记录可直接读取。
+- **安全收敛**：`GET /api/fangji/projects/{id}/member-candidates` 此前会用无范围读取列出**全平台账号**（含 `email`，同时绕过 `users.listRule` 仅平台管理员可列出、以及 `emailVisibility` 脱敏）。现收敛为：项目管理员只看到与自己管理的项目相关的账号（含本项目所有者与成员），响应不再包含 `email`，并按 name→username 码元序稳定排序、设 200/500 上限；平台管理员仍可列出全平台账号。前端成员与转让选择器随之去掉 `email` 回退。志愿者批量开通与项目密码自助加入不依赖该接口，不受影响。
 - 修正文档与配置漂移：README 技术栈版本、Dependabot 更新频率描述、项目结构树、`pocketbase` 二进制来源说明；`frontend` 镜像 Node 26 与 `engines` 约束现已一致。
 
 - 校对员项目大厅和编辑器不再显示一校、二校等轮次线索，只呈现可领取任务、进行中任务和独立校对操作。
