@@ -232,16 +232,28 @@ try {
     'an empty term must stay scoped, not fall back to a platform listing')
   const searched = await request(`${candidatesPath}?term=${encodeURIComponent('outsider')}`, { token: creator.token })
   assert.ok(searched.some((item) => item.id === outsider.id),
-    'term lookup must find a known account so a first member can still be added')
-  assert.ok(searched.length < (await request(candidatesPath, { token: platform.token })).length,
-    'a lookup must return fewer accounts than a platform-admin listing')
+    'an exact identifier lookup must work so a first member can still be added')
   assert.ok(searched.every((item) => !JSON.stringify(item).includes('@')), 'lookups must not return email either')
+  // A lookup must not degrade into a sweep: prefixes of the auto-generated
+  // `usersNNNNNN` usernames and of display names must return nothing, or any
+  // project manager could walk the roster a few characters at a time.
+  for (const prefix of ['users', 'us', 'out', 'outsid', 'twin', '12']) {
+    const swept = await request(`${candidatesPath}?term=${encodeURIComponent(prefix)}`, { token: creator.token })
+    assert.ok(swept.every((item) => item.id !== outsider.id && !twins.some((twin) => twin.id === item.id)),
+      `the prefix ${JSON.stringify(prefix)} must not resolve unrelated accounts`)
+  }
+  const swept = await request(`${candidatesPath}?term=${encodeURIComponent('users')}`, { token: creator.token })
+  assert.ok(swept.length < 5, `a generic prefix must not fan out across the platform, got ${swept.length}`)
 
   // A term is interpolated into a filter, so anything able to break out is refused.
   for (const bad of ['a', 'x'.repeat(65), '" OR id != ""', 'a" || "1"="1', '50%', 'bo\\bs', '张三;drop']) {
     const rejected = await rawRequest(`${candidatesPath}?term=${encodeURIComponent(bad)}`, { token: creator.token })
     assert.equal(rejected.status, 400, `term ${JSON.stringify(bad)} must be rejected`)
   }
+  // Whitespace-only is trimmed away and must fall back to the scoped browse.
+  const blank = await request(`${candidatesPath}?term=${encodeURIComponent('   ')}`, { token: creator.token })
+  assert.deepEqual(blank.map((item) => item.id).sort(), browsed.map((item) => item.id).sort(),
+    'a blank term must behave like no term, not like a search')
 
   for (const [label, token] of [['proofreader', proofreader.token], ['outsider', outsider.token]]) {
     const refused = await rawRequest(candidatesPath, { token })

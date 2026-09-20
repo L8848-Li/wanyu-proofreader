@@ -87,12 +87,12 @@
         <form class="member-add-form" @submit.prevent="addMember">
           <div class="member-candidate-search">
             <input v-model="candidateTerm" class="form-control" type="search"
-                   placeholder="按用户名或昵称查找" aria-label="查找要添加的用户"
+                   placeholder="输入完整用户名或昵称" aria-label="按完整用户名或昵称查找用户"
                    @keyup.enter.prevent="searchCandidates">
             <button class="btn btn-secondary" type="button" :disabled="searchingCandidates" @click="searchCandidates">查找</button>
           </div>
           <p v-if="candidateSearched && !availableCandidates.length" class="field-hint">
-            没有查找到可添加的用户。对方也可以用项目口令自助加入，或由平台管理员分配账号。
+            没有精确匹配到的用户。查找需要完整用户名或完整昵称；对方也可以用项目口令自助加入，或由平台管理员分配账号。
           </p>
           <select v-model="newMember.userId" class="form-control" required>
             <option value="">选择用户</option>

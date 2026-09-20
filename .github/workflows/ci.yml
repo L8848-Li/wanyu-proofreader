@@ -278,10 +278,8 @@ jobs:
         run: go test ./...
       - name: Verify every migration up, down and up again
         run: python3 backend/tests/check_migrations.py
-      - name: Verify offline backup and restore
-        run: python3 -m unittest discover -s backend/tests -p test_backup.py
-      - name: Test keyboard CSV coverage audit
-        run: python3 -m unittest discover -s backend/tests -p test_keyboard_audit.py
+      - name: Backend guard and tooling unit tests
+        run: python3 -m unittest discover -s backend/tests -p 'test_*.py'
       - name: Verify Unicode import, proofreading, arbitration and restart persistence
         run: python3 backend/tests/run_rare_characters_integration.py
       - name: Publish Go coverage summary

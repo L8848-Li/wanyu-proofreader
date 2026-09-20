@@ -38,6 +38,8 @@ check: verify-static test lint verify-versions verify-migrations verify-compose
 	@printf '\ncheck: all gates passed\n'
 
 verify-static:
+	@python3 -c 'import yaml' 2>/dev/null || { \
+	  echo 'PyYAML is required by the repository guards: python3 -m pip install -r requirements-dev.txt'; exit 1; }
 	@echo 'gofmt -l $(BACKEND)'
 	@out=$$(cd $(BACKEND) && gofmt -l .); test -z "$$out" || { printf 'not gofmt-clean:\n%s\n' "$$out"; exit 1; }
 	@echo 'go vet ./...'
@@ -89,8 +91,7 @@ test-integration:
 
 verify-migrations:
 	@python3 $(BACKEND)/tests/check_migrations.py
-	@python3 -m unittest discover -s $(BACKEND)/tests -p test_backup.py -v
-	@python3 -m unittest discover -s $(BACKEND)/tests -p test_keyboard_audit.py -v
+	@python3 -m unittest discover -s $(BACKEND)/tests -p 'test_*.py'
 
 coverage:
 	@cd $(BACKEND) && go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1

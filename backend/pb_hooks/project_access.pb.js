@@ -308,19 +308,22 @@ routerAdd("GET", "/api/fangji/projects/{projectId}/member-candidates", (c) => {
   // redacted outside emailVisibility, so a manager or owner is offered the people
   // already connected to the projects they run — never the platform roster.
   // A freshly created project has no members yet, so `term` restores the documented
-  // "add a person I already know" flow as a bounded lookup instead of a listing.
+  // "add a person I already know" flow. It is an EXACT identifier match on purpose:
+  // a contains/LIKE search over all users would let any project manager sweep the
+  // roster two characters at a time, which is the boundary this change removes.
+  // Being able to confirm one known username is an existence oracle, so lookups
+  // are still capped, and rate limiting is tracked as follow-up.
   const term = String(c.request.url.query().get("term") || "").trim()
   const pool = new Set([auth.id, managedProject.getString("admin")])
   // A negated class, not \p{L}: goja has no Unicode property escapes, and an
   // unsupported class silently matches almost nothing. This blocks the characters
-  // that could break out of the filter or widen the LIKE (quotes, backslash, % and _).
+  // that could break out of the filter, and % and _ which would widen a LIKE.
   if (term && !/^[^"'\\%`_;(){}<>=!|&*?~\n\r\t]{2,64}$/.test(term)) {
-    throw new BadRequestError("搜索词需为 2-64 个字符，且不能包含引号、%、_ 或括号")
+    throw new BadRequestError("查找词需为 2-64 个字符，且不能包含引号、%、_ 或括号")
   }
   if (term) {
-    // Quotes and backslashes are impossible here, so the filter cannot be broken out of.
     for (const user of dao.findRecordsByFilter(
-      "users", `name ~ "${term}" || username ~ "${term}"`, "name,username", 50, 0)) {
+      "users", `name = "${term}" || username = "${term}"`, "name,username", 50, 0)) {
       pool.add(user.id)
     }
   } else if (fangjiIsPlatformAdmin(auth)) {
