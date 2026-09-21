@@ -8,6 +8,7 @@ rather than matched against the file as text — so deleting a job, or leaving t
 job's name behind in a comment, can no longer keep this guard green.
 """
 import json
+import re
 import sys
 
 import harness
@@ -42,10 +43,26 @@ def ci_builds_matrix_from_registry(workflow):
     if expression != MATRIX_EXPRESSION:
         return False
     commands = run_commands(workflow)
-    # The prepare job must really read the registry, not emit a constant list,
-    # and the matrix job must still execute the suites it was handed.
-    return ('suites.json' in commands.get(PREPARE_JOB, '')
-            and 'run_integration.py' in commands.get(MATRIX_JOB, ''))
+    # The prepare job must really read the registry, not emit a constant list.
+    if 'suites.json' not in commands.get(PREPARE_JOB, ''):
+        return False
+    # Feeding the matrix is not enough on its own: the dispatched
+    # ${{ matrix.suite }} must reach a run step. Otherwise all eleven matrix
+    # jobs can exist while each one runs the same hard-coded suite file, and
+    # main() below skips them precisely because matrix_driven is true. This
+    # workflow passes the value through env:, which run_commands() never sees
+    # (it only collects step['run']), so env has to be inspected too — matching
+    # only on run would falsely reject a clean main.
+    for step in (matrix.get('steps') or []):
+        if not isinstance(step, dict) or not step.get('run'):
+            continue
+        run = str(step['run'])
+        env_values = ' '.join(str(v) for v in (step.get('env') or {}).values())
+        if 'matrix.suite' in run:
+            return True
+        if '${{ matrix.suite }}' in env_values and re.search(r'\$\{(SUITE|suite)\b', run):
+            return True
+    return False
 
 
 def main():

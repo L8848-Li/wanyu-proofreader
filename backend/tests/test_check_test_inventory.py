@@ -57,6 +57,17 @@ class MatrixLink(unittest.TestCase):
         self.assertNotEqual(mutated, self.real, 'the mutation did not apply')
         self.assertFalse(inventory.ci_builds_matrix_from_registry(workflow(mutated)))
 
+    def test_unconsumed_matrix_value_is_rejected(self):
+        # The bypass this guards against: the matrix job still fans out into
+        # eleven jobs and still names run_integration.py, but the dispatched
+        # ${{ matrix.suite }} is pinned to a constant, so every job runs the
+        # same suite. The anchor survives; only the consumption breaks.
+        mutated = self.real.replace(
+            '          SUITE: ${{ matrix.suite }}',
+            '          SUITE: core_logic')
+        self.assertNotEqual(mutated, self.real, 'the mutation did not apply')
+        self.assertFalse(inventory.ci_builds_matrix_from_registry(workflow(mutated)))
+
 
 class GuardExitCodes(unittest.TestCase):
     def run_against(self, ci_text):
@@ -111,6 +122,9 @@ class DeletedRunStepsAreCaught(GuardExitCodes):
         ('the guard itself is no longer invoked',
          'run: python3 check_test_inventory.py',
          'run: echo skipped'),
+        ('the matrix value is pinned to a constant instead of consumed',
+         '          SUITE: ${{ matrix.suite }}',
+         '          SUITE: core_logic'),
     )
 
     def test_each_deletion_fails(self):
