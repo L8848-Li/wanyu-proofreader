@@ -4,25 +4,6 @@
 
 ## Unreleased
 
-### 工程质量与开发工具（2026-09-19）
-
-- 新增根目录 `Makefile`：`make check` 一次跑完推送前应执行的全部门禁，`make ci` 追加集成套件、前端构建与镜像构建。
-- 新增 `backend/tests/run_all.py` 与 `backend/tests/harness.py`：一次编译共享给全部集成套件，每套仍使用独立临时数据目录；套件清单集中在 `backend/tests/suites.json`，CI 矩阵由它生成。
-- 新增静态检查门禁：`gofmt -l`、`go vet ./...`、前端 ESLint（`eslint:recommended` + `vue/essential`，仅正确性规则）、`go test -race` 与竞态下的导入/租约集成套件。
-- 新增三个一致性守卫：`check_test_inventory.py`（磁盘套件 vs `suites.json` vs CI vs 文档）、`check_runtime_versions.py`（Node/Go/PocketBase/Dependabot 声明互相印证）、`scripts/check_compose_structure.py`（把 CI 里四段无法本地复用的 jq 断言变成可执行检查）。
-- 迁移校验改为通用 `check_migrations.py`：逐条 up/down/up，覆盖此前从未被执行过的 `1788941000_pagination_indexes.js`，并断言初始 schema 拒绝回滚；替换两个各自硬编码单一索引名的 `check_pdf_affinity.py` 与 `check_join_retention.py`。
-- 空项目的所有者/管理员可用 `term` 按**完整**用户名或昵称精确查人（刻意不用模糊匹配：任何 2 字符 LIKE 都会让项目管理员逐段扫完全平台名册，正是本次要收掉的边界）；前端查找框文案与空结果提示同步说明需要完整名称。
-- 新增 `backend/tests/seed_demo.mjs`：经真实 CSV 导入链路灌入一个可复核的演示项目，含一致结果与一条待仲裁分歧。
-- 新增 `ops/audit_storage.py`：只读巡检 `pb_data` 体积、PDF 预览缓存与上传暂存残留、磁盘水位，超限非零退出以便接入调度。
-- 后端镜像现在注入 `version`/`commit`/`build_date` 并在启动日志打印，补齐运维备份记录所需的构建版本；三个 Compose 入口与 `backend/.dockerignore` 同步更新。
-- 前端补齐权限判定与任务定位单测：`src/lib/access.js` 抽出登录态、落地页与路由守卫判定，`tests/accessControl.test.js`、`tests/taskNeighbors.test.js`、`tests/structuredRow.test.js` 覆盖此前 0 覆盖的角色门禁与 `n/m` 计数器。
-- `member-candidates` 路由加入集成断言：字段形状、姓名排序以及非管理者 403、未登录 401。
-- 新增 `frontend-image-parity` job：前端镜像以 Node 26 构建，而 CI 此前只在 24 上验证，发布用的构建环境从未被测过；守卫现在要求镜像的大版本必须有对应 job 覆盖。
-- 集成测试服务器以 `-race` 构建时设 `GORACE=halt_on_error=1` 并在日志中检出 `DATA RACE` 即失败；独立二进制默认只打警告并退出 0，否则竞态永远测不出来。
-- CI 的 `git diff --check` 改为对比 PR base（裸命令比较工作树与索引，检出后必然干净）；镜像构建注入 `COMMIT` 并写入 OCI 标签，备份记录可直接读取。
-- **安全收敛**：`GET /api/fangji/projects/{id}/member-candidates` 此前会用无范围读取列出**全平台账号**（含 `email`，同时绕过 `users.listRule` 仅平台管理员可列出、以及 `emailVisibility` 脱敏）。现收敛为：项目管理员只看到与自己管理的项目相关的账号（含本项目所有者与成员），响应不再包含 `email`，并按 name→username 码元序稳定排序、设 200/500 上限；平台管理员保留列出权限（同样只有 200 条硬上限，尚无游标分页）。前端成员与转让选择器随之去掉 `email` 回退。志愿者批量开通与项目密码自助加入不依赖该接口，不受影响。
-- 修正文档与配置漂移：README 技术栈版本、Dependabot 更新频率描述、项目结构树、`pocketbase` 二进制来源说明；`frontend` 镜像 Node 26 与 `engines` 约束现已一致。
-
 - 校对员项目大厅和编辑器不再显示一校、二校等轮次线索，只呈现可领取任务、进行中任务和独立校对操作。
 - 管理员仲裁复用 PDF 双栏审阅工作区，可对照条目实际关联的 PDF，动态比较全部校对结果并使用字符板编辑最终值。
 - 管理员控制台新增异常优先排序与项目管线概览；项目状态可直达筛选结果，仲裁要求显式确认全部差异并提供批量来源选择与离开保护。
@@ -60,3 +41,22 @@
   - `.env.example` 用于生产 `docker-compose.yml`。
   - `.env.dev.example` 用于开发 `docker-compose.dev.yml`。
 - 生产配置统一使用 `BACKEND_URL` 表示浏览器可访问的后端地址，移除生产 compose 中的旧 `PB_URL` 兼容变量。
+
+### 工程质量与开发工具（2026-09-19）
+
+- 新增根目录 `Makefile`：`make check` 一次跑完推送前应执行的全部门禁，`make ci` 追加集成套件、前端构建与镜像构建。
+- 新增 `backend/tests/run_all.py` 与 `backend/tests/harness.py`：一次编译共享给全部集成套件，每套仍使用独立临时数据目录；套件清单集中在 `backend/tests/suites.json`，CI 矩阵由它生成。
+- 新增静态检查门禁：`gofmt -l`、`go vet ./...`、前端 ESLint（`eslint:recommended` + `vue/essential`，仅正确性规则）、`go test -race` 与竞态下的导入/租约集成套件。
+- 新增三个一致性守卫：`check_test_inventory.py`（磁盘套件 vs `suites.json` vs CI vs 文档）、`check_runtime_versions.py`（Node/Go/PocketBase/Dependabot 声明互相印证）、`scripts/check_compose_structure.py`（把 CI 里四段无法本地复用的 jq 断言变成可执行检查）。
+- 迁移校验改为通用 `check_migrations.py`：逐条 up/down/up，覆盖此前从未被执行过的 `1788941000_pagination_indexes.js`，并断言初始 schema 拒绝回滚；替换两个各自硬编码单一索引名的 `check_pdf_affinity.py` 与 `check_join_retention.py`。
+- 空项目的所有者/管理员可用 `term` 按**完整**用户名或昵称精确查人（刻意不用模糊匹配：任何 2 字符 LIKE 都会让项目管理员逐段扫完全平台名册，正是本次要收掉的边界）；前端查找框文案与空结果提示同步说明需要完整名称。
+- 新增 `backend/tests/seed_demo.mjs`：经真实 CSV 导入链路灌入一个可复核的演示项目，含一致结果与一条待仲裁分歧。
+- 新增 `ops/audit_storage.py`：只读巡检 `pb_data` 体积、PDF 预览缓存与上传暂存残留、磁盘水位，超限非零退出以便接入调度。
+- 后端镜像现在注入 `version`/`commit`/`build_date` 并在启动日志打印，补齐运维备份记录所需的构建版本；三个 Compose 入口与 `backend/.dockerignore` 同步更新。
+- 前端补齐权限判定与任务定位单测：`src/lib/access.js` 抽出登录态、落地页与路由守卫判定，`tests/accessControl.test.js`、`tests/taskNeighbors.test.js`、`tests/structuredRow.test.js` 覆盖此前 0 覆盖的角色门禁与 `n/m` 计数器。
+- `member-candidates` 路由加入集成断言：字段形状、姓名排序以及非管理者 403、未登录 401。
+- 新增 `frontend-image-parity` job：前端镜像以 Node 26 构建，而 CI 此前只在 24 上验证，发布用的构建环境从未被测过；守卫现在要求镜像的大版本必须有对应 job 覆盖。
+- 集成测试服务器以 `-race` 构建时设 `GORACE=halt_on_error=1` 并在日志中检出 `DATA RACE` 即失败；独立二进制默认只打警告并退出 0，否则竞态永远测不出来。
+- CI 的 `git diff --check` 改为对比 PR base（裸命令比较工作树与索引，检出后必然干净）；镜像构建注入 `COMMIT` 并写入 OCI 标签，备份记录可直接读取。
+- **安全收敛**：`GET /api/fangji/projects/{id}/member-candidates` 此前会用无范围读取列出**全平台账号**（含 `email`，同时绕过 `users.listRule` 仅平台管理员可列出、以及 `emailVisibility` 脱敏）。现收敛为：项目管理员只看到与自己管理的项目相关的账号（含本项目所有者与成员），响应不再包含 `email`，并按 name→username 码元序稳定排序、设 200/500 上限；平台管理员保留列出权限（同样只有 200 条硬上限，尚无游标分页）。前端成员与转让选择器随之去掉 `email` 回退。志愿者批量开通与项目密码自助加入不依赖该接口，不受影响。
+- 修正文档与配置漂移：README 技术栈版本、Dependabot 更新频率描述、项目结构树、`pocketbase` 二进制来源说明；`frontend` 镜像 Node 26 与 `engines` 约束现已一致。

@@ -11,6 +11,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -21,11 +23,17 @@ def engines_range(text):
     return low, high
 
 
+def read(relative):
+    path = ROOT / relative
+    if not path.exists():
+        raise SystemExit(f'{relative} is missing; this guard cannot verify what it no longer finds')
+    return path.read_text()
+
+
 def node_majors():
     """Every place a Node major version is declared for build or test."""
     found = {}
-    dockerfile = (ROOT / 'frontend' / 'Dockerfile').read_text()
-    for match in re.finditer(r'FROM\s+node:(\d+)', dockerfile, re.IGNORECASE):
+    for match in re.finditer(r'FROM\s+node:(\d+)', read('frontend/Dockerfile'), re.IGNORECASE):
         found['frontend/Dockerfile'] = match.group(1)
     nvmrc = ROOT / 'frontend' / '.nvmrc'
     if nvmrc.exists():
@@ -34,6 +42,27 @@ def node_majors():
         for match in re.finditer(r'node-version:\s*["\']?(\d+)', workflow.read_text()):
             found[f'{workflow.relative_to(ROOT)}:{match.start()}'] = match.group(1)
     return found
+
+
+def npm_tested_node_majors():
+    """Majors declared by CI jobs whose steps actually run npm.
+
+    Counting `node-version:` strings anywhere would let an unrelated job mention
+    the image's major and silence the parity rule without testing anything.
+    """
+    majors = set()
+    for workflow in sorted((ROOT / '.github' / 'workflows').glob('*.yml')):
+        document = yaml.safe_load(workflow.read_text()) or {}
+        for job in (document.get('jobs') or {}).values():
+            steps = [step for step in (job.get('steps') or []) if isinstance(step, dict)]
+            scripts = '\n'.join(str(step.get('run') or '') for step in steps)
+            if 'npm' not in scripts:
+                continue
+            for step in steps:
+                version = str((step.get('with') or {}).get('node-version') or '')
+                if version.isdigit():
+                    majors.add(version)
+    return majors
 
 
 def pocketbase_claims(go_mod):
@@ -47,7 +76,7 @@ def pocketbase_claims(go_mod):
     # record that quotes the versions it upgraded *from*, which a text match cannot
     # tell apart from a current claim.
     for name in ('README.md', 'docs/operations.md', 'CONTRIBUTING.md'):
-        text = (ROOT / name).read_text()
+        text = read(name)
         for match in pattern.finditer(text):
             found += 1
             claim = match.group(1)
@@ -63,8 +92,8 @@ def pocketbase_claims(go_mod):
 
 def main():
     problems = []
-    go_mod = (ROOT / 'backend' / 'go.mod').read_text()
-    package = json.loads((ROOT / 'frontend' / 'package.json').read_text())
+    go_mod = read('backend/go.mod')
+    package = json.loads(read('frontend/package.json'))
     engines = package.get('engines', {}).get('node')
     if not engines:
         problems.append('frontend/package.json declares no engines.node range')
@@ -76,15 +105,17 @@ def main():
         for source, major in sorted(declared.items()):
             if not low <= int(major) <= high:
                 problems.append(f'{source} uses Node {major}, outside engines.node "{engines}"')
-        # Whatever the image builds with must also be exercised by CI, or the
-        # shipped configuration has never been tested.
+        # Whatever the image builds with must also be exercised by a CI job that
+        # really runs npm, or the shipped configuration has never been tested.
         image_major = declared.get('frontend/Dockerfile')
-        tested = {major for source, major in declared.items() if 'workflows' in source}
+        tested = npm_tested_node_majors()
+        if not tested:
+            problems.append('no CI job declares a Node version while running npm, so nothing verifies the frontend')
         if image_major and image_major not in tested:
-            problems.append(f'frontend/Dockerfile builds on Node {image_major} but CI only tests {sorted(tested)}')
+            problems.append(f'frontend/Dockerfile builds on Node {image_major} but the jobs that run npm use {sorted(tested)}')
 
     go_version = re.search(r'^go (\d+)\.(\d+)', go_mod, re.MULTILINE)
-    image = re.search(r'FROM\s+golang:(\d+)(?:\.(\d+))?', (ROOT / 'backend' / 'Dockerfile').read_text())
+    image = re.search(r'FROM\s+golang:(\d+)(?:\.(\d+))?', read('backend/Dockerfile'))
     if not go_version:
         problems.append('backend/go.mod declares no go directive')
     if not image:
@@ -100,15 +131,15 @@ def main():
 
     sdk = package['dependencies']['pocketbase']
     for name in ('README.md',):
-        for match in re.finditer(r'SDK\s+(\d+\.\d+\.\d+)', (ROOT / name).read_text()):
+        for match in re.finditer(r'SDK\s+(\d+\.\d+\.\d+)', read(name)):
             if sdk.lstrip('^~') != match.group(1):
                 problems.append(f'{name} says SDK {match.group(1)} but package.json pins {sdk}')
 
-    intervals = set(re.findall(r'interval:\s*(\w+)', (ROOT / '.github' / 'dependabot.yml').read_text()))
+    intervals = set(re.findall(r'interval:\s*(\w+)', read('.github/dependabot.yml')))
     # Only Dependabot *updates* are the subject here; the audit workflow is
     # deliberately a weekly cron, so scan line by line instead of whole files.
     for name in ('docs/dependency-upgrades.md', 'README.md'):
-        for number, line in enumerate((ROOT / name).read_text().splitlines(), start=1):
+        for number, line in enumerate(read(name).splitlines(), start=1):
             if 'Dependabot' not in line and 'dependabot' not in line:
                 continue
             if '每周' in line and 'weekly' not in intervals:

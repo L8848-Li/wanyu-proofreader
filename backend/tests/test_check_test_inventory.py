@@ -87,5 +87,49 @@ class GuardExitCodes(unittest.TestCase):
             self.assertEqual(self.run_against(self.real_ci()), 0)
 
 
+class DeletedRunStepsAreCaught(GuardExitCodes):
+    """The guard must notice when CI stops executing something it claims to cover.
+
+    Substring matching against the whole workflow could not see this: the job
+    names and suite names survive in comments and in unrelated steps after the
+    `run:` that does the work is deleted.
+    """
+
+    MUTATIONS = (
+        ('matrix job no longer runs its suites',
+         'run: python3 backend/tests/run_integration.py "${SUITE}_integration.mjs"',
+         'run: echo skipped'),
+        ('the dedicated rare-characters runner is no longer invoked',
+         'run: python3 backend/tests/run_rare_characters_integration.py',
+         'run: echo skipped'),
+        ('the migration verifier is no longer invoked',
+         'run: python3 backend/tests/check_migrations.py',
+         'run: echo skipped'),
+        ('a suite is no longer invoked anywhere',
+         'run: python3 backend/tests/run_integration.py pdf_chunks_integration.mjs',
+         'run: echo skipped'),
+        ('the guard itself is no longer invoked',
+         'run: python3 check_test_inventory.py',
+         'run: echo skipped'),
+    )
+
+    def test_each_deletion_fails(self):
+        for label, anchor, replacement in self.MUTATIONS:
+            mutated = self.real_ci().replace(anchor, replacement)
+            self.assertNotEqual(mutated, self.real_ci(), f'mutation did not apply: {label}')
+            with self.subTest(label):
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    self.assertEqual(self.run_against(mutated), 1)
+
+    def test_commented_out_keys_alone_do_not_count(self):
+        # The original bypass: the magic strings survive inside comments.
+        mutated = self.real_ci().replace(
+            '        run: python3 backend/tests/run_integration.py "${SUITE}_integration.mjs"\n',
+            '        # run: python3 backend/tests/run_integration.py "${SUITE}_integration.mjs"\n')
+        self.assertNotEqual(mutated, self.real_ci(), 'the mutation did not apply')
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(self.run_against(mutated), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

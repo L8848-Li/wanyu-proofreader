@@ -12,6 +12,9 @@ COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 SUITES ?=
 JOBS ?= 4
+# CI diffs against the PR base; a bare `git diff --check` only compares the
+# working tree to the index and is clean right after a checkout.
+BASE ?= $(shell git merge-base upstream/main HEAD 2>/dev/null || git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD~1)
 
 .PHONY: help check lint format test test-go test-node test-integration \
 	coverage verify-static verify-migrations verify-compose verify-versions \
@@ -46,9 +49,11 @@ verify-static:
 	@cd $(BACKEND) && go vet ./...
 	@echo 'test inventory (suites.json vs disk vs ci vs CONTRIBUTING)'
 	@cd $(BACKEND)/tests && python3 check_test_inventory.py
-	@echo 'compose guard self-tests'
+	@echo 'guard and tooling self-tests'
 	@python3 -m unittest discover -s scripts -p 'test_*.py'
-	@echo 'whitespace (working tree and index)'
+	@python3 -m unittest discover -s ops -p 'test_*.py'
+	@echo 'whitespace (committed range, working tree and index)'
+	@test -n "$(BASE)" && git diff --check $(BASE) HEAD
 	@git diff --check
 	@git diff --cached --check
 

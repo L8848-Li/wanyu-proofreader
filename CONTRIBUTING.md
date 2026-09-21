@@ -35,6 +35,14 @@ make check
 
 它依次执行 gofmt/`go vet`、前端 ESLint、运行时版本与文档一致性、集成套件清单校验、
 Compose 不变量、`git diff --check`、Go 与前端单测以及迁移 up/down/up 校验。
+
+守卫脚本依赖 PyYAML，首次使用前装一次：
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+```
+
+缺少它时 `make check` 会直接给出上面这条命令，而不是抛 `ModuleNotFoundError`。
 本机没有 Docker 时，`verify-compose` 会显式打印 `SKIP` 并改跑纯 Python 结构检查，
 真正的 `docker compose config` 断言仍由 CI 执行。
 

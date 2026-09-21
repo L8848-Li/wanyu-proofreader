@@ -47,6 +47,30 @@ SPECS = {
 FIRST = '1788940000_initial_schema.js'
 
 
+def spec_coverage(migrations_dir=None, specs=None):
+    """Reconcile SPECS against the migrations on disk, without booting anything.
+
+    Deriving the migration list from a disk glob alone made this file weaker than
+    the two hardcoded scripts it replaced: move a migration out and the run still
+    reported PASS, because SPECS is only ever read by `SPECS.get(name)`. Both
+    directions must fail — a migration without assertions, and an assertion for a
+    migration that no longer exists.
+    """
+    root = Path(migrations_dir) if migrations_dir else harness.MIGRATIONS
+    specs = SPECS if specs is None else specs
+    on_disk = sorted(path.name for path in root.glob('*.js'))
+    problems = []
+    if FIRST not in on_disk:
+        problems.append(f'{FIRST} is absent from {root}, so the verifier would pass vacuously')
+    for name in on_disk:
+        if name != FIRST and name not in specs:
+            problems.append(f'{name} is walked but has no assertions in SPECS')
+    for name in sorted(specs):
+        if name not in on_disk:
+            problems.append(f'SPECS covers {name} but that migration no longer exists')
+    return on_disk, problems
+
+
 def migrate(binary, data, *command, expect_success=True):
     env = {**os.environ, 'FANGJI_SKIP_ADMIN_BOOTSTRAP': '1'}
     result = subprocess.run([str(binary), 'migrate', *[str(part) for part in command],
@@ -109,11 +133,14 @@ def assert_state(data, expected, through, problems, context):
 
 
 def main():
-    problems = []
+    expected, problems = spec_coverage()
+    if problems:
+        for problem in problems:
+            print(f'migration coverage drift: {problem}', file=sys.stderr)
+        return 1
     with harness.temporary_root() as root:
         binary = harness.build_binary(root / 'pocketbase')
         data = root / 'data'
-        expected = sorted(path.name for path in harness.MIGRATIONS.glob('*.js'))
         rollbackable = [name for name in expected if name != FIRST]
 
         migrate(binary, data, 'up')

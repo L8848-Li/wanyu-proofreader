@@ -82,6 +82,8 @@ jobs:
         run: |
           python3 scripts/check_compose_structure.py
           python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Storage audit invariants
+        run: python3 -m unittest discover -s ops -p 'test_*.py'
       - name: Whitespace hygiene
         # A bare `git diff --check` compares the working tree to the index, which
         # is always clean right after checkout, so it can never fail in CI.
@@ -273,6 +275,11 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Python dependencies for the repository guards
+        run: python3 -m pip install --quiet -r requirements-dev.txt
       - name: Run backend tests
         working-directory: backend
         run: go test ./...
