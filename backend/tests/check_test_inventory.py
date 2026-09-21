@@ -3,9 +3,10 @@
 
 The matrix used to live only inside ci.yml, so CONTRIBUTING.md listed four
 suites while CI ran eleven. Adding a suite file now requires registering it, and
-every coverage claim below is read out of the parsed workflow's `run:` steps
-rather than matched against the file as text — so deleting a job, or leaving the
-job's name behind in a comment, can no longer keep this guard green.
+every coverage claim below is read out of the parsed workflow's `run:` steps and
+the `env:` that feeds them, rather than matched against the file as text — so
+deleting a job, leaving the job's name behind in a comment, or pinning a matrix
+value to a constant can no longer keep this guard green.
 """
 import json
 import re
@@ -43,26 +44,25 @@ def ci_builds_matrix_from_registry(workflow):
     if expression != MATRIX_EXPRESSION:
         return False
     commands = run_commands(workflow)
-    # The prepare job must really read the registry, not emit a constant list.
-    if 'suites.json' not in commands.get(PREPARE_JOB, ''):
+    # The prepare job must really read the registry, not emit a constant list,
+    # and the matrix job must still be the one running the suites it was handed.
+    if ('suites.json' not in commands.get(PREPARE_JOB, '')
+            or 'run_integration.py' not in commands.get(MATRIX_JOB, '')):
         return False
-    # Feeding the matrix is not enough on its own: the dispatched
-    # ${{ matrix.suite }} must reach a run step. Otherwise all eleven matrix
-    # jobs can exist while each one runs the same hard-coded suite file, and
-    # main() below skips them precisely because matrix_driven is true. This
-    # workflow passes the value through env:, which run_commands() never sees
-    # (it only collects step['run']), so env has to be inspected too — matching
-    # only on run would falsely reject a clean main.
-    for step in (matrix.get('steps') or []):
-        if not isinstance(step, dict) or not step.get('run'):
-            continue
-        run = str(step['run'])
-        env_values = ' '.join(str(v) for v in (step.get('env') or {}).values())
-        if 'matrix.suite' in run:
-            return True
-        if '${{ matrix.suite }}' in env_values and re.search(r'\$\{(SUITE|suite)\b', run):
-            return True
-    return False
+    steps = [step for step in (matrix.get('steps') or []) if isinstance(step, dict)]
+    runs = '\n'.join(str(step['run']) for step in steps if step.get('run'))
+    if 'matrix.suite' in runs:
+        return True
+    # Which names the matrix value was handed to: a step env entry, or a job
+    # env entry every step of the job inherits. Reading the key out of the YAML
+    # instead of assuming one keeps any alias and any `${{matrix.suite}}` spacing
+    # working. Only steps that run can consume it, so an `env:` hanging off a
+    # `uses:` step leaves the value handed out but never used.
+    handed = ([step.get('env') or {} for step in steps if step.get('run')]
+              + [matrix.get('env') or {}])
+    names = {str(key) for env in handed for key, value in env.items()
+             if re.search(r'\$\{\{\s*matrix\.suite', str(value))}
+    return any(re.search(r'\$\{' + re.escape(name) + r'\}', runs) for name in names)
 
 
 def main():

@@ -68,6 +68,50 @@ class MatrixLink(unittest.TestCase):
         self.assertNotEqual(mutated, self.real, 'the mutation did not apply')
         self.assertFalse(inventory.ci_builds_matrix_from_registry(workflow(mutated)))
 
+    def test_legitimate_spellings_of_the_handoff_are_accepted(self):
+        # The guard reads the env key out of the YAML instead of assuming one, so
+        # these valid ways of passing the value cannot make a clean main red. The
+        # first version of this check matched the literal `${{ matrix.suite }}`
+        # and the literal name SUITE, and rejected all of them.
+        cases = (
+            ('a step env under another name',
+             '          SUITE: ${{ matrix.suite }}\n        run: python3 backend/tests/run_integration.py "${SUITE}_integration.mjs"',
+             '          SUITE_NAME: ${{ matrix.suite }}\n        run: python3 backend/tests/run_integration.py "${SUITE_NAME}_integration.mjs"'),
+            ('an expression written without spaces',
+             '          SUITE: ${{ matrix.suite }}',
+             '          SUITE: ${{matrix.suite}}'),
+        )
+        for label, anchor, replacement in cases:
+            with self.subTest(label):
+                mutated = self.real.replace(anchor, replacement, 1)
+                self.assertNotEqual(mutated, self.real, 'the mutation did not apply')
+                self.assertTrue(
+                    inventory.ci_builds_matrix_from_registry(workflow(mutated)))
+
+    def test_job_level_env_is_accepted(self):
+        # A job-level env: reaches every step of the job, so the value really is
+        # consumed even though no step declares it.
+        mutated = self.real.replace(
+            '        env:\n          SUITE: ${{ matrix.suite }}\n', '', 1)
+        self.assertNotEqual(mutated, self.real, 'the step env removal did not apply')
+        mutated = mutated.replace(
+            '    needs: prepare-matrix\n',
+            '    needs: prepare-matrix\n    env:\n      SUITE: ${{ matrix.suite }}\n', 1)
+        self.assertNotEqual(mutated, self.real, 'the job env addition did not apply')
+        self.assertTrue(inventory.ci_builds_matrix_from_registry(workflow(mutated)))
+
+    def test_expanding_the_value_without_testing_anything_is_rejected(self):
+        # Pinning the matrix value is not the only way to stop testing suites:
+        # the step can still expand ${SUITE} while running nothing. So the
+        # substitution alone must not be enough — the job has to keep running the
+        # integration runner. Drop that requirement and this reads as consumed,
+        # matrix_driven stays true, and main() skips all eleven matrix suites.
+        mutated = self.real.replace(
+            '        run: python3 backend/tests/run_integration.py "${SUITE}_integration.mjs"',
+            '        run: echo ${SUITE}', 1)
+        self.assertNotEqual(mutated, self.real, 'the mutation did not apply')
+        self.assertFalse(inventory.ci_builds_matrix_from_registry(workflow(mutated)))
+
 
 class GuardExitCodes(unittest.TestCase):
     def run_against(self, ci_text):
@@ -125,6 +169,9 @@ class DeletedRunStepsAreCaught(GuardExitCodes):
         ('the matrix value is pinned to a constant instead of consumed',
          '          SUITE: ${{ matrix.suite }}',
          '          SUITE: core_logic'),
+        ('the matrix step expands ${SUITE} but runs no suite',
+         'run: python3 backend/tests/run_integration.py "${SUITE}_integration.mjs"',
+         'run: echo ${SUITE}'),
     )
 
     def test_each_deletion_fails(self):
