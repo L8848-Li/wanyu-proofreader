@@ -126,8 +126,10 @@ routerAdd("POST", `${FANGJI_API}/projects/{projectId}/claim`, (c) => {
 
 routerAdd("GET", `${FANGJI_API}/pages/{pageId}/task`, (c) => {
   const { assertId: proofAssertId, canProofread: proofCanProofread } = require(`${__hooks}/lib/project_access.js`)
+  const { ownProofreadAttempt: proofOwnAttempt } = require(`${__hooks}/lib/proofreading_workflow.js`)
   const auth = c.auth
   if (!auth) throw new ForbiddenError("无权执行此操作")
+  if (auth.getBool("must_change_password")) throw new ForbiddenError("首次登录请先修改密码")
   const pageId = proofAssertId(c.request.pathValue("pageId"), "条目")
   const dao = $app
   let page = null
@@ -137,30 +139,48 @@ routerAdd("GET", `${FANGJI_API}/pages/{pageId}/task`, (c) => {
   }
   const active = page.getString("proofreader") === auth.id
     && ["claimed", "proofreading"].includes(page.getString("status"))
-  if (!active) throw new ForbiddenError("该任务当前未分配给你")
+  const reviewMode = String(c.request.url.query().get("mode") || "") === "review"
+  // Legacy GET /task stays 403 for submitted pages so the current editor does
+  // not treat a 200 as an assigned task and reclaim another page. #118 should
+  // call this with ?mode=review and skip restoreOrAcquireLease.
+  if (!active && !reviewMode) throw new ForbiddenError("该任务当前未分配给你")
+  const ownAttempt = active ? null : proofOwnAttempt(dao, page, auth.id)
+  if (!active && !ownAttempt) throw new ForbiddenError("该任务当前未分配给你")
 
   const project = dao.findRecordById("projects", page.getString("project"))
-  return c.json(200, {
+  const payload = {
     id: page.id,
     project: page.getString("project"),
     project_file: page.getString("project_file"),
     page_number: page.getInt("page_number"),
     pdf_page: page.getInt("pdf_page"),
     status: page.getString("status"),
-    proofreader: page.getString("proofreader"),
     ocr_text: page.getString("ocr_text"),
     ocr_row_json: page.getString("ocr_row_json"),
     row_headers_json: page.getString("row_headers_json"),
     expand: {
       project: { id: project.id, name: project.getString("name") }
     }
-  })
+  }
+  if (active) {
+    payload.proofreader = page.getString("proofreader")
+    return c.json(200, payload)
+  }
+  // Page status is a derived projection of quorum progress and of whether the
+  // independent results agree, so a read-only review must not carry it.
+  delete payload.status
+  payload.readonly = true
+  // Private attempt fields, not the page's canonical proofread_* after quorum.
+  payload.proofread_row_json = ownAttempt.getString("row_json")
+  payload.proofread_text = ownAttempt.getString("text")
+  return c.json(200, payload)
 }, $apis.requireAuth("users"))
 
 routerAdd("GET", `${FANGJI_API}/projects/{projectId}/tasks/mine`, (c) => {
   const { assertId: proofAssertId, canProofread: proofCanProofread } = require(`${__hooks}/lib/project_access.js`)
   const auth = c.auth
   if (!auth) throw new ForbiddenError("无权执行此操作")
+  if (auth.getBool("must_change_password")) throw new ForbiddenError("首次登录请先修改密码")
   const projectId = proofAssertId(c.request.pathValue("projectId"), "项目")
   const dao = $app
   try { dao.findRecordById("projects", projectId) } catch { throw new NotFoundError("项目不存在") }
@@ -179,6 +199,32 @@ routerAdd("GET", `${FANGJI_API}/projects/{projectId}/tasks/mine`, (c) => {
   })))
 }, $apis.requireAuth("users"))
 
+routerAdd("GET", `${FANGJI_API}/projects/{projectId}/tasks/reviewed`, (c) => {
+  const { assertId: proofAssertId, canProofread: proofCanProofread } = require(`${__hooks}/lib/project_access.js`)
+  const { reviewedProofreads: proofReviewed } = require(`${__hooks}/lib/proofreading_workflow.js`)
+  const auth = c.auth
+  if (!auth) throw new ForbiddenError("无权执行此操作")
+  if (auth.getBool("must_change_password")) throw new ForbiddenError("首次登录请先修改密码")
+  const projectId = proofAssertId(c.request.pathValue("projectId"), "项目")
+  const dao = $app
+  try { dao.findRecordById("projects", projectId) } catch { throw new NotFoundError("项目不存在") }
+  if (!proofCanProofread(dao, projectId, auth)) throw new ForbiddenError("你不是该项目的校对员")
+
+  const cursorPageId = String(c.request.url.query().get("pageId") || "")
+  if (cursorPageId) proofAssertId(cursorPageId, "条目")
+
+  const items = proofReviewed(dao, projectId, auth.id).map(({ page, attempt }) => ({
+    id: page.id,
+    page_number: page.getInt("page_number"),
+    submitted_at: String(attempt.get("submitted_at") || "")
+  }))
+  const index = cursorPageId ? items.findIndex((item) => item.id === cursorPageId) : -1
+  return c.json(200, {
+    items,
+    position: index < 0 ? 0 : index + 1,
+    total: items.length
+  })
+}, $apis.requireAuth("users"))
 
 routerAdd("POST", `${FANGJI_API}/pages/{pageId}/lease/renew`, (c) => {
   const { canProofread: proofCanProofread } = require(`${__hooks}/lib/project_access.js`)

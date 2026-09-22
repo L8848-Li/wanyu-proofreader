@@ -1,5 +1,9 @@
+function currentRound(page) {
+  return page.getInt("proofread_round") || 1
+}
+
 function proofreadAttempts(dao, page) {
-  const round = page.getInt("proofread_round") || 1
+  const round = currentRound(page)
   return dao.findRecordsByFilter(
     "proofreading_attempts",
     `page = "${page.id}" && round = ${round} && kind = "proofread"`,
@@ -9,8 +13,57 @@ function proofreadAttempts(dao, page) {
   )
 }
 
+function ownProofreadAttempt(dao, page, userId) {
+  const round = currentRound(page)
+  const attempts = dao.findRecordsByFilter(
+    "proofreading_attempts",
+    `page = "${page.id}" && round = ${round} && proofreader = "${userId}" && kind = "proofread"`,
+    "",
+    1,
+    0
+  )
+  return attempts.length ? attempts[0] : null
+}
+
+function reviewedProofreads(dao, projectId, userId) {
+  const pages = dao.findRecordsByFilter(
+    "pages",
+    `project = "${projectId}"`,
+    "page_number",
+    100000,
+    0
+  )
+  const attempts = dao.findRecordsByFilter(
+    "proofreading_attempts",
+    `project = "${projectId}" && proofreader = "${userId}" && kind = "proofread"`,
+    "",
+    100000,
+    0
+  )
+  const attemptsByPage = Object.create(null)
+  for (const attempt of attempts) {
+    const pageId = attempt.getString("page")
+    if (!attemptsByPage[pageId]) attemptsByPage[pageId] = []
+    attemptsByPage[pageId].push(attempt)
+  }
+  const items = []
+  for (const page of pages) {
+    if (page.getString("project") !== projectId) continue
+    const round = currentRound(page)
+    const attempt = (attemptsByPage[page.id] || []).find((row) => row.getInt("round") === round)
+    if (!attempt) continue
+    items.push({ page, attempt })
+  }
+  items.sort((a, b) => {
+    const byNumber = a.page.getInt("page_number") - b.page.getInt("page_number")
+    if (byNumber !== 0) return byNumber
+    return String(a.page.id).localeCompare(String(b.page.id))
+  })
+  return items
+}
+
 function arbitrationAttempt(dao, page) {
-  const round = page.getInt("proofread_round") || 1
+  const round = currentRound(page)
   const attempts = dao.findRecordsByFilter(
     "proofreading_attempts",
     `page = "${page.id}" && round = ${round} && kind = "arbitration"`,
@@ -117,6 +170,8 @@ function reconcileProjectQuorum(dao, projectId) {
 
 module.exports = {
   proofreadAttempts,
+  ownProofreadAttempt,
+  reviewedProofreads,
   arbitrationAttempt,
   requiredProofreads,
   canonicalRow,
