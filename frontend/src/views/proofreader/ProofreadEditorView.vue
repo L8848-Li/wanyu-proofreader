@@ -21,18 +21,18 @@
           <summary>任务操作</summary>
           <RouterLink v-if="mobile" to="/tasks" class="btn btn-quiet">返回大厅</RouterLink>
         <div class="editor-toolbar" aria-label="校对任务导航">
-          <span class="task-position" aria-label="当前任务位置">
-            {{ taskPosition || 1 }} / {{ taskCount || 1 }}
-          </span>
+          <span class="task-position" aria-label="当前任务位置" aria-live="polite">{{ navigationLabel }}</span>
+          <span v-if="navigationHint" class="text-sm text-muted" role="status">{{ navigationHint }}</span>
+          <button v-if="neighborsState === 'error' && !submittedHere" class="btn btn-quiet btn-sm" @click="loadNeighbors">重试获取位置</button>
           <button
             class="btn btn-secondary btn-sm"
             @click="gotoPrevTask"
-            :disabled="!hasNeighborTasks || saving || loadingPage"
+            :disabled="!canSwitchPrev"
           >上一条</button>
           <button
             class="btn btn-secondary btn-sm"
             @click="gotoNextTask"
-            :disabled="!hasNeighborTasks || saving || loadingPage"
+            :disabled="!canSwitchNext"
           >下一条</button>
           <button
             v-if="page && !leaseLost"
@@ -230,6 +230,7 @@ const leaseExpiresAt = ref('')
 const leaseLost = ref(false)
 const renewingLease = ref(false)
 const leaseNavigationAllowed = ref(false)
+const submittedHere = ref(false)
 const textareaRefs = new Map()
 let draftTimer = null
 let leaseRenewTimer = null
@@ -237,6 +238,31 @@ let leaseRenewTimer = null
 const currentUserId = computed(() => getCurrentUserId() || '')
 const projectName = computed(() => page.value?.expand?.project?.name || '当前项目')
 const changedFields = computed(() => getChangedFields(rowHeaders.value, originalRow.value, editedRow.value))
+const canSwitchPrev = computed(() => canNavigatePrev.value && !saving.value && !loadingPage.value && !reviewingSubmission.value && !submittedHere.value)
+const canSwitchNext = computed(() => canNavigateNext.value && !saving.value && !loadingPage.value && !reviewingSubmission.value && !submittedHere.value)
+const navigationLabel = computed(() => {
+  if (submittedHere.value) return '已提交'
+  if (loadingPage.value || neighborsState.value === 'loading') return '位置加载中…'
+  if (neighborsState.value === 'error') return '位置不可用'
+  if (!page.value) return '任务不可用'
+  if (taskCount.value === 0) return '暂无任务'
+  if (taskPosition.value === 0) return '位置未知'
+  return `${taskPosition.value} / ${taskCount.value}`
+})
+const navigationHint = computed(() => {
+  if (submittedHere.value) return '本条已提交，不再计入进行中的任务。'
+  if (loadingPage.value || neighborsState.value === 'loading') return ''
+  if (saving.value) return '正在提交，暂不能切换任务。'
+  if (reviewingSubmission.value) return '请先完成或关闭提交确认。'
+  if (neighborsState.value === 'error') return neighborsError.value
+  if (!page.value) return ''
+  if (taskCount.value === 0) return '当前没有可切换的进行中任务。'
+  if (taskPosition.value === 0) return '当前条目不在进行中任务列表。'
+  if (taskCount.value === 1) return '当前只有这一条进行中的任务。'
+  if (!canNavigatePrev.value) return '已是第一条进行中的任务。'
+  if (!canNavigateNext.value) return '已是最后一条进行中的任务。'
+  return ''
+})
 const leaseStatus = computed(() => {
   if (leaseLost.value) return '租约已失效 · 草稿已保留'
   if (!leaseExpiresAt.value) return ''
@@ -271,12 +297,16 @@ const {
   nextTaskId,
   taskPosition,
   taskCount,
-  hasNeighborTasks,
+  canNavigatePrev,
+  canNavigateNext,
+  neighborsState,
+  neighborsError,
   resetNeighbors,
   loadNeighbors
 } = useTaskNeighbors(page, async (currentPage) => {
   const userId = currentUserId.value
-  if (!currentPage?.project || !userId) return []
+  if (!userId) throw new Error('登录状态已失效，请重新登录后重试。')
+  if (!currentPage?.project) return []
   return listProofreaderNeighborTasks(currentPage.project, userId)
 })
 
@@ -338,6 +368,7 @@ async function loadPage() {
   leaseExpiresAt.value = ''
   leaseLost.value = false
   leaseNavigationAllowed.value = false
+  submittedHere.value = false
   textareaRefs.clear()
 
   try {
@@ -360,12 +391,12 @@ async function loadPage() {
 }
 
 function gotoPrevTask() {
-  if (!prevTaskId.value) return
+  if (!canSwitchPrev.value) return
   router.push(`/tasks/${prevTaskId.value}/edit`)
 }
 
 function gotoNextTask() {
-  if (!nextTaskId.value) return
+  if (!canSwitchNext.value) return
   router.push(`/tasks/${nextTaskId.value}/edit`)
 }
 
@@ -548,10 +579,10 @@ function handleEditorShortcut(event) {
     return
   }
   if (!event.altKey || control || reviewingSubmission.value) return
-  if (event.key === 'ArrowLeft' && prevTaskId.value) {
+  if (event.key === 'ArrowLeft' && canSwitchPrev.value) {
     event.preventDefault()
     gotoPrevTask()
-  } else if (event.key === 'ArrowRight' && nextTaskId.value) {
+  } else if (event.key === 'ArrowRight' && canSwitchNext.value) {
     event.preventDefault()
     gotoNextTask()
   }
@@ -575,6 +606,8 @@ async function submitProofread() {
     reviewingSubmission.value = false
     initialRowJson.value = rowJson
     page.value.status = result.status
+    submittedHere.value = true
+    resetNeighbors()
     clearTaskDraft(window.localStorage, {
       userId,
       pageId: page.value.id
@@ -603,7 +636,6 @@ async function submitProofread() {
       console.warn('Failed to claim next page after successful proofread submit:', claimError)
     }
 
-    await loadNeighbors()
   } catch (e) {
     const message = getPbMessage(e, '提交失败，请重试')
     if (isLeaseFailure(message)) markLeaseLost(message)
