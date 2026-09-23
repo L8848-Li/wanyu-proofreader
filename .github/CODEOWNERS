@@ -19,3 +19,10 @@
 /backend/ops/**                  @L8848-Li @lin594
 /backend/Dockerfile              @L8848-Li @lin594
 /docker-compose*.yml             @L8848-Li @lin594
+
+# CHANGELOG.md is frozen until the first Release, when its layout gets redesigned
+# (version boundaries, grouping, backfill). Every note used to be inserted at the
+# same anchor under `## Unreleased`, so parallel pull requests kept colliding on a
+# line neither change owned. This entry is what enforces the freeze: no edit lands
+# without a maintainer's approval, and no contributor's CI goes red over it.
+/CHANGELOG.md                    @L8848-Li @lin594
