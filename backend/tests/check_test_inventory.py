@@ -6,7 +6,8 @@ suites while CI ran eleven. Adding a suite file now requires registering it, and
 every coverage claim below is read out of the parsed workflow's `run:` steps and
 the `env:` that feeds them, rather than matched against the file as text — so
 deleting a job, leaving the job's name behind in a comment, or pinning a matrix
-value to a constant can no longer keep this guard green.
+value to a constant can no longer keep this guard green. A step only counts as
+feeding a suite when it runs the suite runner itself.
 """
 import json
 import re
@@ -22,6 +23,10 @@ TESTS = harness.BACKEND / 'tests'
 MATRIX_JOB = 'pocketbase-compatibility'
 PREPARE_JOB = 'prepare-matrix'
 MATRIX_EXPRESSION = '${{ fromJson(needs.prepare-matrix.outputs.suites) }}'
+RUNNER = 'backend/tests/run_integration.py'
+# The negative lookahead keeps `matrix.suites` and `matrix.suite_extra` out: a job
+# fans out over `matrix.suite`, and only that name carries a suite.
+MATRIX_SUITE = re.compile(r'\$\{\{\s*matrix\.suite(?![A-Za-z0-9_])')
 
 
 def run_commands(workflow):
@@ -34,6 +39,44 @@ def run_commands(workflow):
     return commands
 
 
+def runner_steps(job):
+    """The `run:` scripts of this job that invoke the suite runner."""
+    return [str(step['run']) for step in (job.get('steps') or [])
+            if isinstance(step, dict) and step.get('run') and RUNNER in str(step['run'])]
+
+
+def suite_matrix_jobs(workflow):
+    """Jobs whose strategy fans out over a `suite` matrix."""
+    for name, job in (workflow.get('jobs') or {}).items():
+        matrix = ((job or {}).get('strategy') or {}).get('matrix') or {}
+        if 'suite' in matrix:
+            yield name, job
+
+
+def suite_matrix_is_consumed(job):
+    """True when a runner step of this job is fed by the matrix value.
+
+    The value reaches a step either directly or through an `env:` name the step
+    expands — a step env, or a job env every step inherits. Reading the key out of
+    the YAML instead of assuming one keeps any alias and any `${{matrix.suite}}`
+    spacing working. Only the commands that run the runner count: the check used
+    to accept the matrix value appearing in any step at all, so a decorative
+    `echo ${{ matrix.suite }}` alongside a hardcoded runner call read as consumed
+    while every job ran the same suite.
+    """
+    commands = runner_steps(job)
+    if not commands:
+        return False
+    steps = [step for step in (job.get('steps') or []) if isinstance(step, dict)]
+    handed = ([step.get('env') or {} for step in steps if step.get('run')]
+              + [job.get('env') or {}])
+    names = {str(key) for env in handed for key, value in env.items()
+             if MATRIX_SUITE.search(str(value))}
+    return any(MATRIX_SUITE.search(command)
+               or any(re.search(r'\$\{' + re.escape(name) + r'\}', command) for name in names)
+               for command in commands)
+
+
 def ci_builds_matrix_from_registry(workflow):
     """True only when a real job feeds suites.json into the matrix at runtime."""
     jobs = workflow.get('jobs') or {}
@@ -43,26 +86,11 @@ def ci_builds_matrix_from_registry(workflow):
     expression = ((matrix.get('strategy') or {}).get('matrix') or {}).get('include')
     if expression != MATRIX_EXPRESSION:
         return False
-    commands = run_commands(workflow)
-    # The prepare job must really read the registry, not emit a constant list,
-    # and the matrix job must still be the one running the suites it was handed.
-    if ('suites.json' not in commands.get(PREPARE_JOB, '')
-            or 'run_integration.py' not in commands.get(MATRIX_JOB, '')):
+    # The prepare job must really read the registry, not emit a constant list.
+    if 'suites.json' not in run_commands(workflow).get(PREPARE_JOB, ''):
         return False
-    steps = [step for step in (matrix.get('steps') or []) if isinstance(step, dict)]
-    runs = '\n'.join(str(step['run']) for step in steps if step.get('run'))
-    if 'matrix.suite' in runs:
-        return True
-    # Which names the matrix value was handed to: a step env entry, or a job
-    # env entry every step of the job inherits. Reading the key out of the YAML
-    # instead of assuming one keeps any alias and any `${{matrix.suite}}` spacing
-    # working. Only steps that run can consume it, so an `env:` hanging off a
-    # `uses:` step leaves the value handed out but never used.
-    handed = ([step.get('env') or {} for step in steps if step.get('run')]
-              + [matrix.get('env') or {}])
-    names = {str(key) for env in handed for key, value in env.items()
-             if re.search(r'\$\{\{\s*matrix\.suite', str(value))}
-    return any(re.search(r'\$\{' + re.escape(name) + r'\}', runs) for name in names)
+    # And the matrix job must still run the suites it was handed, by name.
+    return suite_matrix_is_consumed(matrix)
 
 
 def main():
@@ -79,6 +107,13 @@ def main():
     matrix_driven = ci_builds_matrix_from_registry(workflow)
     if not matrix_driven:
         problems.append(f'ci.yml does not feed suites.json into {MATRIX_JOB} through {PREPARE_JOB}')
+
+    # The check above only follows the registry link. race-integration and
+    # core-workflows fan out over their own literal suite lists, so each of them
+    # gets the same "does the matrix value reach a runner" question asked here.
+    for name, job in suite_matrix_jobs(workflow):
+        if not suite_matrix_is_consumed(job):
+            problems.append(f'{name}: declares a suite matrix but no runner step consumes it')
 
     for suite in sorted(set(on_disk) - set(registered)):
         problems.append(f'{suite}: exists on disk but is not registered in suites.json')

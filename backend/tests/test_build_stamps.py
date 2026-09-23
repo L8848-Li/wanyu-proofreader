@@ -20,9 +20,10 @@ DOCKERFILE = BACKEND / 'Dockerfile'
 def guard():
     """The exact shell clause the image build uses to reject unsafe stamps.
 
-    Returned with whitespace normalised for shell execution; `test_guard_is_a_single
-    _dockerfile_line` checks the raw form, because the Dockerfile parser restarts
-    instruction parsing at every newline that is not backslash-escaped.
+    Returned with whitespace normalised for shell execution, and refusing a clause
+    that spans lines: the Dockerfile parser restarts instruction parsing at every
+    newline that is not backslash-escaped. Across the rest of the file that shape
+    is what `test_dockerfile_continuations_are_escaped` keeps checking.
     """
     text = DOCKERFILE.read_text()
     match = re.search(r'(case "\$stamp" in .*?esac)', text, re.DOTALL)
@@ -43,6 +44,16 @@ def accepted(stamp, clause):
 class BuildStamps(unittest.TestCase):
     def setUp(self):
         self.clause = guard()
+
+    def test_every_stamp_the_build_accepts_reaches_the_guard(self):
+        # This file only ever runs the `case` clause, so the loop header is what
+        # decides which values reach it: dropping "$BUILD_DATE" from that list
+        # shrinks the guard to two of the three stamps without failing anything
+        # here, which is the decoupling the module docstring warns about.
+        loop = re.search(r'for stamp in (.*?); do', DOCKERFILE.read_text())
+        self.assertIsNotNone(loop, 'backend/Dockerfile no longer loops over the build stamps')
+        for name in ('"$VERSION"', '"$COMMIT"', '"$BUILD_DATE"'):
+            self.assertIn(name, loop.group(1), f'{name} no longer reaches the stamp guard')
 
     def test_makefile_defaults_are_accepted(self):
         date = re.search(r'^BUILD_DATE \?= \$\(shell date -u \+([^)]*)\)$',

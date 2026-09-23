@@ -237,9 +237,22 @@ try {
   // A lookup must not degrade into a sweep: prefixes of the auto-generated
   // `usersNNNNNN` usernames and of display names must return nothing, or any
   // project manager could walk the roster a few characters at a time.
-  for (const prefix of ['users', 'us', 'out', 'outsid', 'twin', '12']) {
+  // Each prefix is pinned to the account it is supposed to reach, because a prefix
+  // of nothing fails neither an exact match nor a contains sweep and so guards
+  // nothing: `twin` sat here while `twin-a`/`twin-b` exist only in emails, and the
+  // digits of `12` only in the run suffix.
+  const sweepRows = new Map(asPlatformAdmin.map((item) => [item.id, item]))
+  const unrelated = new Set([outsider.id, ...twins.map((twin) => twin.id)])
+  const sweepVectors = [
+    ['users', outsider], ['us', outsider], ['out', outsider], ['outsid', outsider],
+    ['重名', twins[0]], ['重名候', twins[1]],
+  ]
+  for (const [prefix, target] of sweepVectors) {
+    const row = sweepRows.get(target.id)
+    assert.ok(row.name.startsWith(prefix) || row.username.startsWith(prefix),
+      `the prefix ${JSON.stringify(prefix)} is a prefix of no account, so it tests nothing`)
     const swept = await request(`${candidatesPath}?term=${encodeURIComponent(prefix)}`, { token: creator.token })
-    assert.ok(swept.every((item) => item.id !== outsider.id && !twins.some((twin) => twin.id === item.id)),
+    assert.ok(swept.every((item) => !unrelated.has(item.id)),
       `the prefix ${JSON.stringify(prefix)} must not resolve unrelated accounts`)
   }
   const swept = await request(`${candidatesPath}?term=${encodeURIComponent('users')}`, { token: creator.token })
