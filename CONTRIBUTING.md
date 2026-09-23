@@ -22,11 +22,11 @@
 - 从最新 `main` 创建分支；一个分支只处理一个可独立合并的问题。
 - 推荐分支名：`feat/<summary>`、`fix/<summary>`、`docs/<summary>`、`ci/<summary>`、`chore/<summary>`。
 - 提交信息与 PR 标题使用 Conventional Commits，例如 `fix(auth): preserve session on transient errors`、`ci: add frontend checks`。
-- `scope` 必须是有归属的领域或模块，从现有词表里选：`auth`、`identity`、`projects`、`proofreading`、`onboarding`、`keyboards`、`pdf`、`upload`、`import`、`profiles`、`rare-chars`、`pagination`、`quality`、`migrations`、`ops`、`deps`、`ci`。词表里没有合适项时，在 PR 描述中说明新 scope 对应哪个目录或领域，再补进本表。
+- `scope` 必须是有归属的领域或模块，从现有词表里选：`auth`、`identity`、`projects`、`proofreading`、`onboarding`、`keyboards`、`pdf`、`upload`、`import`、`profiles`、`rare-chars`、`pagination`、`quality`、`migrations`、`ops`、`deps`、`ci`、`governance`（`.github/**` 与仓库治理文档、审批与权限边界）。词表里没有合适项时，在 PR 描述中说明新 scope 对应哪个目录或领域，再补进本表。
 - 不要用阶段、版本或计划代号作 scope（`v2`、`v3`、`phase1`、`M1` 等），也不要用整层名字（`frontend`、`backend`、`core`）：它们不携带责任域信息，changelog 无法据此归类。一支 PR 确实跨两个领域时，scope 写主要的那个，另一个写在 PR 描述里，不要用「A 与 B」拼标题回避 scope 选择。
 - PR 标题与提交信息的首行都不带 issue 编号（`(#131)`、`(#131) (#132)`、`fix #132` 等）。issue 关联只写在 PR 正文的「关联 Issue」里：完成用 `Closes #123` / `Fixes #123`，只覆盖一部分用 `Related to #123` 并说明遗留范围。Squash and merge 会把 PR 正文带进提交说明，关联不会因为标题里没有编号而丢失；标题里出现编号几乎总是一个来源错误：把合并后自动生成的提交信息回填成了 PR 标题。
 - 不提交构建产物、`.env`、PocketBase 数据目录或无关格式化改动。
-- 不改 `CHANGELOG.md`：条目原文写在 PR 正文，合并时代为写入，见「CHANGELOG 由维护者写入」。
+- 不改 `CHANGELOG.md`：该文件暂停更新，Release 时统一重新组织，见「CHANGELOG 暂停更新」。
 - PR 已进入评审后不要随意重写历史；确需 rebase 或改写提交时，先在 PR 中说明并获得维护者确认，禁止强制覆盖共享分支。
 
 ## 本地开发与检查
@@ -113,15 +113,20 @@ blob 里存了 CR（`i/crlf`、`i/mixed`）就失败。`make verify-static` 与 
 不会报告这类行尾；索引列也不受本机 `core.autocrlf` 与尚未刷新的工作树影响，所以 Windows 贡献者
 在按上面步骤重新检出之前也不会被这条门禁误伤。
 
-### CHANGELOG 由维护者写入
+### CHANGELOG 暂停更新
 
-`CHANGELOG.md` 的 `## Unreleased` 用「顶部插入一条」的写法，因此任何两支都要往这里加条目的 PR
-必然撞在同一行上：来解冲突的人既没改过对方的代码，也得在两支都还没落地时手工合并文本。
+`CHANGELOG.md` 自 2026-09-23 起**暂停更新**：条目全部堆在 `## Unreleased` 里，既没有版本边界，
+又让并行 PR 反复撞在同一行上——#155 六小时内带了三次 merge，每次只为一行文本。等到定下首个
+Release 版本时，另开一支 PR 重新设计这个文件的组织形式（版本边界、分组与回填）。在那之前：
 
-这条按约定执行，不设 CI 门禁：**贡献者不改 `CHANGELOG.md`**，把要写的条目原样放进 PR 正文的
-「CHANGELOG 条目」一节，由合并者在 squash 合并时替你写进 `## Unreleased`。`.github/CODEOWNERS`
-把这个文件挂在维护者名下，所以改动需要维护者批准——只挡审批，不会把作者的检查变红。
-维护者自己整理条目（版本落版、汇总一周改动）时直接改这个文件即可。
+- 贡献者和合并者都不改这个文件，PR 也不必附 changelog 文案。改动记录以合并进 `main` 的提交信息
+  为准：squash 合并会把 PR 正文带进去，需要回溯时从那里读，比一份手工维护的列表更难走样。
+  文件顶部那段冻结声明是本规则的一次性例外，也就是它最后一次被这样改动。
+- 这条不靠 CI 拦。`.github/CODEOWNERS` 已把 `/CHANGELOG.md` 挂在维护者名下，而 main 开启了
+  code-owner 审批要求，所以改这个文件的 PR 必须有一位维护者批准；作者一方的检查不会因为
+  碰了它就变红。
+- 将来重做组织形式的那支 PR 本身要改这个文件，因此需要**作者之外的另一位** code owner 批准
+  （GitHub 不允许自批）。两名维护者时按交替出手处理。
 
 ## PocketBase 与数据迁移
 
@@ -135,8 +140,6 @@ blob 里存了 CR（`i/crlf`、`i/mixed`）就失败。`make verify-static` 与 
 PR 应当：
 
 - 关联 issue，并清楚说明解决了什么、没有解决什么。
-- 在「CHANGELOG 条目」里给出要记入 `## Unreleased` 的那一行（或注明无需记录），而不是自己去改
-  `CHANGELOG.md`：合并者会在 squash 合并时抄进去，这样两支 PR 不会因为同一行文本互相挡路。
 - 保持范围单一；后续工作应新建或关联 issue，而不是不断扩大当前 PR。
 - 列出实际执行的验证命令和结果；未运行的检查要说明原因。
 - 标明破坏性变更、数据迁移、部署配置或安全影响。

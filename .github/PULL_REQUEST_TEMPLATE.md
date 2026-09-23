@@ -2,10 +2,6 @@
 
 <!-- 使用 Closes #123 / Fixes #123；仅部分完成时请写 Related to #123 并说明遗留范围。编号只写在这里，不要放进 PR 标题。 -->
 
-## CHANGELOG 条目
-
-<!-- 不要改 CHANGELOG.md（它挂在维护者名下，见 CONTRIBUTING「CHANGELOG 由维护者写入」）：把要记入 `## Unreleased` 的那一行原样写在这里，合并者会在 squash 合并时替你写进去。不需要记录就写「无需」。 -->
-
 ## 改动内容
 
 <!-- 说明问题、实现方式，以及没有包含在本 PR 中的内容。 -->
@@ -38,7 +34,7 @@
 - [ ] 本 PR 只处理一个可独立合并的问题
 - [ ] PR 标题与提交信息的 `scope` 是 `CONTRIBUTING.md` 词表里的领域名，不是阶段/版本代号（`v2`、`phase1`）或整层名字（`frontend`、`backend`）；跨两个领域时只写主 scope，其余在上方说明
 - [ ] 已在上文「关联 Issue」用 `Closes #123` / `Related to #123` 完成关联，issue 编号没有写进 PR 标题；未完成的后续工作已记录
-- [ ] 需要记入 changelog 的话术已写在上方「CHANGELOG 条目」，且本 PR 的 diff 没有修改 `CHANGELOG.md`
+- [ ] 本 PR 没有修改 `CHANGELOG.md`（该文件暂停更新，见 CONTRIBUTING「CHANGELOG 暂停更新」）
 - [ ] 文档和示例已更新，或不需要更新
 - [ ] 没有提交密钥、`.env`、生产数据或构建产物
 - [ ] PocketBase 变更通过新增迁移完成，没有改写既有迁移
