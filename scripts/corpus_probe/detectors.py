@@ -29,7 +29,7 @@ LEGAL_LONG_TONES = frozenset({"533", "453"})
 LONG_DIGIT_RUN = re.compile(r"\d{3,}")
 TONE_TOKEN = re.compile(r"(?<!\d)\d{1,3}(?!\d)")
 PLACEHOLDER = re.compile(r"@[\da-fA-F]{3,6}")
-REGION_LABEL = re.compile(r"〔[莆仙]〕")
+REGION_LABEL = re.compile(r"〔(?:莆田|仙游|[莆仙])〕")
 PHONETIC_RUN = re.compile(
     r"[A-Za-zàáâãäåæçèéêëìíîïðñòóôõöøœùúûüýÿɐ-ʙʀ-ʗβθɒɔɛəɤɬʔŋɡǾø]"
     r"[A-Za-zàáâãäåæçèéêëìíîïðñòóôõöøœùúûüýÿɐ-ʙʀ-ʗβθɒɔɛəɤɬʔŋɡǾø]*"
@@ -38,9 +38,36 @@ PHONETIC_ONLY = re.compile(
     r"\s*[A-Za-zàáâãēîôûüŋɡɒɔɛøœʔɬβðǾ][A-Za-zàáâãēîôûüŋɡɒɔɛøœʔɬβðǾ]*[0-9]*\s*"
 )
 MEANING_SEPARATOR = re.compile(r"[：‖]")
-CJK_EXTENSION_B = range(0x20000, 0x2A6E0)
+
+# CJK planes beyond the BMP: these cannot be reached from any keyboard, so they
+# are a font and representation question for #123, not a proofreader error.
+CJK_EXTENSION_BLOCKS = (
+    range(0x20000, 0x2A6E0),   # Ext B
+    range(0x2A700, 0x2B73A),   # Ext C
+    range(0x2B740, 0x2B81E),   # Ext D
+    range(0x2B820, 0x2CEA2),   # Ext E
+    range(0x2CEB0, 0x2EBE1),   # Ext F
+    range(0x30000, 0x3134B),   # Ext G
+    range(0x31350, 0x323B0),   # Ext H
+    range(0x2F800, 0x2FA1E),   # Compatibility Ideographs Supplement
+)
 IPA_BLOCK = range(0x0250, 0x02B0)
-IPR_ALLOWED_ABOVE_ASCII = frozenset({0x02B0, 0x2032, 0x2033})
+# Characters that are legitimate inside a reading column even though no key
+# declares them: #177 R1 allows the CJK and punctuation ranges, because a head-
+# form gloss or a 〔莆田〕 label reaching this column is a structure complaint
+# (merged_columns), not "the proofreader typed an untypeable character".
+ALLOWED_NON_REPERTOIRE_RANGES = (
+    IPA_BLOCK,
+    range(0x2000, 0x2070),     # general punctuation, includes ′ ″
+    range(0x3000, 0x3040),     # CJK symbols and punctuation, includes 〔 〕
+    range(0x3400, 0x4DC0),     # CJK Extension A
+    range(0x4E00, 0xA000),     # CJK Unified Ideographs
+    range(0xF900, 0xFA70),     # CJK Compatibility Ideographs
+    # Beyond-BMP ideographs are untypeable by definition and already carry their
+    # own kind; reporting them twice would put two findings on one cell.
+    *CJK_EXTENSION_BLOCKS,
+)
+ALLOWED_ABOVE_ASCII_STANDALONE = frozenset({0x02B0})
 
 
 def finding(kind, severity, field, message, **params):
@@ -49,14 +76,20 @@ def finding(kind, severity, field, message, **params):
 
 
 def detect_illegal_tone_runs(value, field):
-    """A digit run of three or more that is not a legal contour value."""
+    """A digit run of three or more that is not a legal contour value.
+
+    Placeholder hex is stripped first: @20000 carries a five-digit run that is a
+    missing-glyph marker, not a flattened tone, and reporting both would put two
+    strong findings on one cell.
+    """
     if not value:
         return []
-    runs = [run for run in LONG_DIGIT_RUN.findall(value) if run not in LEGAL_LONG_TONES]
+    stripped = PLACEHOLDER.sub("", value)
+    runs = [run for run in LONG_DIGIT_RUN.findall(stripped) if run not in LEGAL_LONG_TONES]
     if not runs:
         return []
     return [finding(READING_FORMAT_INVALID, STRONG, field,
-                    "long_digit_run", runs=runs)]
+                    "long_digit_run", runs=runs, run_count=len(runs))]
 
 
 def detect_tone_count_mismatch(pinyin, ipa, field="拼音"):
@@ -80,7 +113,7 @@ def detect_missing_glyph_placeholders(value, field):
     if not marks:
         return []
     return [finding(MISSING_GLYPH_PLACEHOLDER, STRONG, field,
-                    "missing_glyph_placeholder", marks=marks)]
+                    "missing_glyph_placeholder", marks=marks, mark_count=len(marks))]
 
 
 def detect_column_collapse(value, field):
@@ -90,7 +123,9 @@ def detect_column_collapse(value, field):
     reasons = []
     if REGION_LABEL.search(value):
         reasons.append("region_label")
-    if value.count("［") + value.count("[") != value.count("］") + value.count("]"):
+    # Full and half width brackets are counted separately: a cell pairing an
+    # ASCII opener with a fullwidth closer is broken, not balanced.
+    if value.count("[") != value.count("]") or value.count("［") != value.count("］"):
         reasons.append("unbalanced_bracket")
     if not reasons:
         return []
@@ -154,12 +189,13 @@ def detect_combining_marks(value, field):
 
 
 def non_repertoire_chars(value, allowed=frozenset()):
-    """Codepoints above ASCII that sit outside the IPA block and the allow list."""
-    allowed_above_ascii = set(allowed) | set(IPR_ALLOWED_ABOVE_ASCII)
+    """Codepoints above ASCII outside the IPA block, the CJK and punctuation
+    ranges #177 R1 allows, and whatever the enabled keyboards declare."""
+    allowed_above_ascii = set(allowed) | ALLOWED_ABOVE_ASCII_STANDALONE
     return sorted({ord(c) for c in value
                    if ord(c) > 127
-                   and ord(c) not in IPA_BLOCK
-                   and ord(c) not in allowed_above_ascii})
+                   and ord(c) not in allowed_above_ascii
+                   and not any(ord(c) in block for block in ALLOWED_NON_REPERTOIRE_RANGES)})
 
 
 def detect_non_repertoire_chars(value, field, allowed=frozenset()):
@@ -172,12 +208,24 @@ def detect_non_repertoire_chars(value, field, allowed=frozenset()):
 
 
 def detect_cjk_extension(value, field):
-    """Ideographs outside the BMP: they need the #123 representation decision."""
-    hits = sorted({hex(ord(c)) for c in value if ord(c) in CJK_EXTENSION_B})
+    """Ideographs beyond the BMP: they need the #123 representation decision."""
+    hits = sorted({hex(ord(c)) for c in value
+                   if any(ord(c) in block for block in CJK_EXTENSION_BLOCKS)})
     if not hits:
         return []
     return [finding(OUTSIDE_UNICODE_SET, WARN, field,
-                    "cjk_extension_b_present", codepoints=hits)]
+                    "cjk_extension_present", codepoints=hits)]
+
+
+def detect_row_width(cell_count, header_count):
+    """A row wider than its header is a column-position symptom, not noise.
+
+    Callers build header-keyed dicts, so without this the extra cells vanish.
+    """
+    if cell_count == header_count:
+        return []
+    return [finding(MERGED_COLUMNS, STRONG, "(row)", "row_width_differs",
+                    cells=cell_count, headers=header_count)]
 
 
 def entry_identity(headword, pinyin):
@@ -199,8 +247,7 @@ def group_by_identity(rows, headword_field="词条", pinyin_field="拼音"):
 
 
 def analyze_row(row, reading_fields=("拼音", "莆田IPA", "仙游IPA"),
-                meaning_fields=("释义",), headword_field="词条",
-                allowed_repertoire=frozenset()):
+                meaning_fields=("释义",), allowed_repertoire=frozenset()):
     """Run every per-row detector over one parsed CSV row.
 
     A cell whose structure is already known to be broken reports once: when a
@@ -231,3 +278,13 @@ def analyze_row(row, reading_fields=("拼音", "莆田IPA", "仙游IPA"),
                 if not (hit.kind == CHAR_OUT_OF_REPERTOIRE and hit.field in owned)]
     filtered += detect_tone_count_mismatch(row.get("拼音", ""), row.get("莆田IPA", ""))
     return filtered
+
+
+# Param values that quote the cell verbatim. Codepoints stay: they are what #123
+# needs to decide a representation, and a hex number is not dictionary text.
+CONTENT_PARAMS = ("runs", "marks")
+
+
+def redact_params(params):
+    """Strip the fragments that echo corpus text, keeping counts and codepoints."""
+    return {key: value for key, value in params.items() if key not in CONTENT_PARAMS}

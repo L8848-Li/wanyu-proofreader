@@ -24,6 +24,15 @@ class InputSourceError(RuntimeError):
     pass
 
 
+def display_path(path):
+    """Abbreviate a home-directory prefix: CLI errors get pasted into issues."""
+    home = os.path.expanduser("~")
+    absolute = os.path.abspath(path)
+    if absolute == home or absolute.startswith(home + os.sep):
+        return "~" + absolute[len(home):]
+    return absolute
+
+
 def resolve_corpus_path(argv=None, env=None):
     """Return the corpus path, or raise with the two accepted ways to set it."""
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -44,7 +53,7 @@ def resolve_corpus_path(argv=None, env=None):
 
 def _checked(path):
     if not os.path.isfile(path):
-        raise InputSourceError(f"corpus file not found: {path}")
+        raise InputSourceError(f"corpus file not found: {display_path(path)}")
     return os.path.abspath(path)
 
 
@@ -67,10 +76,10 @@ def read_rows(path):
         except UnicodeDecodeError:
             continue
     if raw is None:
-        raise InputSourceError(f"unsupported encoding: {path}")
+        raise InputSourceError(f"unsupported encoding: {display_path(path)}")
     rows = list(csv.reader(io.StringIO(raw)))
     if not rows:
-        raise InputSourceError(f"empty csv: {path}")
+        raise InputSourceError(f"empty csv: {display_path(path)}")
     return rows[0], rows[1:]
 
 
