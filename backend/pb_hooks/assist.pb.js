@@ -113,7 +113,9 @@ routerAdd("POST", "/api/fangji/projects/{projectId}/dismissals", (c) => {
 }, $apis.requireAuth("users"))
 
 // DELETE /api/fangji/projects/{projectId}/dismissals/{dismissalId}
-// 撤回人工结论要显式做（而不是悄悄覆盖）：那是本 issue 唯一的人类写入，撤销也应留得下来。
+// 撤回人工结论要显式做（而不是悄悄覆盖）。撤回是**物理删除、不留痕**：#178 只要求
+// 「人工结论在重算时保留」，没有规定撤销要可审计，`status` 因此只有 not_conflict 一个值。
+// 想留痕得先给那列加值（一次 select 迁移），那是 #178 之外的决定——注释不该承诺代码没做的事。
 routerAdd("DELETE", "/api/fangji/projects/{projectId}/dismissals/{dismissalId}", (c) => {
   const { assertId: proofAssertId, requireManager: proofRequireManager } = require(`${__hooks}/lib/project_access.js`)
   const auth = c.auth
