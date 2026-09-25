@@ -164,9 +164,12 @@ function recomputePage(dao, pageId, rowOverride = null) {
   const superseded = supersede(dao, collection, scope, at)
   for (const item of findings) insertFinding(dao, collection, page, item, at, RULES_VERSION)
   const settled = settleBatch(dao, collection, scope, at)
+  // 难度在收尾之后刷新：tier 由**当前批次**推导，收尾前读到的还是旧批次。
+  const difficulty = refreshDifficulty(dao, page)
   return {
     page: pageId, findings: findings.length, superseded, settled,
-    producer_version: RULES_VERSION
+    producer_version: RULES_VERSION,
+    difficulty_tier: difficulty.tier, difficulty_version: difficulty.version
   }
 }
 
@@ -223,15 +226,93 @@ function recomputeProject(dao, projectId) {
   }
   const settled = settleBatch(dao, collection, projectScope, at)
   if (unanchored) console.warn("assist_recompute unanchored findings", projectId, unanchored)
+  // 同样放在收尾之后：全项目的 tier 要按最终留在库里的当前批次推导。
+  const stats = projectShapeStats(pages)
+  const tiers = { A: 0, B: 0, C: 0, unknown: 0 }
+  for (const page of pages) tiers[refreshDifficulty(dao, page, stats).tier] += 1
   return {
     project: projectId,
     pages: pages.length,
+    difficulty_tiers: tiers,
     findings: inserted,
     unanchored,
     superseded,
     settled,
     duration_ms: new Date() - startedAt,
     producer_version: RULES_VERSION
+  }
+}
+
+// ---------- #180 难度标签 ----------
+// 疑点算完之后顺手刷新 tier：#180 只出数据与接口，不新造触发器，
+// 复用 #177 的两条路径（单条重算 / 项目全量），tier 才不会出现"疑点是新的、难度是旧的"。
+//
+// 读的是**全部当前批次疑点，不按 gate 过滤**：信号要的是"机器认为这行有多少问题"，
+// 与"校对员被打了几个标"是两件事；blocked_reason 依赖的 merged_columns 更是只有
+// OCR(#125)/#178 才产，按 gate 过滤会永远看不到它。
+function refreshDifficulty(dao, page, stats = null) {
+  const { deriveDifficulty, blockedReasonFromFindings, DIFFICULTY_VERSION } =
+    require(`${__hooks}/lib/assist_difficulty.js`)
+  const findings = dao.findRecordsByFilter(
+    "review_findings",
+    `page = "${page.id}" && superseded_at = ""`,
+    "kind",
+    500,
+    0
+  ).map((row) => ({
+    kind: row.getString("kind"),
+    severity: row.getString("severity"),
+    field: row.getString("field_name")
+  }))
+  const row = rowForRules(page)
+  const valueLengths = Object.values(row).map((value) => Array.from(String(value ?? "")).length)
+  const blocked = page.getString("blocked_reason")
+  const signal = {
+    findings,
+    // #170 未落地：roles 为 null，涉及列角色的两条信号因此不产生（不是判成 A）。
+    roles: null,
+    pdfPage: Number(page.get("pdf_page")) || 0,
+    blockedReason: blocked || blockedReasonFromFindings(findings),
+    fieldCount: Object.keys(row).length,
+    valueLengths,
+    projectStats: stats,
+    // #179 的分布今天不存在；传 null 而不是空对象，两者在 deriveDifficulty 里同义，
+    // 但写成 null 让"还没测"这件事在调用点就可见。
+    arbitrationRates: null
+  }
+  const derived = deriveDifficulty(signal)
+  if (page.getString("difficulty_tier") !== derived.tier
+    || page.getString("difficulty_version") !== derived.version
+    || page.getString("difficulty_basis_json") !== JSON.stringify(derived.basis)
+    || page.getString("blocked_reason") !== derived.blocked_reason) {
+    page.set("difficulty_tier", derived.tier)
+    page.set("difficulty_basis_json", JSON.stringify(derived.basis))
+    page.set("difficulty_version", derived.version)
+    page.set("blocked_reason", derived.blocked_reason)
+    dao.save(page)
+  }
+  return derived
+}
+
+// 项目级统计：整行形状离群要拿全项目比，单条路径拿不到，所以只在全量重算里算一次。
+function projectShapeStats(pages) {
+  const fieldCounts = []
+  const lengths = []
+  for (const page of pages) {
+    const row = rowForRules(page)
+    fieldCounts.push(Object.keys(row).length)
+    for (const value of Object.values(row)) lengths.push(Array.from(String(value ?? "")).length)
+  }
+  const median = (list) => {
+    const sorted = list.slice().sort((a, b) => a - b)
+    return sorted.length ? sorted[Math.floor(sorted.length / 2)] : Number.NaN
+  }
+  const med = median(lengths)
+  const deviations = lengths.map((value) => Math.abs(value - med)).sort((a, b) => a - b)
+  return {
+    medianFieldCount: median(fieldCounts),
+    medianValueLength: med,
+    madValueLength: deviations.length ? deviations[Math.floor(deviations.length / 2)] : Number.NaN
   }
 }
 

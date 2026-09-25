@@ -1,0 +1,197 @@
+import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const difficulty = require('../pb_hooks/lib/assist_difficulty.js')
+
+const baseUrl = process.env.PB_URL || 'http://127.0.0.1:18091'
+const platformAuth = await request('/api/collections/users/auth-with-password', {
+  method: 'POST', body: { identity: process.env.APP_ADMIN_EMAIL, password: process.env.APP_ADMIN_PASSWORD }
+})
+const superAuth = await request('/api/collections/_superusers/auth-with-password', {
+  method: 'POST', body: { identity: process.env.PB_SUPER_EMAIL, password: process.env.PB_SUPER_PASSWORD }
+})
+
+async function request(url, { method = 'GET', token = '', body, expected = 200 } = {}) {
+  const response = await fetch(`${baseUrl}${url}`, {
+    method,
+    headers: { ...(token ? { Authorization: token } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  })
+  const raw = await response.text()
+  let payload = null
+  if (raw) { try { payload = JSON.parse(raw) } catch { payload = raw } }
+  assert.equal(response.status, expected, `${method} ${url}: ${response.status} ${raw}`)
+  return payload
+}
+
+// 每一行判定表都要有一个"只命中这一行"的用例。加一行不写用例，下面的循环就会红。
+const CASES = {
+  cross_source_conflict: { findings: [{ kind: 'cross_source_conflict', severity: 'warn', field: '释义' }] },
+  rights_gate_blocked: { blockedReason: 'rights_gate' },
+  scanned_read_blocked: { blockedReason: 'scanned_read' },
+  strong_findings_ge_2: { findings: [
+    { kind: 'merged_columns', severity: 'strong', field: '莆田IPA' },
+    { kind: 'reading_format_invalid', severity: 'strong', field: '拼音' }
+  ] },
+  reading_and_meaning_change: { roles: { 莆田IPA: 'reading', 释义: 'meaning' } },
+  column_merge_blocked: { blockedReason: 'column_merge' },
+  strong_findings_eq_1: { findings: [{ kind: 'reading_format_invalid', severity: 'strong', field: '莆田IPA' }] },
+  missing_pdf_page: { pdfPage: 0 },
+  row_shape_outlier: { fieldCount: 9, projectStats: { medianFieldCount: 6 } },
+  warn_findings_ge_3: { findings: [
+    { kind: 'char_out_of_repertoire', severity: 'warn', field: '莆田IPA' },
+    { kind: 'punctuation_mix', severity: 'warn', field: '释义' },
+    { kind: 'confusable_substitution', severity: 'warn', field: '仙游IPA' }
+  ] },
+  frequent_arbitration: { arbitrationRates: { 莆田IPA: 0.3 } },
+  glyph_table_blocked: { blockedReason: 'glyph_table' },
+  pure_transcription: { roles: { 词条: 'headword', 拼音: 'reading' }, pdfPage: 3 }
+}
+
+const base = { findings: [], pdfPage: 3, blockedReason: 'unknown', fieldCount: 5,
+  valueLengths: [2, 3], projectStats: null, arbitrationRates: null, roles: null }
+
+for (const rule of difficulty.TIER_RULES) {
+  const input = { ...base, pdfPage: 3, ...CASES[rule.id],
+    // 行形状用例要显式带 fieldCount，其余用例保持与中位数一致
+    ...(rule.id === 'row_shape_outlier' ? {} : { fieldCount: 5, projectStats: null }) }
+  const out = difficulty.deriveDifficulty(input)
+  assert.deepEqual(out.basis, [rule.id],
+    `规则 ${rule.id} 应当只命中自己这一行，实际 ${JSON.stringify(out.basis)}（输入 ${JSON.stringify(input)}）`)
+  assert.equal(out.tier, rule.tier, `${rule.id} 的 tier 应为 ${rule.tier}，实际 ${out.tier}`)
+  assert.equal(out.version, difficulty.DIFFICULTY_VERSION)
+}
+assert.deepEqual(Object.keys(CASES).sort(), difficulty.TIER_RULES.map((rule) => rule.id).sort(),
+  '判定表与用例必须一一对应：加一行判定就要加一个用例')
+
+// 上确界而不是多数表决：三条 A/B 与一条 C 同时命中，tier 必须是 C。
+const mixed = difficulty.deriveDifficulty({
+  ...base, pdfPage: 0, blockedReason: 'scanned_read',
+  findings: [{ kind: 'cross_source_conflict', severity: 'warn', field: '释义' }],
+  roles: { 莆田IPA: 'reading', 释义: 'meaning' }
+})
+assert.equal(mixed.tier, 'C')
+assert.ok(mixed.basis.includes('cross_source_conflict') && mixed.basis.includes('missing_pdf_page')
+  && mixed.basis.includes('reading_and_meaning_change') && mixed.basis.includes('scanned_read_blocked'),
+  JSON.stringify(mixed.basis))
+
+// 无信号 ⇒ unknown（不是 A）：#162 依赖这个区分来"原样退回下一条"。
+const silent = difficulty.deriveDifficulty({ ...base, pdfPage: 3, roles: null })
+assert.equal(silent.tier, 'unknown')
+assert.deepEqual(silent.basis, [])
+// 从没算过（字段为空）与算过但是 unknown 是两件事，由调用方在库里区分；这里只保证
+// 纯函数对"无信号"给出 unknown 而不是猜一个档位。
+
+// #179 的分布缺失时不得产生仲裁信号——把它当 0 会让全体偏 A。
+assert.equal(difficulty.deriveDifficulty({ ...base, arbitrationRates: null }).basis
+  .includes('frequent_arbitration'), false)
+assert.equal(difficulty.deriveDifficulty({ ...base, arbitrationRates: {} }).basis
+  .includes('frequent_arbitration'), false)
+assert.equal(difficulty.deriveDifficulty({ ...base, arbitrationRates: { 莆田IPA: 0.24 } }).basis
+  .includes('frequent_arbitration'), false, '阈值边界 0.25 以下不得触发')
+
+// 稳定可复算：同一份输入两次结果逐字节相同。
+const again = difficulty.deriveDifficulty({ ...base, blockedReason: 'column_merge' })
+assert.deepEqual(again, difficulty.deriveDifficulty({ ...base, blockedReason: 'column_merge' }))
+assert.equal(again.tier, 'B')
+
+// 认不出的阻塞原因退回 unknown，不得顺手猜一个桶。
+assert.equal(difficulty.normalizeBlocked('typo_in_source'), 'unknown')
+assert.equal(difficulty.blockedReasonFromFindings(
+  [{ kind: 'merged_columns', severity: 'strong', field: '释义' }]), 'column_merge')
+assert.equal(difficulty.blockedReasonFromFindings([]), 'unknown')
+
+console.log('PASS: difficulty signal table walked row by row')
+
+// ---------- 服务端：重算之后 tier 落库，且不从校对端响应里泄漏 ----------
+const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+const password = 'TaskDifficulty123!'
+const userIds = []
+
+async function createUser(label) {
+  const email = `${label}-${suffix}@example.com`
+  const user = await request('/api/collections/users/records', {
+    method: 'POST', token: superAuth.token,
+    body: { email, password, passwordConfirm: password, name: label, role: 'user' }
+  })
+  userIds.push(user.id)
+  const auth = await request('/api/collections/users/auth-with-password', { method: 'POST', body: { identity: email, password } })
+  return { ...user, token: auth.token }
+}
+
+const worker = await createUser('difficulty-worker')
+const boss = await createUser('difficulty-manager')
+const project = await request('/api/fangji/projects', {
+  method: 'POST', token: platformAuth.token, expected: 201, body: { name: `Difficulty ${suffix}` }
+})
+await request(`/api/fangji/projects/${project.id}/members/${worker.id}`, { method: 'PUT', token: platformAuth.token, body: { role: 'proofreader' } })
+await request(`/api/fangji/projects/${project.id}/members/${boss.id}`, { method: 'PUT', token: platformAuth.token, body: { role: 'manager' } })
+
+let emptyProject = null
+try {
+  const messy = await request('/api/collections/pages/records', {
+    method: 'POST', token: superAuth.token,
+    body: {
+      project: project.id, page_number: 1, pdf_page: 0, status: 'pending',
+      proofread_round: 1, mismatch_count: 0,
+      ocr_row_json: JSON.stringify({ 词条: '甲', 拼音: 'ka1', 莆田IPA: 'ua5333', 仙游IPA: 'ka', 释义: '第一（个）测试' }),
+      ocr_text: '甲'
+    }
+  })
+  assert.equal(messy.difficulty_tier ?? '', '', '新条目在算过之前必须是空，不是 unknown')
+
+  const summary = await request(`/api/fangji/projects/${project.id}/findings/recompute`, { method: 'POST', token: boss.token })
+  assert.equal(summary.pages, 1)
+  assert.ok(summary.difficulty_tiers, JSON.stringify(summary))
+
+  const after = await request(`/api/collections/pages/records/${messy.id}`, { token: superAuth.token })
+  assert.ok(['A', 'B', 'C', 'unknown'].includes(after.difficulty_tier), after.difficulty_tier)
+  assert.equal(after.difficulty_version, difficulty.DIFFICULTY_VERSION)
+  const basis = JSON.parse(after.difficulty_basis_json)
+  assert.ok(basis.includes('missing_pdf_page'), JSON.stringify(basis))
+  assert.equal(after.blocked_reason, 'unknown', '规则引擎目前不产 merged_columns，阻塞原因不该被猜成 column_merge')
+
+  // 幂等且稳定：再算一次结果不变（#180 验收：可复算）。
+  const second = await request(`/api/fangji/pages/${messy.id}/findings/recompute`, { method: 'POST', token: boss.token })
+  const afterSecond = await request(`/api/collections/pages/records/${messy.id}`, { token: superAuth.token })
+  assert.equal(afterSecond.difficulty_tier, after.difficulty_tier)
+  assert.equal(afterSecond.difficulty_basis_json, after.difficulty_basis_json)
+  assert.equal(second.difficulty_tier, after.difficulty_tier)
+
+  // 盲校未退化：tier 是筛选维度，不是给校对员的轮次线索。
+  // GET /task 用显式字段列表，因此新字段不会跟着下发；这里把它钉成断言，
+  // 将来有人把 payload 改成 spread 就会红。
+  const claim = await request(`/api/fangji/projects/${project.id}/claim`, { method: 'POST', token: worker.token })
+  const task = JSON.stringify(await request(`/api/fangji/pages/${claim.id}/task`, { token: worker.token }))
+  for (const leaked of ['difficulty_tier', 'difficulty_basis_json', 'difficulty_version', 'blocked_reason', 'round', 'pass_no']) {
+    assert.equal(task.includes(`"${leaked}"`), false, `校对端任务响应泄漏了 ${leaked}`)
+  }
+  const hints = JSON.stringify(await request(`/api/fangji/pages/${claim.id}/findings`, { token: worker.token }))
+  for (const leaked of ['difficulty_tier', 'blocked_reason', 'proofreader']) {
+    assert.equal(hints.includes(`"${leaked}"`), false, `疑点响应泄漏了 ${leaked}`)
+  }
+  // manager 的项目统计口允许看见 tier（那是它的用途），但不得带出他人提交内容。
+  const managerView = JSON.stringify(await request(`/api/fangji/projects/${project.id}/findings`, { token: boss.token }))
+  assert.equal(managerView.includes('row_json'), false)
+
+  // 空项目也要能跑，且不给假数字。
+  emptyProject = await request('/api/fangji/projects', {
+    method: 'POST', token: platformAuth.token, expected: 201, body: { name: `Empty ${suffix}` }
+  })
+  await request(`/api/fangji/projects/${emptyProject.id}/members/${boss.id}`, { method: 'PUT', token: platformAuth.token, body: { role: 'manager' } })
+  const empty = await request(`/api/fangji/projects/${emptyProject.id}/findings/recompute`, { method: 'POST', token: boss.token })
+  assert.equal(empty.pages, 0)
+  assert.equal(empty.findings, 0)
+  assert.deepEqual(empty.difficulty_tiers, { A: 0, B: 0, C: 0, unknown: 0 })
+
+  console.log('Task difficulty integration test passed.')
+} finally {
+  await request(`/api/fangji/projects/${project.id}`, { method: 'DELETE', token: platformAuth.token, expected: 204 })
+  if (emptyProject) {
+    await request(`/api/fangji/projects/${emptyProject.id}`, { method: 'DELETE', token: platformAuth.token, expected: 204 })
+  }
+  for (const id of userIds.reverse()) {
+    await request(`/api/collections/users/records/${id}`, { method: 'DELETE', token: superAuth.token, expected: 204 })
+  }
+}
