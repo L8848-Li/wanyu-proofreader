@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { createRequire } from 'node:module'
-import { writeFileSync, unlinkSync } from 'node:fs'
+import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -82,6 +82,39 @@ for (const [name, want] of Object.entries(fixture.expected)) {
 assert.equal(scored.unicode_equivalent_excluded, fixture.unicode_equivalent_excluded, '伪分歧要被单独计数')
 assert.deepEqual(stripSecrets(labels).filter((item) => !item.accepted)
   .map((item) => `${item.attempt}/${item.field}`).sort(), [...fixture.negative_pairs].sort())
+
+// ---------- 打分覆盖度：引擎产出的每条规则都要被量到，或写明为什么不量 ----------
+// `score_rules.mjs` 自己的注释就写了「#177 新增规则时这里要跟上，否则那条规则永远不会
+// 出现在基线报告里（这是最容易漏的一步）」，而 #212 的评审独立抓到了同一形状
+// （kind 集合手抄、当下一致但没人守）。所以这里从 assist_rules.js 抽出全部
+// finding(kind, …, message_key) 身份，与打分表双向对账。
+{
+  const source = readFileSync(new URL('../../backend/pb_hooks/lib/assist_rules.js', import.meta.url), 'utf8')
+  const emitted = [...new Set([...source.matchAll(
+    /finding\(\s*"([a-z_]+)"\s*,\s*"[a-z]+"\s*,[^,]+,\s*"([a-z_]+)"/g)].map((m) => `${m[1]}/${m[2]}`))].sort()
+  assert.ok(emitted.length >= 9, `从 assist_rules.js 抽出的规则身份太少，先怀疑正则：${JSON.stringify(emitted)}`)
+  // 弱标注是 (提交, 字段) 粒度，整列/整项目判据天然对不上：明确列为不打分，而不是悄悄漏掉。
+  const notScored = [
+    'encoding_form_anomaly/mixed_normalization_forms',
+    'punctuation_mix/punctuation_width_mixed_in_column',
+    'page_outlier/pdf_page_backtrack',
+    'page_outlier/page_entry_count_outlier'
+  ]
+  const ruleSet = defaultRuleSet({ keyboards: [{ definition: keyboard }], roles })
+  const scoredSet = ruleSet.map((rule) => `${rule.kind}/${rule.message_key}`)
+  assert.deepEqual(emitted.filter((id) => !scoredSet.includes(id) && !notScored.includes(id)), [],
+    '引擎新增的规则身份没进基线打分表')
+  assert.deepEqual(scoredSet.filter((id) => !emitted.includes(id)), [],
+    '打分表里留着引擎不再产出的规则身份')
+  // 豁免名单自己也不能变宽：既在名单里又仍在打分，说明有人在用名单掩盖漏掉的规则；
+  // 名单里的身份若已不是引擎产出的，也必须删掉。这两条是上一轮变异测试逼出来的。
+  assert.deepEqual(scoredSet.filter((id) => notScored.includes(id)), [],
+    '一条规则不可能既被打分又被声明为不打分')
+  for (const id of notScored) {
+    assert.ok(emitted.includes(id), `n/a 名单里的 ${id} 已不是引擎产出的身份，应从名单删掉`)
+  }
+  assert.equal(new Set(notScored).size, notScored.length, '豁免名单有重复项')
+}
 
 // Wilson 单独校一次：手算 centre 0.426917 ± half 0.365408 = [0.061509, 0.792325]，
 // 模块按 4 位小数取整。第一版我把它抄成 3dp 字面量，那是抄错不是实现错。
