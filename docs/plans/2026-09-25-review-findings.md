@@ -17,7 +17,7 @@
 | 字段 | 类型 | 必填 | 含义 |
 | --- | --- | --- | --- |
 | `project` | relation → `projects` | 是 | 级联删除随项目 |
-| `page` | relation → `pages` | 是 | finding 的落点；行级/列级 finding 也挂在条目上 |
+| `page` | relation → `pages` | 是 | finding 的落点；行级/列级 finding 也挂在条目上——**挂哪一条由生产者声明口径，见 §8.1** |
 | `field_name` | text | 否 |  CSV 列名，空 = 整条级。**用文本不用枚举**：列名由项目决定，与 #170 的「角色」不是同一层 |
 | `round` | number | 否 | 产出时所在轮次，**仅供事后统计，绝不下发给校对端**（#175 红线 1 / 盲校） |
 | `kind` | select（10 值，见 §2） | 是 | 疑点大类 |
@@ -202,6 +202,7 @@ FindingProducer = interface {
 FindingDraft = {
   page_id, field_name?, kind, severity ∈ {info|warn|strong},
   message_key, params_json, evidence_json, produced_at
+  // evidence_json.anchor：本条挂在 page_id 上的口径（生产者自己决定，见 §8.1）
 }
 
 ProducerContext = {page, project, column_roles, enabled_keyboards}
@@ -213,6 +214,16 @@ ProducerContext = {page, project, column_roles, enabled_keyboards}
    「永不含他人结果」因此是不可表示，而不是"请注意"（#175 红线 1）。
 2. `needsEgress` 未声明按 `true` 处理（保守），供出站闸门判断。
 3. 生产者只返回 `FindingDraft`，接口上没有写回任何值的方法。
+
+### 8.1 两条由 #208 评审逼出来的硬约束
+
+1. `params_json` / `evidence_json` 不得含原样内容片段——两列都会随 hint 下发给该条目的
+   在手校对员（`hintView`）。#175 红线 1 在数据形状上的落点就是这里。
+2. 生产者必须自己决定非行级 finding 挂在哪个条目上，并把口径写进 `evidence.anchor`。
+   `page` 必填（§1 字段表与迁移里的 `relation("page", …)`，`required: true`）而"整列/整页"级判据客观存在，
+   这个缺口早晚要被填；写在生产者侧、读取侧只认 `page`，就不会出现"解析不出来就退化成
+   第一条"那种把别人的内容发给当前校对员的形状。规则生产者的具体口径见
+   [`2026-09-25-assist-rules.md`](./2026-09-25-assist-rules.md) §3.6。
 
 **对本文件数据结构的唯一影响点**：`producer` 枚举要新增 `"model"`。
 那是一次 select 值变更（需要迁移），本文件此刻**不改**——它属于 L2 真正开工时的那次改动，

@@ -122,7 +122,7 @@ FindingProducer = interface {
 FindingDraft = {
   page_id, field_name?, kind, severity ∈ {info|warn|strong},
   message_key, params_json,      // 只允许结构信息（码位/计数/列名/偏移）
-  evidence_json,                 // {bbox?, char_offsets?, excerpt?, page?}
+  evidence_json,                 // {bbox?, char_offsets?, anchor} —— 见下方约束 4
   produced_at
 }
 
@@ -138,6 +138,17 @@ ProducerContext = {
    这个输入，所以"永不含他人提交"不是纪律而是不可表示（#175 红线 1）。
 2. `needsEgress` 必须在注册时声明，供 §4 的出站闸门判断；未声明视为 `true`（保守）。
 3. 生产者只返回 `FindingDraft`，**没有写回任何值的方法**（#177/#178 的非目标之一）。
+4. **`params_json` 与 `evidence_json` 里不许出现原样内容片段**（#175 红线 1）。
+   这两列都会随 hint 一起下发给该条目的在手校对员，早期草稿里那个 `evidence.excerpt`
+   已经删掉——留着它等于在契约里给原文片段开一扇门。
+5. **每条 finding 都必须自己决定挂在哪个条目上并声明口径**：`review_findings.page` 是
+   必填关系字段（#176），所以"整列""整页""整项目"级别的疑点也必须挂某一条条目。
+   挂靠规则由**生产者**决定、写进 `evidence.anchor`，写入端只认它、不许退化成
+   "挂到第一条"——#208 的评审阻断 1 就是这个退化形状，后果是别人条目的内容
+   发给了这一条的在手校对员。现成口径见
+   [`2026-09-25-assist-rules.md`](./2026-09-25-assist-rules.md) §3.6（格级各归各条目 /
+   列级挂扫描顺序第一条 / 页级挂该 PDF 页第一个条目 / 解析不出就跳过并计数）。
+   模型生产者将来一定遇到同一个问题（一条"整页可疑"的输出挂哪），所以这里先写进契约。
 
 **代价与未决项**：`producer` 枚举要加 `"model"`，这是一次 `assist_rule_gates`/
 `review_findings` 的 select 值变更（迁移），本文件不擅自做，只标出它是唯一的 schema 影响点。
