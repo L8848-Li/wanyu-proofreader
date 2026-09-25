@@ -129,6 +129,7 @@ await request(`/api/fangji/projects/${project.id}/members/${worker.id}`, { metho
 await request(`/api/fangji/projects/${project.id}/members/${boss.id}`, { method: 'PUT', token: platformAuth.token, body: { role: 'manager' } })
 
 let emptyProject = null
+let multi = null
 try {
   const messy = await request('/api/collections/pages/records', {
     method: 'POST', token: superAuth.token,
@@ -175,6 +176,58 @@ try {
   const managerView = JSON.stringify(await request(`/api/fangji/projects/${project.id}/findings`, { token: boss.token }))
   assert.equal(managerView.includes('row_json'), false)
 
+  // #212 评审指出：本套件每个项目只建一条 page，「疑点挂错条目」这件事在这里结构上
+  // 不可观测。tier 与 hint 不一样——它是**持久化的排序键**，#162 大厅按它筛选排序，
+  // 算错的那份会一直留在库里直到下次重算覆盖。所以这里建一个三条页的项目，
+  // 并把干净页放在**第一条**：一旦某次重算把别人的疑点摊平到第一条上，
+  // 下面「干净页不得带任何由疑点推导出来的 basis」立刻红。
+  multi = await request('/api/fangji/projects', {
+    method: 'POST', token: platformAuth.token, expected: 201, body: { name: `Multi ${suffix}` }
+  })
+  await request(`/api/fangji/projects/${multi.id}/members/${boss.id}`, { method: 'PUT', token: platformAuth.token, body: { role: 'manager' } })
+  const rows = [
+    { 词条: '天', 拼音: 'thin1', 莆田IPA: 'tʰĩ1', 仙游IPA: 'tʰĩ1', 释义: '天空' },
+    { 词条: '甲', 拼音: 'ka1', 莆田IPA: 'ua5333', 仙游IPA: 'ka', 释义: '第一（个）测试' },
+    { 词条: '人', 拼音: 'lang2', 莆田IPA: 'lɑŋ2', 仙游IPA: 'zuin9999', 释义: '人类' }
+  ]
+  const pages = []
+  for (const [index, row] of rows.entries()) {
+    pages.push(await request('/api/collections/pages/records', {
+      method: 'POST', token: superAuth.token,
+      body: {
+        project: multi.id, page_number: index + 1, pdf_page: index + 1, status: 'pending',
+        proofread_round: 1, mismatch_count: 0, ocr_row_json: JSON.stringify(row), ocr_text: row.词条
+      }
+    }))
+  }
+  const multiSummary = await request(`/api/fangji/projects/${multi.id}/findings/recompute`, { method: 'POST', token: boss.token })
+  assert.equal(multiSummary.pages, 3, JSON.stringify(multiSummary))
+  const FINDING_IDS = ['cross_source_conflict', 'strong_findings_ge_2', 'strong_findings_eq_1', 'warn_findings_ge_3']
+  const currentOf = async (pageId) => (await request(
+    `/api/collections/review_findings/records?perPage=200&filter=${encodeURIComponent(`page = "${pageId}" && superseded_at = ""`)}`,
+    { token: superAuth.token })).items
+  const stored = []
+  for (const [index, page] of pages.entries()) {
+    const findings = await currentOf(page.id)
+    const row = await request(`/api/collections/pages/records/${page.id}`, { token: superAuth.token })
+    const basis = JSON.parse(row.difficulty_basis_json || '[]')
+    stored.push({ tier: row.difficulty_tier, basis, findings })
+    const fromFindings = basis.filter((id) => FINDING_IDS.includes(id))
+    // 由疑点推导出来的 basis 必须与**这一条自己**的当前批次数量一致。
+    const strong = findings.filter((item) => item.severity === 'strong').length
+    if (!strong) assert.deepEqual(fromFindings.filter((id) => id.startsWith('strong_')), [],
+      `第 ${index + 1} 条零 strong 疑点却带了 ${JSON.stringify(fromFindings)}：${JSON.stringify(basis)}`)
+    else assert.equal(fromFindings.includes(strong >= 2 ? 'strong_findings_ge_2' : 'strong_findings_eq_1'), true,
+      `第 ${index + 1} 条有 ${strong} 条 strong 疑点，basis 却没有对应项：${JSON.stringify(basis)}`)
+  }
+  const [silentPage, firstFlagged, secondFlagged] = stored
+  assert.equal(silentPage.findings.length, 0,
+    `第一条必须是零疑点的干净条目，实际 ${JSON.stringify(silentPage.findings.map((f) => f.message_key))}`)
+  assert.deepEqual(silentPage.basis.filter((id) => FINDING_IDS.includes(id)), [],
+    `干净条目被算进了别人的疑点：${JSON.stringify(silentPage.basis)}`)
+  assert.ok(firstFlagged.findings.length >= 1 && secondFlagged.findings.length >= 1,
+    '另两条必须各自产出疑点，否则上面的比较没有意义')
+
   // 空项目也要能跑，且不给假数字。
   emptyProject = await request('/api/fangji/projects', {
     method: 'POST', token: platformAuth.token, expected: 201, body: { name: `Empty ${suffix}` }
@@ -188,6 +241,9 @@ try {
   console.log('Task difficulty integration test passed.')
 } finally {
   await request(`/api/fangji/projects/${project.id}`, { method: 'DELETE', token: platformAuth.token, expected: 204 })
+  if (multi) {
+    await request(`/api/fangji/projects/${multi.id}`, { method: 'DELETE', token: platformAuth.token, expected: 204 })
+  }
   if (emptyProject) {
     await request(`/api/fangji/projects/${emptyProject.id}`, { method: 'DELETE', token: platformAuth.token, expected: 204 })
   }
