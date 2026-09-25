@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { createRequire } from 'node:module'
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -82,6 +83,52 @@ for (const [name, want] of Object.entries(fixture.expected)) {
 assert.equal(scored.unicode_equivalent_excluded, fixture.unicode_equivalent_excluded, '伪分歧要被单独计数')
 assert.deepEqual(stripSecrets(labels).filter((item) => !item.accepted)
   .map((item) => `${item.attempt}/${item.field}`).sort(), [...fixture.negative_pairs].sort())
+
+// ---------- 一条命令端到端：验收项说的是 CLI，不是库函数 ----------
+// 「一条命令生成标注集与报告，输入只需一个只读数据目录/导出文件」这一条，此前只由
+// 我 import 这些函数、在测试里调用它们来"代表"——真跑一次 CLI 没有任何测试盖着。
+// 现在真的用子进程跑一次，并钉三件事：命令能跑完；报告分合成/真实两栏（真实栏 n/a）；
+// 以及输出里不得出现任何原样单元格内容（#179 的"报告只含计数与比率"）。
+{
+  const fixturePath = new URL('../tests/fixtures/assist_traps.json', import.meta.url).pathname
+  const cliPath = new URL('../../scripts/assist/score_rules.mjs', import.meta.url).pathname
+  const reportPath = path.join(tmpdir(), `assist-cli-${Date.now()}.md`)
+  const jsonPath = path.join(tmpdir(), `assist-cli-${Date.now()}.json`)
+  // 进度表走的是 stderr，这里只关心退出码与两份产物文件。
+  execFileSync(process.execPath,
+    [cliPath, '--records', fixturePath, '--report', reportPath, '--json', jsonPath],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  try {
+    const report = readFileSync(reportPath, 'utf8')
+    const payload = readFileSync(jsonPath, 'utf8')
+    assert.match(report, /## 合成样本指标/, '报告缺合成栏')
+    assert.match(report, /## 真实样本指标/, '报告缺真实栏（合成指标不得单独出现）')
+    assert.match(report, /n\/a/, '真实栏在数据到位前必须是 n/a，不是 0')
+    // 报告里的数字必须等于手算表：光"能跑出一堆字"不算验收。
+    const row = fixture.expected.R2
+    assert.match(report, new RegExp(
+      `\\| R2 confusable_substitution \\| ${row.hits} \\| ${row.tp} \\| ${row.fp} \\| ${row.fn} \\| ${String(row.precision).replace('.', '\\.')} \\|`),
+      `报告里的 R2 与手算表不符：${report.split('\n').find((line) => line.includes('R2'))}`)
+    // 递归收集 fixture 里含中日韩文字的原样值：它们可以出现在仓库的 fixtures 里
+    // （那是合成样例），但绝不该出现在工具的输出里。
+    const cjk = /[\u3040-\u30ff\u4e00-\u9fff]/
+    const texts = []
+    const walk = (value) => {
+      if (typeof value === 'string') { if (cjk.test(value)) texts.push(value) }
+      else if (Array.isArray(value)) value.forEach(walk)
+      else if (value && typeof value === 'object') Object.values(value).forEach(walk)
+    }
+    walk([fixture.pages, fixture.attempts])
+    assert.ok(texts.length >= 4, `fixture 里没有足够多的原样内容可比对：${texts.length}`)
+    for (const text of texts) {
+      assert.equal(report.includes(text), false, `报告里出现了原样内容：${text.slice(0, 8)}…`)
+      assert.equal(payload.includes(text), false, `JSON 输出里出现了原样内容：${text.slice(0, 8)}…`)
+    }
+    assert.equal(payload.includes('U+0303'), true, '码位这类结构信息应当保留（脱敏不是删掉一切）')
+  } finally {
+    unlinkSync(reportPath); unlinkSync(jsonPath)
+  }
+}
 
 // ---------- 打分覆盖度：引擎产出的每条规则都要被量到，或写明为什么不量 ----------
 // `score_rules.mjs` 自己的注释就写了「#177 新增规则时这里要跟上，否则那条规则永远不会
