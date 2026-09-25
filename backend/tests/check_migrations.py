@@ -43,6 +43,25 @@ SPECS = {
         # that only touches sqlite_master disappears on the next schema sync.
         'collection_indexes': ('pages', 'idx_pages_pdf_affinity'),
     },
+    '1789113600_review_findings.js': {
+        'indexes': ['idx_findings_page_current', 'idx_findings_project_kind',
+                    'idx_findings_rule_identity', 'idx_gate_rule_identity'],
+        'plans': [
+            # The read path #176 actually uses: current (not superseded) findings of one page.
+            ('review_findings',
+             "SELECT id FROM review_findings WHERE page=? AND superseded_at='' ORDER BY produced_at DESC",
+             ('p',), 'idx_findings_page_current'),
+            # Manager-side statistics grouping.
+            ('review_findings',
+             'SELECT id FROM review_findings WHERE project=? AND kind=?',
+             ('p', 'merged_columns'), 'idx_findings_project_kind'),
+            # Gate lookup by rule identity — one row per (producer, version, kind, message_key).
+            ('assist_rule_gates',
+             'SELECT id FROM assist_rule_gates WHERE producer=? AND producer_version=? AND kind=? AND message_key=?',
+             ('rule', 'v1', 'merged_columns', 'bracket_unbalanced'), 'idx_gate_rule_identity'),
+        ],
+        'collection_indexes': ('review_findings', 'idx_findings_page_current'),
+    },
 }
 FIRST = '1788940000_initial_schema.js'
 
