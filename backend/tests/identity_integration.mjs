@@ -51,6 +51,71 @@ async function request(url, { method = 'GET', token = '', body, expected = 200 }
     '两条批处理路径的 kind 不得重叠，否则又会互清批次')
 }
 
+// assist_writer.js 里不许再出现"一次读 N 条、offset 0"的批量读取形状。
+// 这条守卫是被三连击逼出来的：#208 阻断 2（扫描上限 5000）→ retire 的 10 万行下线上限 →
+// recomputeIdentity 的 5000 条人工结论与 refreshDifficulty 的 500 条单页疑点。
+// 同一个形状换了三个地方，每次都靠人肉发现。现在：批量读取只能走 readAllInChunks /
+// retire / loadAllPages，limit 字面量只允许 1（存在性检查）。
+{
+  const src = readFileSync(new URL('../pb_hooks/lib/assist_writer.js', import.meta.url), 'utf8')
+  // 手写一个小扫描器取实参：第一版的正则会漏掉"闭括号写在同一行"的调用，
+  // 我拿一个假的上限去验它，结果它照样绿——那就是一条恒真守卫，比没有更糟。
+  const callsOf = (text, name) => {
+    const found = []
+    let from = 0
+    for (;;) {
+      const at = text.indexOf(`${name}(`, from)
+      if (at < 0) return found
+      let i = at + name.length + 1
+      let depth = 1
+      let quote = null
+      let buf = ''
+      while (i < text.length && depth > 0) {
+        const ch = text[i]
+        if (quote) { buf += ch; if (ch === quote) quote = null; i += 1; continue }
+        if (ch === '"' || ch === "'" || ch === '`') { quote = ch; buf += ch; i += 1; continue }
+        if (ch === '(') depth += 1
+        else if (ch === ')') { depth -= 1; if (depth === 0) break }
+        buf += ch
+        i += 1
+      }
+      found.push(buf)
+      from = i + 1
+    }
+  }
+  const topArgs = (inner) => {
+    const parts = []
+    let depth = 0
+    let quote = null
+    let buf = ''
+    for (const ch of inner) {
+      if (quote) { buf += ch; if (ch === quote) quote = null; continue }
+      if (ch === '"' || ch === "'" || ch === '`') { quote = ch; buf += ch; continue }
+      if (ch === '(' || ch === '[') depth += 1
+      if (ch === ')' || ch === ']') depth -= 1
+      if (ch === ',' && depth === 0) { parts.push(buf.trim()); buf = ''; continue }
+      buf += ch
+    }
+    if (buf.trim()) parts.push(buf.trim())
+    return parts
+  }
+  const calls = callsOf(src, 'findRecordsByFilter')
+  // 扫描器的自检：解析不出参数就等于没有守卫。
+  for (const inner of calls) {
+    assert.ok(topArgs(inner).length >= 4, `参数解析失败，扫描器自身是恒真的：${JSON.stringify(inner.slice(0, 60))}`)
+  }
+  // 收敛之后整个文件只剩两处直接读取（retire 的游标与 readAllInChunks 的游标）；
+  // 少于两处就说明有人把分块实现拆回了裸调用。
+  assert.ok(calls.length >= 2 && calls.length <= 3,
+    `assist_writer.js 的直接读取点应只有分块helper那 2–3 处，实际 ${calls.length}`)
+  const offenders = calls
+    .map((inner) => topArgs(inner)[3] ?? '')
+    .filter((limitArg) => /^\d+$/.test(limitArg) && Number(limitArg) > 1)
+  assert.deepEqual(offenders, [], `assist_writer.js 里出现了带数字上限的一次性读取：${JSON.stringify(offenders)}`)
+  assert.ok(src.includes('function readAllInChunks(') && src.includes('function retire('),
+    '分块读取的实现被删了？')
+}
+
 const row = (o) => ({ 词条: o.headword ?? '', 拼音: o.pinyin ?? '', 莆田IPA: o.ipa ?? '', 释义: o.meaning ?? '', ...o.extra ?? {} })
 
 // ---------- 纯函数：分组与 R-DEDUP ----------

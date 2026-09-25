@@ -390,8 +390,11 @@ function recomputeIdentity(dao, projectId) {
     entries.push({ id: page.id, project: projectId, row, page, source: page.getString("project_file") })
   }
 
-  const dismissed = new Set(dao.findRecordsByFilter(
-    "finding_dismissals", `project = "${projectId}" && status = "not_conflict"`, "group_key", 5000, 0
+  // 人工结论必须读全：少读的那些组会被重新报成冲突，等于静默推翻人的判断——
+  // 而 #178 立这条收集合的理由就是"重算时保留人工结论，否则人就再也不信这个队列"。
+  // 5000 的上限不是假想：本 issue 自己的 10k 压力 fixture 就有 2500 个身份分组。
+  const dismissed = new Set(readAllInChunks(
+    dao, "finding_dismissals", `project = "${projectId}" && status = "not_conflict"`, "group_key"
   ).map((row) => row.getString("group_key")))
 
   const findings = [...findIdentityConflicts(entries, dismissed).findings]
