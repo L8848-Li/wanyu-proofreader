@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const difficulty = require('../pb_hooks/lib/assist_difficulty.js')
+const writer = require('../pb_hooks/lib/assist_writer.js')
 
 const baseUrl = process.env.PB_URL || 'http://127.0.0.1:18091'
 const platformAuth = await request('/api/collections/users/auth-with-password', {
@@ -101,6 +102,36 @@ assert.equal(difficulty.normalizeBlocked('typo_in_source'), 'unknown')
 assert.equal(difficulty.blockedReasonFromFindings(
   [{ kind: 'merged_columns', severity: 'strong', field: '释义' }]), 'column_merge')
 assert.equal(difficulty.blockedReasonFromFindings([]), 'unknown')
+
+// 读取不许有静默上限：这一整套改造（#208 阻断 2 → retire 分块 → 这里）守的都是同一件事。
+// refreshDifficulty 原来是 `limit 500, offset 0` 一次读，读不到的那部分不会参与 tier，
+// 而 tier 是持久化的排序键；recomputeIdentity 读人工结论时是 `limit 5000`，
+// 而 #178 的 10k 压力 fixture 本身就有 2500 个身份分组——上限不是假想。
+{
+  const rows = Array.from({ length: 7 }, (_, i) => ({ id: `f${i}` }))
+  let reads = 0
+  const dao = {
+    findRecordsByFilter: (collection, filter, sort, limit, offset) => {
+      reads += 1
+      return rows.slice(offset, offset + limit)
+    }
+  }
+  assert.deepEqual(writer.readAllInChunks(dao, 'review_findings', 'x', 'kind', { chunk: 3 }).map((r) => r.id),
+    rows.map((r) => r.id), '分块读取必须把 7 行全读出来')
+  assert.ok(reads >= 3, `chunk=3 时应至少读三块，实际 ${reads} 次：说明读到第一块就停了`)
+  reads = 0
+  // 行数刚好是块的整数倍时，要多探一次才能确认读完——这是游标读取的固有代价，
+  // 断言写在这里是为了下次有人"优化"掉那一次读取时能被发现。
+  reads = 0
+  assert.deepEqual(writer.readAllInChunks(dao, 'review_findings', 'x', 'kind', { chunk: 7 }).map((r) => r.id),
+    rows.map((r) => r.id), '整批刚好一块时也要读全')
+  assert.equal(reads, 2, `刚好一块应多探一次确认结束：${reads}`)
+  let emptyReads = 0
+  const emptyDao = { findRecordsByFilter: () => { emptyReads += 1; return [] } }
+  assert.deepEqual(writer.readAllInChunks(emptyDao, 'review_findings', 'x', 'kind', { chunk: 10 }), [],
+    '空结果集不该死循环')
+  assert.equal(emptyReads, 1, `空结果集应只读一次：${emptyReads}`)
+}
 
 console.log('PASS: difficulty signal table walked row by row')
 

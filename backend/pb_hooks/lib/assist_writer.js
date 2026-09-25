@@ -16,6 +16,8 @@ const PRODUCER = "rule"
 // 往后的当前批次被标 superseded 却没有新批次替换，那些条目从此永久读不到疑点
 // （#208 评审阻断 2）。现在只有两种结局：整批扫完，或在**任何写入之前**抛错拒算。
 const PAGE_SCAN_CHUNK = 1000
+// 通用分块读取的块大小。
+const READ_CHUNK = 1000
 // 内存保险丝，不是正确性上限：命中它就抛错，已落库的疑点一条都不动。
 // 10k 行项目的实测耗时见 docs/plans/2026-09-25-assist-rules.md §6。
 const PROJECT_SCAN_REFUSAL = 50000
@@ -109,6 +111,22 @@ function retire(dao, collection, clauses, shouldRetire, stamp, { chunk = RETIRE_
 }
 
 // 把该范围内、同 producer 的当前批次全部下线。只写 superseded_at，其余字段一个都不碰。
+// 分块读完一个过滤条件下的全部行，读到空为止。
+//
+// 为什么全项目都用它而不是"一次读一个大 limit"：`limit N, offset 0` 的形状一旦
+// 结果集超过 N 就会**静默少读**，而少读的那些行照样参与后面的判定，报告写得像算完了。
+// #208 的评审阻断 2 与本轮在 recomputeIdentity/refreshDifficulty 里发现的两个
+// 上限（5000 条人工结论 / 500 条单页疑点）都是同一个形状，所以收敛到这里一份实现。
+// 只适用于"读期间不写"的场景（写会让结果集缩小，那种翻页见 retire）。
+function readAllInChunks(dao, collection, filter, sort, { chunk = READ_CHUNK } = {}) {
+  const rows = []
+  for (let offset = 0; ; offset += chunk) {
+    const batch = dao.findRecordsByFilter(collection, filter, sort, chunk, offset)
+    for (const record of batch) rows.push(record)
+    if (batch.length < chunk) return rows
+  }
+}
+
 // 分批下线作用域内的当前批次。见 retire 的注释：这里防的是"读满一块就停"——
 // 剩下的行会以"当前批次"的身份永远留在库里，旧疑点再也下不了线。
 function supersede(dao, collection, clauses, at) {
@@ -175,16 +193,13 @@ function recomputePage(dao, pageId, rowOverride = null) {
 
 // 分批读全项目的条目；游标翻到某一批不满额为止。超限抛错，调用方因此一条都不会写。
 function loadAllPages(dao, projectId, { chunk = PAGE_SCAN_CHUNK, refusal = PROJECT_SCAN_REFUSAL } = {}) {
-  const pages = []
-  for (let offset = 0; ; offset += chunk) {
-    const batch = dao.findRecordsByFilter(
-      "pages", `project = "${projectId}"`, "page_number,created", chunk, offset)
-    for (const page of batch) pages.push(page)
-    if (batch.length < chunk) return pages
-    if (pages.length >= refusal) {
-      throw new Error(`项目条目数 ${pages.length} 已达全量重算保险丝 ${refusal}，拒绝执行（未改动任何疑点）`)
-    }
+  const pages = readAllInChunks(dao, "pages", `project = "${projectId}"`, "page_number,created", { chunk })
+  // 保险丝在扫完之后仍然要判：readAllInChunks 不设上限，而拒算是为了不让
+  // 一次重算把整项目的行都吸进内存。抛错一定发生在第一次写之前。
+  if (pages.length >= refusal) {
+    throw new Error(`项目条目数 ${pages.length} 已达全量重算保险丝 ${refusal}，拒绝执行（未改动任何疑点）`)
   }
+  return pages
 }
 
 // 项目级：列级(R3/R4) 与页级(R7) 规则要看到全量才能判，所以只在批处理里跑。
@@ -253,12 +268,8 @@ function recomputeProject(dao, projectId) {
 function refreshDifficulty(dao, page, stats = null) {
   const { deriveDifficulty, blockedReasonFromFindings, DIFFICULTY_VERSION } =
     require(`${__hooks}/lib/assist_difficulty.js`)
-  const findings = dao.findRecordsByFilter(
-    "review_findings",
-    `page = "${page.id}" && superseded_at = ""`,
-    "kind",
-    500,
-    0
+  const findings = readAllInChunks(
+    dao, "review_findings", `page = "${page.id}" && superseded_at = ""`, "kind"
   ).map((row) => ({
     kind: row.getString("kind"),
     severity: row.getString("severity"),
@@ -334,6 +345,8 @@ module.exports = {
   safeRecomputePage,
   PRODUCER,
   RETIRE_CHUNK,
+  READ_CHUNK,
+  readAllInChunks,
   retire,
   PAGE_SCAN_CHUNK,
   PROJECT_SCAN_REFUSAL,
