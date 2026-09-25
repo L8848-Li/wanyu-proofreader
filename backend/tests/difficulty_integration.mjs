@@ -160,6 +160,52 @@ try {
   assert.equal(afterSecond.difficulty_basis_json, after.difficulty_basis_json)
   assert.equal(second.difficulty_tier, after.difficulty_tier)
 
+  // #180 验收原文是「同一份数据在**两个 `producer_version`** 下结果稳定可复算」。
+  // 上面那段只把同一个版本重算了两遍，盖不到这条。真实形状是：一条页面上同时挂着
+  // #177 的 l0-v1 与 #178 的 identity-v1 两批疑点，而 tier 必须 (a) 两批都算进来
+  // ——漏一批就等于重算顺序会改变 #162 的排序键；(b) 记的是推导自身的版本 tier-v1，
+  // 不是任何一个输入批次的 producer_version；(c) 其中一批被下线后回到原始结果，
+  // 不重复计数、也不让已下线的行继续影响 tier。
+  const strongNow = async () => (await request(
+    `/api/collections/review_findings/records?perPage=200&filter=${encodeURIComponent(`page = "${messy.id}" && superseded_at = "" && severity = "strong"`)}`,
+    { token: superAuth.token })).items
+  const beforeForeign = await strongNow()
+  const expectedId = (count) => (count >= 2 ? 'strong_findings_ge_2' : count === 1 ? 'strong_findings_eq_1' : null)
+  assert.equal(JSON.parse((await request(`/api/collections/pages/records/${messy.id}`, { token: superAuth.token })).difficulty_basis_json)
+    .includes(expectedId(beforeForeign.length)), true,
+    `起点就不自洽：${beforeForeign.length} 条 strong 应对应 ${expectedId(beforeForeign.length)}`)
+
+  // 用 ocr 这个生产者而不是再批一条 producer="rule"：在 #212 之前，#177 的下线只按
+  // producer 收口，任何 producer="rule" 的第二批（#178 的 identity-v1 就是）都会被
+  // 同一次重算顺手标掉——这一点由 #212 的 kindClause 修掉，我在 #211 的正文里也记了。
+  // 本测试要量的是 tier 跨版本聚合，不该被那个尚未存在的收口绑住。
+  const foreign = await request('/api/collections/review_findings/records', {
+    method: 'POST', token: superAuth.token,
+    body: {
+      page: messy.id, project: project.id, field_name: '释义', kind: 'merged_columns',
+      severity: 'strong', message_key: 'column_collapse', params_json: '{}',
+      evidence_json: '{}', producer: 'ocr', producer_version: 'ocr-v1',
+      produced_at: new Date().toISOString()
+    }
+  })
+  await request(`/api/fangji/pages/${messy.id}/findings/recompute`, { method: 'POST', token: boss.token })
+  const mixed = await request(`/api/collections/pages/records/${messy.id}`, { token: superAuth.token })
+  const mixedBasis = JSON.parse(mixed.difficulty_basis_json)
+  assert.equal(mixedBasis.includes(expectedId(beforeForeign.length + 1)), true,
+    `另一个 producer_version 的疑点没被算进 tier：${JSON.stringify({ strong: beforeForeign.length + 1, basis: mixedBasis })}`)
+  assert.equal(mixed.difficulty_version, difficulty.DIFFICULTY_VERSION,
+    'tier 上记的必须是推导自身的版本，不是任何一个输入批次的 producer_version')
+
+  // 把那条"另一个版本"的疑点下线（#178 的批次就是这么被 kind 收口下线的），tier 要回到原样。
+  await request(`/api/collections/review_findings/records/${foreign.id}`, {
+    method: 'PATCH', token: superAuth.token, body: { superseded_at: new Date().toISOString() }
+  })
+  await request(`/api/fangji/pages/${messy.id}/findings/recompute`, { method: 'POST', token: boss.token })
+  const rolledBack = await request(`/api/collections/pages/records/${messy.id}`, { token: superAuth.token })
+  assert.equal(rolledBack.difficulty_basis_json, after.difficulty_basis_json,
+    `下线后没有回到原始结果（重复计数或读到了已下线的行）：${rolledBack.difficulty_basis_json}`)
+  assert.equal(rolledBack.difficulty_tier, after.difficulty_tier)
+
   // 盲校未退化：tier 是筛选维度，不是给校对员的轮次线索。
   // GET /task 用显式字段列表，因此新字段不会跟着下发；这里把它钉成断言，
   // 将来有人把 payload 改成 spread 就会红。
