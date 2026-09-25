@@ -19,6 +19,8 @@ const PAGE_SCAN_CHUNK = 1000
 // 内存保险丝，不是正确性上限：命中它就抛错，已落库的疑点一条都不动。
 // 10k 行项目的实测耗时见 docs/plans/2026-09-25-assist-rules.md §6。
 const PROJECT_SCAN_REFUSAL = 50000
+// 下线旧批次时的读取块大小（见 retire）。
+const RETIRE_CHUNK = 1000
 
 function nowStamp() {
   return new Date().toISOString()
@@ -73,20 +75,44 @@ function insertFinding(dao, collection, page, row, at, producerVersion) {
   return record
 }
 
-// 把该范围内、同 producer 的当前批次全部下线。只写 superseded_at，其余字段一个都不碰。
-function supersede(dao, collection, clauses, at) {
-  const stale = dao.findRecordsByFilter(
-    "review_findings",
-    [...clauses, 'superseded_at = ""'].join(" && "),
-    "created",
-    100000,
-    0
-  )
-  for (const record of stale) {
-    record.set("superseded_at", at)
-    dao.save(record)
+// 逐块下线，读到空为止。
+//
+// 为什么不是"一次读 10 万条然后遍历"：那是 #208 评审阻断 2 的镜像形状。读满上限之后
+// 剩下的行不会被下线，于是它们永远以「当前批次」的身份留在库里——校对端读到的是早该失效的
+// 疑点。这个上限在本项目的口径下是**可及的**：扫描保险丝允许 5 万条目，而实测 10k 条目
+// 产出 2.9 万条疑点（约 3.5 万条目就越过 10 万行）。
+//
+// offset 用「本轮决定保留的行数」而不是「已处理行数」：被下线的行会从结果集里消失，
+// 只有留下的那些需要被再次越过；用错就会漏行或死循环。
+// 这里不设熔断：每轮要么下线至少一行（结果集缩小）要么越过一行（有上界），一定终止；
+// 中途抛错反而制造"下线了一半"的状态，而那正是这段代码要防的事。
+function retire(dao, collection, clauses, shouldRetire, stamp, { chunk = RETIRE_CHUNK } = {}) {
+  let retired = 0
+  let skipped = 0
+  for (;;) {
+    const batch = dao.findRecordsByFilter(
+      "review_findings",
+      [...clauses, 'superseded_at = ""'].join(" && "),
+      "created",
+      chunk,
+      skipped
+    )
+    if (!batch.length) return retired
+    for (const record of batch) {
+      if (!shouldRetire(record)) { skipped += 1; continue }
+      record.set("superseded_at", stamp)
+      dao.save(record)
+      retired += 1
+    }
+    if (batch.length < chunk) return retired
   }
-  return stale.length
+}
+
+// 把该范围内、同 producer 的当前批次全部下线。只写 superseded_at，其余字段一个都不碰。
+// 分批下线作用域内的当前批次。见 retire 的注释：这里防的是"读满一块就停"——
+// 剩下的行会以"当前批次"的身份永远留在库里，旧疑点再也下不了线。
+function supersede(dao, collection, clauses, at) {
+  return retire(dao, collection, clauses, () => true, at)
 }
 
 // 插入之后的收尾：只下线**严格更早**的批次。
@@ -108,22 +134,9 @@ function stampKey(value) {
 }
 
 function settleBatch(dao, collection, clauses, at) {
-  const current = dao.findRecordsByFilter(
-    "review_findings",
-    [...clauses, 'superseded_at = ""'].join(" && "),
-    "created",
-    100000,
-    0
-  )
   const mine = stampKey(at)
-  let retired = 0
-  for (const record of current) {
-    if (!(stampKey(record.getString("produced_at")) < mine)) continue
-    record.set("superseded_at", at)
-    dao.save(record)
-    retired += 1
-  }
-  return retired
+  return retire(dao, collection, clauses, (record) =>
+    stampKey(record.getString("produced_at")) < mine, at)
 }
 
 // 单条目重算的作用域：本条目 + 本生产者，**但要排除列级 key**。
@@ -239,6 +252,8 @@ function safeRecomputePage(dao, pageId, row, label) {
 module.exports = {
   safeRecomputePage,
   PRODUCER,
+  RETIRE_CHUNK,
+  retire,
   PAGE_SCAN_CHUNK,
   PROJECT_SCAN_REFUSAL,
   loadAllPages,

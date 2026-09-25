@@ -243,6 +243,56 @@ assert.ok(ctx.repertoire.size > 120, `repertoire too small: ${ctx.repertoire.siz
   assert.equal(backtracked[0].evidence.page, 12, 'evidence.page 仍然是 PDF 页号')
 }
 
+// 下线旧批次也必须一块接一块读完。一次读满上限就停是 #208 评审阻断 2 的镜像形状：
+// 没被下线的行会永远以「当前批次」的身份留在库里，也就是旧疑点再也撤不下来。
+// 上限在本项目的口径下是可及的（保险丝允许 5 万条目，实测 10k 条目产 2.9 万条疑点），
+// 所以这不是假想场景。fake dao 在这里模拟 SQL 语义：结果集只含尚未下线的行、
+// offset 越过的是本轮决定保留的那些行。
+{
+  const mkRecord = (id, stamp) => ({
+    id,
+    superseded: '',
+    set(key, value) { if (key === 'superseded_at') this.superseded = String(value) },
+    getString(key) { return key === 'produced_at' ? stamp : '' }
+  })
+  const run = (count, stampOf) => {
+    const records = Array.from({ length: count }, (_, i) => mkRecord(`r${i}`, stampOf(i)))
+    let reads = 0
+    let writes = 0
+    const dao = {
+      findRecordsByFilter: (collection, filter, sort, limit, offset) => {
+        reads += 1
+        const current = records.filter((record) => record.superseded === '')
+        return current.slice(offset, offset + limit)
+      },
+      save: () => { writes += 1 }
+    }
+    return { records, dao, stats: () => ({ reads, writes }) }
+  }
+
+  const all = run(5, () => '2026-09-25 00:00:00.001Z')
+  const retiredAll = writer.retire(all.dao, null, ['producer = "rule"'], () => true, 'STAMP', { chunk: 2 })
+  assert.equal(retiredAll, 5, `五份当前批次必须全部下线，实际 ${retiredAll}`)
+  assert.deepEqual(all.records.filter((record) => record.superseded === '').map((record) => record.id), [],
+    '不得有行留在当前批次里')
+  assert.ok(all.stats().reads >= 3, `chunk=2 时至少要读三块，只读一块就是原来的静默截断：${JSON.stringify(all.stats())}`)
+  assert.equal(all.stats().writes, 5, '每行只写一次')
+
+  // 保留最新一批的那条（settleBatch 的形状）：offset 必须按"保留数"前进，否则死循环或漏行。
+  const mixed = run(5, (i) => `2026-09-25 00:00:00.00${i}Z`)
+  const retiredOld = writer.retire(mixed.dao, null, ['producer = "rule"'],
+    (record) => record.getString('produced_at') < '2026-09-25 00:00:00.004Z', 'STAMP', { chunk: 2 })
+  assert.equal(retiredOld, 4, `只该下线比它更早的四批：${retiredOld}`)
+  assert.equal(mixed.records[4].superseded, '', '最新一批必须留着')
+  assert.deepEqual(mixed.records.filter((record) => record.superseded === '').map((record) => record.id), ['r4'])
+  assert.ok(mixed.stats().reads < 10, `读取轮数失控（疑似死循环）：${JSON.stringify(mixed.stats())}`)
+
+  // 空作用域：一轮就返回，不做无谓的第二次读。
+  const none = run(0, () => 'x')
+  assert.equal(writer.retire(none.dao, null, [], () => true, 'STAMP', { chunk: 2 }), 0)
+  assert.equal(none.stats().reads, 1)
+}
+
 // 全量重算的条目游标：必须翻完整批，超限必须在**任何写入之前**退出。
 // 上一版是 PAGE_SCAN_CAP = 5000 的一次性读取 + 按 project 全量下线，第 5001 条往后的
 // 当前批次被标 superseded 却没有新批次替换，那些条目从此永久读不到疑点（#208 评审阻断 2）。
