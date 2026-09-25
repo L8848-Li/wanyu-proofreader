@@ -355,11 +355,21 @@ function runEntryRules(ctx, row, pageId) {
 const ANCHOR_ENTRY = "entry"
 const ANCHOR_COLUMN = "column_first_entry"
 const ANCHOR_PDF_PAGE = "pdf_page_first_entry"
-// 只有列级规则会产出的 message_key。单条目重算只能重新判定格级规则，所以下线旧批次时
-// 必须把这几条排除掉——否则补算某一条目会顺手抹掉挂在那一条上的列级疑点，而列级疑点
-// 只有项目级重算才会重新产出。assist_rules_integration.mjs 钉住了"列级挂靠的 key
-// 恰好等于这个集合"，所以它不会静默腐掉。
-const COLUMN_MESSAGE_KEYS = ["mixed_normalization_forms", "punctuation_width_mixed_in_column"]
+// 只有**项目级**规则才会产出的 message_key：列级(R3 列级 / R4) 与页级(R7 两个判据)。
+// 单条目重算只能重新判定格级规则，所以下线旧批次时必须把这两类一起排除——否则
+// "给某一条补算"会顺手抹掉挂在它身上的项目级疑点，而那些只有项目级重算才会重新产出。
+// 上一轮我只排除了列级两条、漏了 R7：同一件事在页级上照样成立（#212 的评审抓到这条，
+// 并据此判定链上先不许合入）。现在的划分是"格级 / 项目级"两类，
+// assist_rules_integration.mjs 断言两者恰好覆盖引擎产出的全部 key 且互不相交，
+// 所以新增规则时必须归类，漏归类会在 runProjectRules 里直接抛错。
+const CELL_MESSAGE_KEYS = [
+  "non_ipa_range_codepoints", "confusable_ascii_in_reading", "combining_marks_present",
+  "long_digit_run", "tone_token_count_differs", "required_role_field_empty"
+]
+const PROJECT_ONLY_MESSAGE_KEYS = [
+  "mixed_normalization_forms", "punctuation_width_mixed_in_column",
+  "pdf_page_backtrack", "page_entry_count_outlier"
+]
 
 function anchored(item, pageId, scope) {
   return {
@@ -385,7 +395,14 @@ function runProjectRules(ctx, entries) {
   const columns = columnsOf(list)
   const out = []
   for (const entry of list) {
-    for (const item of runPageRules(ctx, entry.row)) out.push(anchored(item, entry.pageId, ANCHOR_ENTRY))
+    for (const item of runPageRules(ctx, entry.row)) {
+      if (!CELL_MESSAGE_KEYS.includes(item.message_key)) {
+        // 新增格级规则却没登记进 CELL_MESSAGE_KEYS：不挡就会静默漏掉，而且症状出现在
+        // 别处（项目级疑点被单条重算吃掉），所以在这里直接抛错。
+        throw new Error(`规则产出 ${item.message_key} 未归类到 CELL/PROJECT_ONLY key 清单`)
+      }
+      out.push(anchored(item, entry.pageId, ANCHOR_ENTRY))
+    }
   }
   const columnAnchor = list.length ? list[0].pageId : ""
   for (const item of [...ruleColumnForms(columns), ...rulePunctuationMix(columns)]) {
@@ -403,7 +420,8 @@ module.exports = {
   ANCHOR_ENTRY,
   ANCHOR_COLUMN,
   ANCHOR_PDF_PAGE,
-  COLUMN_MESSAGE_KEYS,
+  CELL_MESSAGE_KEYS,
+  PROJECT_ONLY_MESSAGE_KEYS,
   LEGAL_LONG_TONES,
   READING_FIELDS,
   IPA_FIELDS,

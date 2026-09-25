@@ -214,9 +214,53 @@ assert.ok(ctx.repertoire.size > 120, `repertoire too small: ${ctx.repertoire.siz
   assert.deepEqual(columnItems.map((item) => item.message_key).sort(),
     ['mixed_normalization_forms', 'punctuation_width_mixed_in_column'],
     JSON.stringify(columnItems.map((item) => item.message_key)))
-  // 单条重算靠 COLUMN_MESSAGE_KEYS 排除列级疑点，所以"带列级 anchor 的 key"必须恰好等于它。
-  assert.deepEqual([...new Set(columnItems.map((item) => item.message_key))].sort(),
-    [...rules.COLUMN_MESSAGE_KEYS].sort(), '列级 key 清单与挂靠结果不一致')
+  // 单条重算靠 PROJECT_ONLY_MESSAGE_KEYS 排除项目级疑点，所以"非格级 anchor 的 key"
+  // 必须恰好等于它，而"格级 anchor 的 key"必须恰好等于 CELL_MESSAGE_KEYS：
+  // 两份清单要正好划分引擎产出的全部 key，新增规则漏归类就在这里红。
+  const anchoredKeys = (scope) => [...new Set(out.filter((item) =>
+    item.evidence.anchor === scope).map((item) => item.message_key))].sort()
+  // 分类守卫以**源码产出的 key 集合**为基准，不拿"这份 fixture 触发到什么"当基准：
+  // 三条目的 fixture 触发不了 page_entry_count_outlier（密度判据要 ≥20 页），
+  // 用观测集合做基准会把"没触发"误判成"清单错了"，也会让漏归类的 key 蒙混过去。
+  const rulesSource = readFileSync(new URL('../pb_hooks/lib/assist_rules.js', import.meta.url), 'utf8')
+  const emittedKeys = [...new Set([...rulesSource.matchAll(
+    /finding\(\s*"[a-z_]+"\s*,\s*"[a-z]+"\s*,[^,]+,\s*"([a-z_]+)"/g)].map((m) => m[1]))].sort()
+  assert.ok(emittedKeys.length >= 9, `从源码抽出的 key 太少，先怀疑正则：${JSON.stringify(emittedKeys)}`)
+  assert.deepEqual(emittedKeys,
+    [...new Set([...rules.CELL_MESSAGE_KEYS, ...rules.PROJECT_ONLY_MESSAGE_KEYS])].sort(),
+    '引擎产出的 key 必须被格级/项目级两份清单恰好划分，既不能漏也不能多')
+  assert.deepEqual(rules.CELL_MESSAGE_KEYS.filter((key) => rules.PROJECT_ONLY_MESSAGE_KEYS.includes(key)), [],
+    '两份清单不得重叠')
+  // 挂靠方向只断言子集：观测到的 key 必须落在它该落的那份清单里。
+  for (const scope of [rules.ANCHOR_COLUMN, rules.ANCHOR_PDF_PAGE]) {
+    for (const key of anchoredKeys(scope)) {
+      assert.ok(rules.PROJECT_ONLY_MESSAGE_KEYS.includes(key), `${scope} 挂靠的 ${key} 不在项目级清单里`)
+    }
+  }
+  for (const key of anchoredKeys(rules.ANCHOR_ENTRY)) {
+    assert.ok(rules.CELL_MESSAGE_KEYS.includes(key), `格级挂靠的 ${key} 不在 CELL 清单里`)
+  }
+  // 反向也要有：两份清单里若出现源码根本不产的 key（改名/删规则后的残留），必须红。
+  for (const key of [...rules.CELL_MESSAGE_KEYS, ...rules.PROJECT_ONLY_MESSAGE_KEYS]) {
+    assert.ok(emittedKeys.includes(key), `清单里的 ${key} 已不是引擎产出的 key`)
+  }
+  // 漏归类在 runProjectRules 里直接抛错，这一段证明确实会抛（不抛就是静默少一条排除项，
+  // 症状出现在别处：项目级疑点被单条重算吃掉）。导出的数组与模块内是同一个对象，所以
+  // 这里临时摘掉一项就能复现"新增规则忘了登记"，测完必须放回。
+  const digitRow = { 词条: '甲', 拼音: 'ka1', 莆田IPA: 'ua5333', 释义: '第一（个）' }
+  assert.ok(rules.runPageRules(ctx, digitRow).some((item) => item.message_key === 'long_digit_run'),
+    '样本行必须真的产 long_digit_run，否则下面这段是空转')
+  const cellKeys = rules.CELL_MESSAGE_KEYS
+  const registeredAt = cellKeys.indexOf('long_digit_run')
+  const removed = cellKeys.splice(registeredAt, 1)
+  assert.deepEqual(removed, ['long_digit_run'], 'CELL 清单里应当有 long_digit_run')
+  try {
+    assert.throws(() => rules.runProjectRules(ctx, [{ pageId: 'P1', order: 1, pdfPage: 1, row: digitRow }]),
+      /未归类/, '未归类的格级 key 必须让 runProjectRules 抛错')
+  } finally {
+    cellKeys.splice(registeredAt, 0, ...removed)
+  }
+  assert.deepEqual(cellKeys[registeredAt], 'long_digit_run', '这段守卫自己不许把清单改坏')
   for (const item of columnItems) {
     assert.equal(item.page, 'P1', '列级疑点必须挂在第一条目上')
     // 列级 params 只允许计数与码位标签：它挂在无辜的条目上，绝不能带原样内容片段。
@@ -427,11 +471,27 @@ try {
   const trapped = await createPage(project.id, 1, trappedRow)
   const clean = await createPage(project.id, 2, cleanRow)
   const paged = await createPage(project.id, 3, pagedRow)
+  // 第 4 条刻意把 pdf_page 回退到 1：这会触发 R7 的 pdf_page_backtrack，并按挂靠口径
+  // 挂在"该 PDF 页的第一个条目"= trapped 上。目的不是测 R7 本身（纯函数段测过），
+  // 而是让"单条目重算会不会吃掉挂在 trapped 上的项目级疑点"在 API 层可观测——
+  // 上一轮我只排除了列级两条，R7 照样被吃掉（#212 的评审抓到这条）。
+  // 三列记音照抄 cleanRow：R2 的混淆表把 IPA 列里的 'a' 当成 ɑ，随手写个 'sai1' 就会
+  // 给这条多出两格疑点，"它自己没有格级疑点"这个前提就没了。
+  const backRow = { 词条: '山', 拼音: 'thin1', 莆田IPA: 'tʰĩ1', 仙游IPA: 'tʰĩ1', 释义: '山峰' }
+  const backPage = await request('/api/collections/pages/records', {
+    method: 'POST', token: superAuth.token,
+    body: {
+      project: project.id, page_number: 4, pdf_page: 1, ocr_row_json: JSON.stringify(backRow),
+      ocr_text: Object.values(backRow).join(' '), proofread_round: 1, mismatch_count: 0, status: 'pending'
+    }
+  })
   const expectedFor = (row) => rules.runPageRules(ctx, row)
     .map((item) => `${item.kind}/${item.message_key}`).sort()
   assert.ok(expectedFor(trappedRow).length >= 4, 'trapped row must exercise several rules')
   assert.ok(expectedFor(pagedRow).length >= 1, 'non-first entry must produce its own findings')
   assert.deepEqual(expectedFor(cleanRow), [], 'clean row must be silent for the comparison to mean anything')
+  // 第 4 条也要求"格级全静"，否则"R7 只挂在第一条上"这条断言会被它自己的格级疑点混脏。
+  assert.deepEqual(expectedFor(backRow), [], 'backtracking row must be cell-silent')
   assert.deepEqual(expectedFor(trappedRow).filter((key) => key.endsWith('long_digit_run')),
     ['reading_format_invalid/long_digit_run'])
   assert.notDeepEqual(JSON.stringify(expectedFor(trappedRow)), JSON.stringify(expectedFor(pagedRow)),
@@ -442,8 +502,8 @@ try {
   assert.deepEqual({
     pages: recompute.pages, unanchored: recompute.unanchored,
     superseded: recompute.superseded, settled: recompute.settled
-  }, { pages: 3, unanchored: 0, superseded: 0, settled: 0 },
-  '首次全量重算：扫完 3 条、无挂靠失败、无旧批次可下线或收尾')
+  }, { pages: 4, unanchored: 0, superseded: 0, settled: 0 },
+  '首次全量重算：扫完 4 条、无挂靠失败、无旧批次可下线或收尾')
   const managerView = await request(`/api/fangji/projects/${project.id}/findings`, { token: boss.token })
   const keyOf = (item) => `${item.kind}/${item.message.key}`
   const anchorOf = (item) => item.evidence?.anchor ?? ''
@@ -477,8 +537,8 @@ try {
     '每条落库的疑点都必须带挂靠口径')
   // #175 红线 1 的形状：任何一条疑点的 params 都不许带上别的条目的原样内容。
   const rowJson = { [trapped.id]: JSON.stringify(trappedRow), [clean.id]: JSON.stringify(cleanRow),
-    [paged.id]: JSON.stringify(pagedRow) }
-  const cellText = [trappedRow, cleanRow, pagedRow].flatMap((row) => Object.values(row))
+    [paged.id]: JSON.stringify(pagedRow), [backPage.id]: JSON.stringify(backRow) }
+  const cellText = [trappedRow, cleanRow, pagedRow, backRow].flatMap((row) => Object.values(row))
     .filter((value) => !/^[\x20-\x7e]*$/.test(String(value)))
   for (const item of managerView.items) {
     const serialized = JSON.stringify(item.message.params)
@@ -548,6 +608,18 @@ try {
   // 单条重算判定不了列级规则，所以它不得顺手抹掉挂在这一条身上的列级疑点：
   // 那些只有项目级重算会重新产出，被抹掉就是静默永久丢失。
   assert.equal(columnRows(afterRuleRows.items).length, 2, '单条重算必须保留列级疑点')
+  // R7 的页级疑点也挂在 trapped 上（pdf_page=1 的第一条），单条重算同样不许吃掉它。
+  const pageLevelOf = (rows) => current(rows).filter((row) =>
+    anchorOfRaw(row) === rules.ANCHOR_PDF_PAGE)
+  assert.deepEqual(pageLevelOf(beforeRecompute.items).map((row) => row.message_key), ['pdf_page_backtrack'],
+    `全量重算后 trapped 上该有一条页级疑点：${JSON.stringify(beforeRecompute.items.map((r) => [r.message_key, anchorOfRaw(r)]))}`)
+  assert.deepEqual(pageLevelOf(afterRuleRows.items).map((row) => row.message_key), ['pdf_page_backtrack'],
+    '单条目重算不得吃掉挂在它身上的页级(R7)疑点——它判定不了整页，只有项目重算会再产出')
+  const backRows = await ruleRowsOf(backPage.id)
+  assert.deepEqual(keysOfRaw(entryRows(backRows.items)), expectedFor(backRow),
+    '回退那条的格级疑点各归各条目')
+  assert.deepEqual(pageLevelOf(backRows.items).map((row) => row.message_key), [],
+    '页级(R7)疑点挂在 pdf_page 的第一条目上，不该分到回退那条自己')
   assert.ok(afterRuleRows.items.filter((row) => row.superseded_at !== '').length >= expectedFor(trappedRow).length,
     '旧批次必须留在库里')
   assert.ok(freshRuleRows.every((row) => row.produced_at !== ''))

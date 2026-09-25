@@ -139,14 +139,14 @@ function settleBatch(dao, collection, clauses, at) {
     stampKey(record.getString("produced_at")) < mine, at)
 }
 
-// 单条目重算的作用域：本条目 + 本生产者，**但要排除列级 key**。
-// 列级疑点(R3 列级 / R4)按挂靠口径也落在某条条目上，而单条重算只判定格级规则；
-// 不排除就会让"给一条补算"顺手抹掉挂在它身上的列级疑点，而那些只有项目重算会再产出。
-function pageScope(pageId, columnKeys) {
+// 单条目重算的作用域：本条目 + 本生产者，**但要排除项目级 key（列级 + 页级）**。
+// 这些疑点按挂靠口径也落在某条条目上，而单条重算只判定格级规则；不排除就会让
+// "给某一条补算"顺手抹掉挂在它身上的项目级疑点，而那些只有项目重算会再产出。
+function pageScope(pageId, projectOnlyKeys) {
   return [
     `page = "${pageId}"`,
     `producer = "${PRODUCER}"`,
-    ...columnKeys.map((key) => `message_key != "${key}"`)
+    ...projectOnlyKeys.map((key) => `message_key != "${key}"`)
   ]
 }
 
@@ -154,13 +154,13 @@ function pageScope(pageId, columnKeys) {
 // 不传就用库里的当前值——pages.proofread_row_json 只在凑够票数后才写，
 // 第一遍提交时若不用 override，规则算的还是导入原文，等于没算刚提交的内容。
 function recomputePage(dao, pageId, rowOverride = null) {
-  const { runEntryRules, RULES_VERSION, COLUMN_MESSAGE_KEYS } = require(`${__hooks}/lib/assist_rules.js`)
+  const { runEntryRules, RULES_VERSION, PROJECT_ONLY_MESSAGE_KEYS } = require(`${__hooks}/lib/assist_rules.js`)
   const collection = dao.findCollectionByNameOrId("review_findings")
   const page = dao.findRecordById("pages", pageId)
   const at = nowStamp()
   const row = rowOverride && Object.keys(rowOverride).length ? rowOverride : rowForRules(page)
   const findings = runEntryRules(contextFor(dao, page), row, pageId)
-  const scope = pageScope(pageId, COLUMN_MESSAGE_KEYS)
+  const scope = pageScope(pageId, PROJECT_ONLY_MESSAGE_KEYS)
   const superseded = supersede(dao, collection, scope, at)
   for (const item of findings) insertFinding(dao, collection, page, item, at, RULES_VERSION)
   const settled = settleBatch(dao, collection, scope, at)
