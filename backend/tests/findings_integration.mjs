@@ -249,6 +249,31 @@ try {
   assert.equal(byKey.phonetic_run_inside_meaning.highlight, false)
   assert.equal(byKey.phonetic_run_inside_meaning.severity, 'warn')
 
+  // ---- warn 与 strong 放行的是同一个集合，只差高亮（门槛文件 §2 的下限语义）----
+  // 上面两段各自只数了一个严重性：warn 档那一次页面上只有一条 strong 疑点，
+  // strong 档这一次两条都在。把同一批疑点在两档之间来回切，才能证明
+  // "多放行一档"不是靠集合变大实现的——两档集合相同，差的是高亮。
+  await setGate({ kind: 'merged_columns', messageKey: 'column_collapse', gate: 'warn' })
+  await setGate({ kind: 'merged_columns', messageKey: 'phonetic_run_inside_meaning', gate: 'warn' })
+  const warnTier = await request(`/api/fangji/pages/${pageA.id}/findings`, { token: first.token })
+  assert.deepEqual(warnTier.hints.map((hint) => hint.message.key).sort(),
+    strongGated.hints.map((hint) => hint.message.key).sort(),
+    `warn 档与 strong 档放行的集合必须相同：${JSON.stringify(warnTier.hints.map((hint) => hint.message.key))}`)
+  assert.deepEqual(warnTier.hints.map((hint) => hint.severity).sort(),
+    strongGated.hints.map((hint) => hint.severity).sort(), '同集合也要同严重性')
+  assert.deepEqual(warnTier.hints.map((hint) => hint.highlight), [false, false],
+    'warn 档下两条都不该高亮，包括 strong 级那条')
+  assert.ok(strongGated.hints.some((hint) => hint.highlight === true),
+    'strong 档至少有一条高亮，否则上面"只差高亮"的比较是在比两个空集')
+
+  // 两档都关掉：校对端归零，管理端两条都在。
+  await setGate({ kind: 'merged_columns', messageKey: 'column_collapse', gate: 'off' })
+  await setGate({ kind: 'merged_columns', messageKey: 'phonetic_run_inside_meaning', gate: 'off' })
+  const allOff = await request(`/api/fangji/pages/${pageA.id}/findings`, { token: first.token })
+  assert.deepEqual(allOff.hints, [], '两条规则都置 off 后校对端不得还剩疑点')
+  const offManager = await request(`/api/fangji/projects/${project.id}/findings?kind=merged_columns`, { token: boss.token })
+  assert.equal(offManager.items.length, 2, 'off 只挡校对端，管理端统计两条都要在')
+
   // ---- 重算：写新批次 + 标旧批次 superseded_at，只读到最新批次，旧批次仍在库 ----
   // 第二个人认领到哪一页由两遍投票决定（默认拿到同一页做独立第二遍），
   // 所以这里按「second 实际在手的条目」断言，不假定具体是哪一页；
