@@ -93,7 +93,23 @@ const MESSAGES = {
   pdf_page_backtrack: (params) =>
     `条目顺序与 PDF 页码不一致：从第 ${count(params?.from_page)} 页回退到第 ${count(params?.to_page)} 页（回退 ${count(params?.backtrack)} 页），疑似页码或条目顺序错乱`,
   page_entry_count_outlier: (params) =>
-    `该 PDF 页挂了 ${count(params?.entries_on_page)} 条条目，明显高于项目中位数 ${count(params?.median_entries)} 条（阈值 ${count(params?.ceiling)}），疑似分页或拆行异常`
+    `该 PDF 页挂了 ${count(params?.entries_on_page)} 条条目，明显高于项目中位数 ${count(params?.median_entries)} 条（阈值 ${count(params?.ceiling)}），疑似分页或拆行异常`,
+
+  // #178 跨行检出的措辞键。词头与记音本身**不进措辞正文**——它们已在 evidence/params 里由
+  // 服务端下发，措辞只说"还有几处并列、差在哪些列"，避免把别人条目的内容渲染进这一条。
+  same_identity_different_content: (params) => {
+    const differs = Array.isArray(params?.differs_on) ? params.differs_on : []
+    const partners = count(params?.partner_count)
+    return `与其他 ${partners} 条同身份（词头 + 记音相同）但${differs.length ? `「${differs.slice(0, 3).join('、')}」` : '其他'}列不一致，需人工看一眼是否真是两个条目`
+  },
+  multiple_headwords_in_cell: (params) =>
+    `该格疑似挤进 ${count(params?.segments)} 个词头，需先拆列再判内容`,
+  reading_inside_meaning_row: (params) => {
+    const bits = []
+    if (params?.has_tone_digits) bits.push('数字调号')
+    if (params?.has_ipa_marks) bits.push('IPA 记音符')
+    return `释义里出现${bits.length ? bits.join('与') : '记音特征'}，疑似列错位`
+  }
 }
 
 export function findingMessageKeys() {

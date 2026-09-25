@@ -14,6 +14,7 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url))
 const detectors = path.join(here, '..', '..', 'scripts', 'corpus_probe', 'detectors.py')
 const rulesLib = path.join(here, '..', '..', 'backend', 'pb_hooks', 'lib', 'assist_rules.js')
+const identityLib = path.join(here, '..', '..', 'backend', 'pb_hooks', 'lib', 'assist_identity.js')
 
 // 措辞表与生产者必须一起改：检测器或规则引擎新增一个 message_key 而前端没配措辞时，
 // 校对员会看到 FALLBACK 文案，而这两条测试会先一步失败。
@@ -37,9 +38,26 @@ function ruleEngineMessageKeys() {
   return keys
 }
 
+// #178 的跨行检出：finding 字面量形状是 { kind, severity, field, message_key, ... }
+function identityMessageKeys() {
+  const source = readFileSync(identityLib, 'utf8')
+  const pattern = /kind:\s*"[a-z_]+",\s*severity:\s*"(?:info|warn|strong)",\s*[^,]+,\s*\n?\s*message_key:\s*"([a-z_]+)"/g
+  const keys = new Set()
+  for (const match of source.matchAll(pattern)) keys.add(match[1])
+  assert.ok(keys.size >= 3, `expected the identity detector's message keys, got ${[...keys]}`)
+  return keys
+}
+
 test('every detector message key has a wording entry', () => {
   const registered = new Set(findingMessageKeys())
   for (const key of detectorMessageKeys()) {
+    assert.ok(registered.has(key), `findingMessages.js is missing wording for ${key}`)
+  }
+})
+
+test('every cross-row detector message key has a wording entry', () => {
+  const registered = new Set(findingMessageKeys())
+  for (const key of identityMessageKeys()) {
     assert.ok(registered.has(key), `findingMessages.js is missing wording for ${key}`)
   }
 })

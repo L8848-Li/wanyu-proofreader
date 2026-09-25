@@ -24,6 +24,19 @@ const PROJECT_SCAN_REFUSAL = 50000
 // 下线旧批次时的读取块大小（见 retire）。
 const RETIRE_CHUNK = 1000
 
+// #177 与 #178 都用 producer = "rule"，但各自只该下线自己那批 kind。
+// 不按 kind 收口的话，跑一次 #177 的全量重算会把 #178 的跨行疑点全部标 superseded，
+// 反之亦然——两边各自看自己的表都"正常"，串起来才看得见。
+const RULE_KINDS = [
+  "char_out_of_repertoire", "confusable_substitution", "encoding_form_anomaly",
+  "missing_field", "reading_format_invalid", "punctuation_mix", "page_outlier"
+]
+const IDENTITY_KINDS = ["duplicate_identity", "cross_source_conflict", "merged_columns"]
+
+function kindClause(kinds) {
+  return "(" + kinds.map((kind) => `kind = "${kind}"`).join(" || ") + ")"
+}
+
 function nowStamp() {
   return new Date().toISOString()
 }
@@ -110,7 +123,6 @@ function retire(dao, collection, clauses, shouldRetire, stamp, { chunk = RETIRE_
   }
 }
 
-// 把该范围内、同 producer 的当前批次全部下线。只写 superseded_at，其余字段一个都不碰。
 // 分块读完一个过滤条件下的全部行，读到空为止。
 //
 // 为什么全项目都用它而不是"一次读一个大 limit"：`limit N, offset 0` 的形状一旦
@@ -134,8 +146,8 @@ function readAllInChunks(dao, collection, filter, sort, { chunk = READ_CHUNK, on
 
 // 分批下线作用域内的当前批次。见 retire 的注释：这里防的是"读满一块就停"——
 // 剩下的行会以"当前批次"的身份永远留在库里，旧疑点再也下不了线。
-function supersede(dao, collection, clauses, at) {
-  return retire(dao, collection, clauses, () => true, at)
+function supersede(dao, collection, clauses, at, kinds) {
+  return retire(dao, collection, [...clauses, kindClause(kinds)], () => true, at)
 }
 
 // 插入之后的收尾：只下线**严格更早**的批次。
@@ -156,9 +168,9 @@ function stampKey(value) {
   return String(value ?? "").replace("T", " ").replace(/Z$/, "").slice(0, 23)
 }
 
-function settleBatch(dao, collection, clauses, at) {
+function settleBatch(dao, collection, clauses, at, kinds) {
   const mine = stampKey(at)
-  return retire(dao, collection, clauses, (record) =>
+  return retire(dao, collection, [...clauses, kindClause(kinds)], (record) =>
     stampKey(record.getString("produced_at")) < mine, at)
 }
 
@@ -184,9 +196,9 @@ function recomputePage(dao, pageId, rowOverride = null) {
   const row = rowOverride && Object.keys(rowOverride).length ? rowOverride : rowForRules(page)
   const findings = runEntryRules(contextFor(dao, page), row, pageId)
   const scope = pageScope(pageId, PROJECT_ONLY_MESSAGE_KEYS)
-  const superseded = supersede(dao, collection, scope, at)
+  const superseded = supersede(dao, collection, scope, at, RULE_KINDS)
   for (const item of findings) insertFinding(dao, collection, page, item, at, RULES_VERSION)
-  const settled = settleBatch(dao, collection, scope, at)
+  const settled = settleBatch(dao, collection, scope, at, RULE_KINDS)
   // 难度在收尾之后刷新：tier 由**当前批次**推导，收尾前读到的还是旧批次。
   const difficulty = refreshDifficulty(dao, page)
   return {
@@ -234,7 +246,7 @@ function recomputeProject(dao, projectId) {
   // 下线仍然按 project 收口：游标已经保证「要么整批扫完、要么写入前抛错」，
   // 被扫到的集合恒等于全项目，所以这里不需要再按条目列表拼 filter。
   const superseded = supersede(dao, collection,
-    [`project = "${projectId}"`, `producer = "${PRODUCER}"`], at)
+    [`project = "${projectId}"`, `producer = "${PRODUCER}"`], at, RULE_KINDS)
   const byId = new Map(pages.map((page) => [page.id, page]))
   const projectScope = [`project = "${projectId}"`, `producer = "${PRODUCER}"`]
   let inserted = 0
@@ -249,7 +261,7 @@ function recomputeProject(dao, projectId) {
     insertFinding(dao, collection, anchor, item, at, RULES_VERSION)
     inserted += 1
   }
-  const settled = settleBatch(dao, collection, projectScope, at)
+  const settled = settleBatch(dao, collection, projectScope, at, RULE_KINDS)
   if (unanchored) console.warn("assist_recompute unanchored findings", projectId, unanchored)
   // 同样放在收尾之后：全项目的 tier 要按最终留在库里的当前批次推导。
   const stats = projectShapeStats(pages)
@@ -352,6 +364,61 @@ function projectShapeStats(pages) {
   }
 }
 
+// ---------- #178 跨行检出 ----------
+// 只在批处理路径跑（跨行比较是 O(n) 起，绝不挂到提交路径上——#178 正文明确要求）。
+function recomputeIdentity(dao, projectId) {
+  const startedAt = new Date()
+  const { findIdentityConflicts, findRowShapeAnomalies, entryIdentityKey, IDENTITY_VERSION } =
+    require(`${__hooks}/lib/assist_identity.js`)
+  const collection = dao.findCollectionByNameOrId("review_findings")
+  const pages = dao.findRecordsByFilter("pages", `project = "${projectId}"`, "page_number,created", PAGE_SCAN_CAP, 0)
+
+  const entries = []
+  let backfilled = 0
+  for (const page of pages) {
+    const row = rowForRules(page)
+    const key = entryIdentityKey(row) ?? ""
+    if (page.getString("entry_identity_key") !== key) {
+      page.set("entry_identity_key", key)
+      dao.save(page) // 可重算的回填：键由列内容推导，不是原始证据
+      backfilled += 1
+    }
+    entries.push({ id: page.id, project: projectId, row, page, source: page.getString("project_file") })
+  }
+
+  const dismissed = new Set(dao.findRecordsByFilter(
+    "finding_dismissals", `project = "${projectId}" && status = "not_conflict"`, "group_key", 5000, 0
+  ).map((row) => row.getString("group_key")))
+
+  const findings = [...findIdentityConflicts(entries, dismissed).findings]
+  for (const entry of entries) findings.push(...findRowShapeAnomalies(entry))
+
+  const at = nowStamp()
+  const superseded = supersede(dao, collection,
+    [`project = "${projectId}"`, `producer = "${PRODUCER}"`], at, IDENTITY_KINDS)
+  const byId = new Map(entries.map((entry) => [entry.id, entry.page]))
+  let inserted = 0
+  for (const item of findings) {
+    const anchor = byId.get(item.evidence?.page) ?? null
+    if (!anchor) continue
+    insertFinding(dao, collection, anchor, item, at, IDENTITY_VERSION)
+    inserted += 1
+  }
+  const summary = {
+    project: projectId,
+    pages: pages.length,
+    findings: inserted,
+    superseded,
+    backfilled_keys: backfilled,
+    dismissed_groups: dismissed.size,
+    producer_version: IDENTITY_VERSION,
+    duration_ms: new Date() - startedAt,
+    truncated: pages.length >= PAGE_SCAN_CAP
+  }
+  console.log("identity_recompute", JSON.stringify(summary))
+  return summary
+}
+
 // 提交/仲裁路径用的安全包装：疑点生产失败绝不能把已落库的提交变成错误。
 // 失败必须留下日志（不静默成「没有疑点」），管理端可用 findings/recompute 补算。
 function safeRecomputePage(dao, pageId, row, label) {
@@ -376,7 +443,12 @@ module.exports = {
   PAGE_SCAN_CHUNK,
   PROJECT_SCAN_REFUSAL,
   loadAllPages,
+  RULE_KINDS,
+  IDENTITY_KINDS,
   rowForRules,
   recomputePage,
-  recomputeProject
+  recomputeProject,
+  recomputeIdentity,
+  refreshDifficulty,
+  projectShapeStats
 }

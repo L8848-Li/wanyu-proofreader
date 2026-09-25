@@ -57,3 +57,74 @@ routerAdd("POST", "/api/fangji/pages/{pageId}/findings/recompute", (c) => {
   const summary = assistRecomputePage($app, pageId)
   return c.json(200, { ...summary, duration_ms: Date.now() - startedAt })
 }, $apis.requireAuth("users"))
+
+// POST /api/fangji/projects/{projectId}/identity/recompute
+// #178 的跨行批处理：分组比较要看到全量，所以只能是 manager 显式调的作业口，
+// 绝不挂到提交路径上（#178 正文明确要求）。同时回填 entry_identity_key。
+routerAdd("POST", "/api/fangji/projects/{projectId}/identity/recompute", (c) => {
+  const { assertId: proofAssertId, requireManager: proofRequireManager } = require(`${__hooks}/lib/project_access.js`)
+  const { recomputeIdentity: assistRecomputeIdentity } = require(`${__hooks}/lib/assist_writer.js`)
+  const auth = c.auth
+  if (auth.getBool("must_change_password")) throw new ForbiddenError("首次登录请先修改密码")
+  const projectId = proofAssertId(c.request.pathValue("projectId"), "项目")
+  proofRequireManager($app, projectId, auth)
+  return c.json(200, assistRecomputeIdentity($app, projectId))
+}, $apis.requireAuth("users"))
+
+// POST /api/fangji/projects/{projectId}/dismissals   { group_key, kind, note }
+// #178 唯一允许人写的状态：把某一组同身份条目判成「不是冲突」。重算时整组跳过。
+// 这是人工结论，不是机器疑点，所以它存在 finding_dismissals 而不是给 finding 打标记——
+// 机器批次会被下线，人工结论不该跟着下线。
+routerAdd("POST", "/api/fangji/projects/{projectId}/dismissals", (c) => {
+  const { assertId: proofAssertId, requireManager: proofRequireManager } = require(`${__hooks}/lib/project_access.js`)
+  const auth = c.auth
+  if (auth.getBool("must_change_password")) throw new ForbiddenError("首次登录请先修改密码")
+  const projectId = proofAssertId(c.request.pathValue("projectId"), "项目")
+  proofRequireManager($app, projectId, auth)
+
+  const body = new DynamicModel({ group_key: "", kind: "", note: "" })
+  c.bindBody(body)
+  const groupKey = String(body.group_key || "")
+  const kind = String(body.kind || "")
+  const allowed = ["duplicate_identity", "cross_source_conflict", "merged_columns"]
+  if (!groupKey || groupKey.length > 500) throw new BadRequestError("分组标识无效")
+  if (!allowed.includes(kind)) throw new BadRequestError("只能对身份冲突/跨来源冲突/列合并三类下人工结论")
+
+  const collection = $app.findCollectionByNameOrId("finding_dismissals")
+  const existing = $app.findRecordsByFilter(
+    "finding_dismissals",
+    `project = "${projectId}" && group_key = "${groupKey}" && kind = "${kind}"`,
+    "", 1, 0
+  )
+  if (existing.length) return c.json(200, { id: existing[0].id, existed: true })
+
+  const record = new Record(collection)
+  record.set("project", projectId)
+  record.set("group_key", groupKey)
+  record.set("kind", kind)
+  record.set("status", "not_conflict")
+  record.set("decided_by", auth.id)
+  record.set("note", String(body.note || "").slice(0, 500))
+  $app.save(record)
+  return c.json(200, { id: record.id, existed: false })
+}, $apis.requireAuth("users"))
+
+// DELETE /api/fangji/projects/{projectId}/dismissals/{dismissalId}
+// 撤回人工结论要显式做（而不是悄悄覆盖）：那是本 issue 唯一的人类写入，撤销也应留得下来。
+routerAdd("DELETE", "/api/fangji/projects/{projectId}/dismissals/{dismissalId}", (c) => {
+  const { assertId: proofAssertId, requireManager: proofRequireManager } = require(`${__hooks}/lib/project_access.js`)
+  const auth = c.auth
+  if (auth.getBool("must_change_password")) throw new ForbiddenError("首次登录请先修改密码")
+  const projectId = proofAssertId(c.request.pathValue("projectId"), "项目")
+  proofRequireManager($app, projectId, auth)
+  const dismissalId = proofAssertId(c.request.pathValue("dismissalId"), "结论")
+  let record = null
+  try {
+    record = $app.findRecordById("finding_dismissals", dismissalId)
+  } catch {
+    throw new NotFoundError("结论不存在")
+  }
+  if (record.getString("project") !== projectId) throw new ForbiddenError("该结论不属于此项目")
+  $app.delete(record)
+  return c.json(204, {})
+}, $apis.requireAuth("users"))
