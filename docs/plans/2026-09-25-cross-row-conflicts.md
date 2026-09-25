@@ -83,7 +83,7 @@ IDENTITY_KINDS = duplicate_identity, cross_source_conflict, merged_columns
 
 - **只在批处理路径跑**：跨行比较是 O(n) 起，绝不挂到提交路径（#178 正文明确要求）。
   入口是 `POST /api/fangji/projects/{id}/identity/recompute`（manager 专属，同步，返回
-  `pages / findings / superseded / backfilled_keys / dismissed_groups / duration_ms / truncated`）。
+  `pages / findings / superseded / backfilled_keys / dismissed_groups / duration_ms`）。
 - 同一次调用顺手回填 `pages.entry_identity_key`。第二次跑 `backfilled_keys = 0` 且键值不变
   （幂等、可重跑，这是 #178 的验收项）。
 - **10k 行端到端实测**（2026-09-25，`python3 backend/tests/measure_identity_scale.py 10000`，
@@ -98,15 +98,18 @@ IDENTITY_KINDS = duplicate_identity, cross_source_conflict, merged_columns
   | 第二次重算 | 6396 ms、finding 数完全一致（可复算） |
   | 300 行的同口径数字 | 164 ms / 0.55 ms 每行 |
 
-  规模上限因此**不是一个代码里的常数**：扫描已改成固定游标分批翻页直到取完
-  （`PAGE_SCAN_CHUNK = 1000`），所以 10k 不会被动截断。可接受的运营上限按实测写定为
+  规模上限因此**不是一个截断用的常数**：扫描是固定游标分批翻页直到取完
+  （`PAGE_SCAN_CHUNK = 1000`，与 #177 共用同一个 `loadAllPages`），所以 10k 不会被静默丢掉。
+  游标里唯一的上限是 `PROJECT_SCAN_REFUSAL = 50000` 那条内存保险丝，命中即抛错拒算，
+  且抛错一定发生在第一次写之前——不存在"扫了一半下线了全项目"这种中间态。
+  可接受的运营上限按实测写定为
   **单项目 2 万行以内一次重算控制在 ~15s 量级**；再往上应当拆分项目或改成分批作业，
   而不是把常数调大。`backend/tests/identity_integration.mjs` 里还有一条纯函数级的
   10k 分组断言（15ms、并断言 < 4s），用来在退化成两两全比时立刻报警。
-- 与之相对，**#177 的项目级重算仍然保留 `PAGE_SCAN_CAP = 5000` 与 `truncated` 标志**，
-  两处不对称是有意的：#177 的路径会为每一页刷新难度标签（每页一次疑点查询），
-  10k 页就是 10k 次查询；跨行检出只需要一次全量分组。将来若统一，要先把
-  难度刷新改成批量读，而不是简单把上限调大。
+- 两条批处理路径的**耗时**仍不对称，这是有意的：#177 的项目级重算会为每一页刷新难度标签
+  （每页一次疑点查询），10k 页就是 10k 次查询；跨行检出只需要一次全量分组。
+  扫描语义已经统一（同一个 `loadAllPages`），剩下的差距要靠把难度刷新改成批量读来收，
+  而不是靠调大上限——上限只用于拒算，不用于截断。
 - 分组结果按 key 排序后再产出，所以同一份数据的 finding 顺序稳定，diff 可复现。
 
 ## 7. 门槛与精度
