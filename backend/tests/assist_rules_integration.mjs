@@ -456,6 +456,16 @@ try {
   assert.deepEqual(afterGate.hints.map((hint) => hint.message.key), ['long_digit_run'])
   assert.equal(afterGate.hints[0].highlight, true)
 
+  // 评审阻断 1 的后果第 1 层是「在手者拿到别人条目的疑点」，所以必须在**消费端**钉住：
+  // 同一个 message_key、同一个 gate 下，两个读者各自只看到自己那一行的数字串。
+  const pagedGate = await request(`/api/fangji/pages/${paged.id}/findings`, { token: boss.token })
+  assert.deepEqual(pagedGate.hints.map((hint) => hint.message.key), ['long_digit_run'],
+    JSON.stringify(pagedGate.hints.map((hint) => hint.message.key)))
+  assert.deepEqual(pagedGate.hints[0].message.params.runs, ['9999'],
+    `第 3 条的读者只能看到第 3 条自己的数字串：${JSON.stringify(pagedGate.hints[0].message.params)}`)
+  assert.deepEqual(afterGate.hints[0].message.params.runs, ['5333'],
+    '第 1 条的读者不能拿到第 3 条的内容')
+
   // 重算只下线同 producer 的旧批次：OCR(#125) 与 bundle_import(#124) 的行不能被动。
   const ocrRow = await request('/api/collections/review_findings/records', {
     method: 'POST', token: superAuth.token,
