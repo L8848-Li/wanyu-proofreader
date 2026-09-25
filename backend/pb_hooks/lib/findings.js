@@ -31,7 +31,25 @@ const GATE_RELEASES = {
 }
 const DEFAULT_GATE = "off"
 // 一次读取里最多带回的 finding 条数；门控与统计页都不能把这张表当成无界来源。
+// 校对端与统计端共用这一个上限：两个口各写一个数，早晚会只剩一个被人记得改。
+// 超出时响应里带 truncated，绝不静默少给。
 const MAX_PAGE_SIZE = 200
+const MAX_GATE_ROWS = 2000
+const FINDING_KINDS = [
+  "char_out_of_repertoire", "confusable_substitution", "encoding_form_anomaly",
+  "missing_field", "reading_format_invalid", "punctuation_mix", "page_outlier",
+  "duplicate_identity", "cross_source_conflict", "merged_columns"
+]
+const PRODUCERS = ["rule", "ocr", "bundle_import"]
+
+// 查询参数必须是**白名单值**，不能被拼进过滤表达式。
+// 这两个参数直接来自 URL；拼进 filter 文本后，kind 里塞 `x") || (producer = "ocr`
+// 会让 `&&` 的高优先级把后半段变成一条不受 project、也不受 superseded_at 约束的析取分支
+// —— 任意项目的 manager 就能读全库疑点。枚举字段用白名单比转义引号更严也更短。
+function enumParam(value, allowed) {
+  const text = String(value ?? "").trim()
+  return allowed.includes(text) ? text : ""
+}
 
 function identityOf(record) {
   return [
@@ -42,8 +60,13 @@ function identityOf(record) {
   ].join("\u0000")
 }
 
-function gateMap(dao, limit = 500) {
+function gateMap(dao, limit = MAX_GATE_ROWS) {
   const rows = dao.findRecordsByFilter("assist_rule_gates", "", "", limit, 0)
+  if (rows.length >= limit) {
+    // 截断方向是安全的（落不进 map 的规则按 off 处理，只会更不可见），
+    // 但必须留痕，否则"某条规则突然不显示"会变成查不出来的幽灵。
+    console.warn(`assist_rule_gates 读取被截断在 ${limit} 行，超出的规则一律按 off 处理`)
+  }
   const map = new Map()
   for (const row of rows) map.set(identityOf(row), row)
   return map
@@ -116,7 +139,7 @@ function statisticsView(record, gate, row) {
 // 校对端：按 gate 与 severity 双重过滤后的 hints（#176 期望结果 4）。
 function hintsForPage(dao, pageId) {
   const gates = gateMap(dao)
-  const records = currentRecords(dao, `page = "${pageId}"`, "kind,message_key", 500, 0)
+  const records = currentRecords(dao, `page = "${pageId}"`, "kind,message_key", MAX_PAGE_SIZE + 1, 0)
   const hints = []
   for (const record of records) {
     const { gate } = gateOf(gates, record)
@@ -124,15 +147,17 @@ function hintsForPage(dao, pageId) {
     if (!GATE_RELEASES[gate].includes(severity)) continue
     hints.push(hintView(record, gate))
   }
-  return hints
+  return { hints, truncated: records.length > MAX_PAGE_SIZE }
 }
 
 // 管理端：不做门控过滤，info 与 off 一律可见——门槛文件 §2 要求 off 只挡校对端，
 // 「仍计算、仍写库、只在管理端统计」依赖这个读取口。
 function listForProject(dao, projectId, { page = 1, per = 50, kind = "", producer = "" } = {}) {
   const clauses = [`project = "${projectId}"`]
-  if (kind) clauses.push(`kind = "${kind}"`)
-  if (producer) clauses.push(`producer = "${producer}"`)
+  const safeKind = enumParam(kind, FINDING_KINDS)
+  const safeProducer = enumParam(producer, PRODUCERS)
+  if (safeKind) clauses.push(`kind = "${safeKind}"`)
+  if (safeProducer) clauses.push(`producer = "${safeProducer}"`)
   const size = Math.max(1, Math.min(MAX_PAGE_SIZE, Number(per) || 50))
   const index = Math.max(1, Number(page) || 1)
   const gates = gateMap(dao)
@@ -147,6 +172,9 @@ function listForProject(dao, projectId, { page = 1, per = 50, kind = "", produce
 
 module.exports = {
   DEFAULT_GATE,
+  FINDING_KINDS,
+  PRODUCERS,
+  enumParam,
   IMMUTABLE_FINDING_FIELDS,
   GATE_RELEASES,
   MAX_PAGE_SIZE,

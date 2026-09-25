@@ -301,6 +301,34 @@ try {
   const paged = await request(`/api/fangji/projects/${project.id}/findings?page=1&per=1`, { token: boss.token })
   assert.equal(paged.items.length, 1)
   assert.equal(paged.hasMore, true)
+  assert.equal(paged.truncated, undefined)
+  assert.equal(warnish.truncated, false, '未超上限时要显式说"没截断"（否则前端无法区分"没有"与"被截断"）')
+
+  // 回归：kind / producer 是 URL 参数，曾经被原样拼进过滤表达式。
+  // 塞一个 `x") || (producer = "rule` 就能在 && 优先级之外多出一条不受 project
+  // 与 superseded_at 约束的析取分支 ⇒ 任意项目的 manager 可读全库疑点。
+  // 枚举参数现在走白名单：非法值等同"没传这个参数"。
+  const intruderProject = await createProject('Findings intruder', [], [boss])
+  const intruderPage = await createPage(intruderProject.id, 1)
+  await createFinding(intruderPage.id, intruderProject.id, { kind: 'merged_columns', messageKey: 'column_collapse' })
+  const allOfProject = await request(`/api/fangji/projects/${project.id}/findings`, { token: boss.token })
+  assert.ok(allOfProject.items.length >= 3,
+    `注入用例要求本项目确实有多条当前批次，否则"等同没传参数"的比较是空真：${allOfProject.items.length}`)
+  assert.ok(allOfProject.items.every((item) => item.project === project.id))
+
+  for (const [name, payload] of [
+    ['kind', 'x") || (producer = "rule'],
+    ['producer', 'a") || (project != ""'],
+    ['kind', 'merged_columns") || (kind = "page_outlier']
+  ]) {
+    const hit = await request(`/api/fangji/projects/${project.id}/findings?`
+      + `${name}=${encodeURIComponent(payload)}`, { token: boss.token })
+    assert.deepEqual(hit.items.map((item) => item.project).filter((id) => id !== project.id), [],
+      `非法 ${name} 越界读到了别的项目：${JSON.stringify(hit.items.map((i) => [i.project, i.kind]))}`)
+    assert.deepEqual(hit.items.map((item) => `${item.kind}`).sort(),
+      allOfProject.items.map((item) => `${item.kind}`).sort(),
+      `非法 ${name} 应当等同"没传这个参数"，而不是把结果筛成空集`)
+  }
 
   console.log('Review findings integration test passed.')
 } finally {

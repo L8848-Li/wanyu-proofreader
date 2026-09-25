@@ -57,7 +57,9 @@ routerAdd("GET", "/api/fangji/pages/{pageId}/findings", (c) => {
     }
   }
 
-  return c.json(200, { page: pageId, hints: proofHintsForPage($app, pageId) })
+  // hintsForPage 一并返回 truncated：条目上一旦超过上限，
+  // 校对端必须知道自己看到的是被截断的，而不是"这条真没问题"。
+  return c.json(200, { page: pageId, ...proofHintsForPage($app, pageId) })
 }, $apis.requireAuth("users"))
 
 // GET /api/fangji/projects/{projectId}/findings

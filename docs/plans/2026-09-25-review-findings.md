@@ -99,7 +99,9 @@ manager/平台管理员直通；否则要求「该条目正被你认领」或「
 - `severity = info` → **永不出现在本路由**，即便该规则 `gate = strong`；
 - 响应中不含 `round`、`producer*`、批次时间等任何可反推轮次或他人行为的字段。
 
-无数据时返回 `{"page": "...", "hints": []}`。
+无数据时返回 `{"page": "...", "hints": [], "truncated": false}`。
+**`truncated` 必须回**：条目上疑点数超过读取上限（与统计端共用同一个 `MAX_PAGE_SIZE`）时，
+前端要能区分"这条真没问题"与"还有但被截断了"——静默少给会让校对员以为自己看完了。
 
 ### 3.2 管理端 `GET /api/fangji/projects/{projectId}/findings`
 
@@ -143,8 +145,18 @@ superuser 走 API 也一样被拒。`findings_integration.mjs` 对 9 个字段�
 **已知边界**：守卫挂在 API 更新请求上。服务端特权代码（`$app.save` / Go DAO）不经过它，
 因此 #177/#178/#180 的写入方必须自己只走「插入新批次」这一条路。
 
-级联删除（删 `pages`/`projects` 记录）会带走其 finding，与 `proofreading_attempts` 同构；
-这不是「覆写」，但确实是一次物理删除，运维路径上要先确认。
+级联删除（删 `pages`/`projects` 记录）会带走其 finding。
+这不是「覆写」，但确实是一次**物理删除**，与 #91「原始证据不可覆写」的精神冲突到什么程度，
+是一个需要维护者拍板的口径问题（不属于本契约能自行决定的范围）：
+
+- 现在的选择：`cascadeDelete: true`，与 `proofreading_attempts` 的既有做法同构，
+  代价是删条目会连带删掉它的疑点；
+- 备选：改成 `false`，则删条目/删项目在有疑点残留时会被外键挡住——更强的 append-only 保证，
+  但会让平台管理员的删除操作变成"必须先处理疑点"。
+  注意 main 上目前没有任何指向 `pages` 的 relation 用 cascade true，所以这不是既成惯例。
+  切换的代价在测试侧（各套件的 teardown 要先删疑点再删项目）。
+
+**待维护者定夺；本文件不假装这条已经想清楚。**
 
 ## 6. 内容边界（隐私红线）
 
