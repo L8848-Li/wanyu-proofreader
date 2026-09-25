@@ -11,15 +11,16 @@
 // 顶层 require 在本机 JSVM 没有先例（.pb.js 的顶层绑定在回调里读不到）。
 
 const PRODUCER = "rule"
-// 全量重算的条目游标：每次读 PAGE_SCAN_CHUNK 条，翻完为止。
-// 上一版是 PAGE_SCAN_CAP = 5000 的一次性读取 + 按 project 全量下线，于是第 5001 条
-// 往后的当前批次被标 superseded 却没有新批次替换，那些条目从此永久读不到疑点
-// （#208 评审阻断 2）。现在只有两种结局：整批扫完，或在**任何写入之前**抛错拒算。
+// 条目游标：每次读 PAGE_SCAN_CHUNK 条，翻完为止——#177 与 #178 都要求 10k 行项目能全量跑通，
+// 所以这里**不能有硬上限**：一个 PAGE_SCAN_CAP 常数会把超出部分静默丢掉，报告仍然写得像
+// "算完了"，而按 project 全量下线会让第 5001 条往后的当前批次被标 superseded 却没有新批次
+// 替换（#208 评审阻断 2）。现在只有两种结局：整批扫完，或在**任何写入之前**抛错拒算；
+// 规模上限因此由耗时决定，代码里只留一条内存保险丝。
 const PAGE_SCAN_CHUNK = 1000
 // 通用分块读取的块大小。
 const READ_CHUNK = 1000
 // 内存保险丝，不是正确性上限：命中它就抛错，已落库的疑点一条都不动。
-// 10k 行项目的实测耗时见 docs/plans/2026-09-25-assist-rules.md §6。
+// 实测：10k 行项目端到端 6.1 s（backend/tests/measure_identity_scale.py）。
 const PROJECT_SCAN_REFUSAL = 50000
 // 下线旧批次时的读取块大小（见 retire）。
 const RETIRE_CHUNK = 1000
@@ -366,12 +367,15 @@ function projectShapeStats(pages) {
 
 // ---------- #178 跨行检出 ----------
 // 只在批处理路径跑（跨行比较是 O(n) 起，绝不挂到提交路径上——#178 正文明确要求）。
+// 条目读取复用 #177 那个 loadAllPages：两条批处理路径的扫描语义因此不会各自漂移
+// （同名函数在这里定义第二遍会被提升覆盖，#177 那条的保险丝就会静默失效）。
+
 function recomputeIdentity(dao, projectId) {
   const startedAt = new Date()
   const { findIdentityConflicts, findRowShapeAnomalies, entryIdentityKey, IDENTITY_VERSION } =
     require(`${__hooks}/lib/assist_identity.js`)
   const collection = dao.findCollectionByNameOrId("review_findings")
-  const pages = dao.findRecordsByFilter("pages", `project = "${projectId}"`, "page_number,created", PAGE_SCAN_CAP, 0)
+  const pages = loadAllPages(dao, projectId)
 
   const entries = []
   let backfilled = 0
@@ -412,8 +416,7 @@ function recomputeIdentity(dao, projectId) {
     backfilled_keys: backfilled,
     dismissed_groups: dismissed.size,
     producer_version: IDENTITY_VERSION,
-    duration_ms: new Date() - startedAt,
-    truncated: pages.length >= PAGE_SCAN_CAP
+    duration_ms: new Date() - startedAt
   }
   console.log("identity_recompute", JSON.stringify(summary))
   return summary
