@@ -97,6 +97,15 @@ IDENTITY_KINDS = duplicate_identity, cross_source_conflict, merged_columns
   | 产出 finding | 17,840 条 |
   | 第二次重算 | 6396 ms、finding 数完全一致（可复算） |
   | 300 行的同口径数字 | 164 ms / 0.55 ms 每行 |
+  | 同一份 fixture 上 #177+#180 那一跑 | **10746 ms**（1.07 ms/行，产出 29,184 条 finding，`unanchored = 0`） |
+
+  两条批处理路径现在由同一个脚本一次量完（`measure_identity_scale.py` 同时打
+  `rules_run` 与 `first_run`），因为 #212 评审的非阻断项问的正是这个差：
+  同一份 10k fixture 上，规则那一跑比跨行那一跑慢 4 s，差值就是
+  「每页一次 `refreshDifficulty`（一次疑点查询 + 一次行解析）」的 N+1 成本。
+  收它的正确姿势是把项目级的 tier 刷新改成**一次批量读**（按 page 分组当前批次），
+  不是把上限调大；本 PR 暂不合并这段改动（它在 #180 的文件里），差距在 10k 量级
+  是 1.6 倍，不到必须处理的程度，数字先记在这里。
 
   规模上限因此**不是一个截断用的常数**：扫描是固定游标分批翻页直到取完
   （`PAGE_SCAN_CHUNK = 1000`，与 #177 共用同一个 `loadAllPages`），所以 10k 不会被静默丢掉。

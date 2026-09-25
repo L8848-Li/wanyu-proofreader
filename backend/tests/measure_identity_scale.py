@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""#178 规模实测：10k 行项目的跨行重算端到端耗时（验收项要求"跑通并记录耗时"）。
+"""批处理规模实测：10k 行项目的两条全量重算端到端耗时。
+
+两条都量：
+- `POST /projects/{id}/findings/recompute` = #177 的 R1–R7 规则 + #180 的逐条 tier 刷新；
+- `POST /projects/{id}/identity/recompute` = #178 的跨行检出与身份键回填。
+先量前者、再量后者，规则那一跑的结果不受跨行 finding 干扰。
 
 不进 CI：一次跑要往临时库里塞 10000 条 pages，CI 的并行矩阵里它会成为最慢的一环，
 而它测的是容量而不是正确性（正确性由 identity_integration.mjs 覆盖）。
@@ -76,6 +81,10 @@ def main(argv=None):
         binary = harness.build_binary(root / 'pocketbase')
         with harness.server(binary, root) as env:
             project_id, seed_seconds = seed(env, rows)
+            rules_started = time.monotonic()
+            rules = api(f'/api/fangji/projects/{project_id}/findings/recompute',
+                        env, 'POST', {})
+            rules_wall = time.monotonic() - rules_started
             started = time.monotonic()
             summary = api(f'/api/fangji/projects/{project_id}/identity/recompute',
                           env, 'POST', {})
@@ -84,6 +93,10 @@ def main(argv=None):
             print(json.dumps({
                 'rows': rows,
                 'seed_seconds': round(seed_seconds, 1),
+                'rules_run': rules,
+                'rules_run_wall_seconds': round(rules_wall, 1),
+                'rules_ms_per_row': round(rules['duration_ms'] / rows, 4),
+                'rules_difficulty_tiers': rules.get('difficulty_tiers'),
                 'first_run': summary,
                 'first_run_wall_seconds': round(wall, 1),
                 'second_run_duration_ms': again['duration_ms'],

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
@@ -23,6 +24,31 @@ async function request(url, { method = 'GET', token = '', body, expected = 200 }
   if (raw) { try { payload = JSON.parse(raw) } catch { payload = raw } }
   assert.equal(response.status, expected, `${method} ${url}: ${response.status} ${raw}`)
   return payload
+}
+
+// ---------- 批次下线的 kind 收口：两套集合必须与产出方一致 ----------
+// RULE_KINDS / IDENTITY_KINDS 是手工抄的：#177 与 #178 都用 producer = "rule"，
+// 各自只下线自己那批 kind。谁漏抄一个，那个 kind 就永远下线不掉（旧批次堆积、
+// 校对端读到已经失效的疑点），而两边各自看自己的表都"正常"。#212 评审核过本 head
+// 是对的、但没有东西守着它——这里补上，从两个 lib 的源码里抽出实际产出的 kind 比集合。
+{
+  const writer = require('../pb_hooks/lib/assist_writer.js')
+  const source = (file) => readFileSync(new URL(`../pb_hooks/lib/${file}`, import.meta.url), 'utf8')
+  // 规则库统一经 finding(kind, …) 产出；跨行库用 kind: "…" 字面量。
+  const emitted = (text, pattern) => [...new Set([...text.matchAll(pattern)].map((m) => m[1]))].sort()
+  const ruleKinds = emitted(source('assist_rules.js'), /finding\(\s*"([a-z_]+)"/g)
+  const identityKinds = emitted(source('assist_identity.js'), /kind:\s*"([a-z_]+)"/g)
+  assert.deepEqual([...writer.RULE_KINDS].sort(), ruleKinds,
+    `RULE_KINDS 与 assist_rules.js 的产出不再一致：${JSON.stringify({ declared: [...writer.RULE_KINDS].sort(), emitted: ruleKinds })}`)
+  // cross_source_conflict 是**声明了但暂不产出**的那一个：等 #169 的 OCR 结果字段。
+  // 写成显式差集而不是放宽整个断言，将来它真的产出了却没进集合会红，反之也红。
+  const expectedIdentity = [...new Set([...identityKinds, 'cross_source_conflict'])].sort()
+  assert.deepEqual([...writer.IDENTITY_KINDS].sort(), expectedIdentity,
+    `IDENTITY_KINDS 与 assist_identity.js 的产出不再一致：${JSON.stringify({ declared: [...writer.IDENTITY_KINDS].sort(), expected: expectedIdentity })}`)
+  assert.equal(writer.IDENTITY_KINDS.includes('cross_source_conflict') && !identityKinds.includes('cross_source_conflict'),
+    true, 'cross_source_conflict 的缺口应按 #169 记录，两侧注释与断言也要同步改')
+  assert.deepEqual(writer.RULE_KINDS.filter((kind) => writer.IDENTITY_KINDS.includes(kind)), [],
+    '两条批处理路径的 kind 不得重叠，否则又会互清批次')
 }
 
 const row = (o) => ({ 词条: o.headword ?? '', 拼音: o.pinyin ?? '', 莆田IPA: o.ipa ?? '', 释义: o.meaning ?? '', ...o.extra ?? {} })
