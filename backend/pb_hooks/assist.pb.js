@@ -88,6 +88,9 @@ routerAdd("POST", "/api/fangji/projects/{projectId}/dismissals", (c) => {
   const kind = String(body.kind || "")
   const allowed = ["duplicate_identity", "cross_source_conflict", "merged_columns"]
   if (!groupKey || groupKey.length > 500) throw new BadRequestError("分组标识无效")
+  // 分组键随后会被拼进过滤表达式，所以先按字符集挡一道：
+  // 它本来就是「归一化(词头) 空格 归一化(记音)」，正常值不含引号、括号或反斜杠。
+  if (!/^[^"\\()]*$/.test(groupKey)) throw new BadRequestError("分组标识含非法字符")
   if (!allowed.includes(kind)) throw new BadRequestError("只能对身份冲突/跨来源冲突/列合并三类下人工结论")
 
   const collection = $app.findCollectionByNameOrId("finding_dismissals")

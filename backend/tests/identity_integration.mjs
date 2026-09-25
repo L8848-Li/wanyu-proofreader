@@ -272,6 +272,19 @@ try {
   await request(`/api/fangji/projects/${project.id}/dismissals`, {
     method: 'POST', token: boss.token, expected: 400, body: { group_key: groupKey, kind: 'not_a_real_kind' }
   })
+  // 分组键会被拼进过滤表达式：带引号/括号的值必须被挡在写库之前，
+  // 否则一条"人工结论"就能变成一次跨项目读取或越权改写。
+  for (const bad of ['x") || (project != "', 'a" && (kind = "b', "y)(z"]) {
+    await request(`/api/fangji/projects/${project.id}/dismissals`, {
+      method: 'POST', token: boss.token, expected: 400, body: { group_key: bad, kind: 'duplicate_identity' }
+    })
+  }
+  // 真实身份键（含空格与中日韩字符）必须仍然可用——白名单不能严到把正常值挡掉。
+  const okDismissal = await request(`/api/fangji/projects/${project.id}/dismissals`, {
+    method: 'POST', token: boss.token, body: { group_key: '人 lang2', kind: 'duplicate_identity' }
+  })
+  assert.ok(okDismissal.id)
+  await request(`/api/fangji/projects/${project.id}/dismissals/${okDismissal.id}`, { method: 'DELETE', token: boss.token, expected: 204 })
 
   console.log('Identity conflicts integration test passed.')
 } finally {
