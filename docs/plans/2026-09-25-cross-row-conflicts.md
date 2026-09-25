@@ -83,7 +83,11 @@ IDENTITY_KINDS = duplicate_identity, cross_source_conflict, merged_columns
 
 - **只在批处理路径跑**：跨行比较是 O(n) 起，绝不挂到提交路径（#178 正文明确要求）。
   入口是 `POST /api/fangji/projects/{id}/identity/recompute`（manager 专属，同步，返回
-  `pages / findings / superseded / backfilled_keys / dismissed_groups / duration_ms`）。
+  `pages / findings / unanchored / superseded / backfilled_keys / dismissed_groups / duration_ms`）。
+- `unanchored` 与 #177 的项目级重算同形状：挂靠解析不出来就跳过并计数＋`console.warn`，绝不
+  退化成"挂到第一条"。今天这条分支结构上不可达（anchor 取自与 `byId` 同一份 `entries`），
+  留它只为了让两条批处理路径在"规则产了但写入端没接住"这件事上都留得下痕迹；**因此它没有
+  非零用例可测**，本节把它写成一致性项而不是证明项。
 - 同一次调用顺手回填 `pages.entry_identity_key`。第二次跑 `backfilled_keys = 0` 且键值不变
   （幂等、可重跑，这是 #178 的验收项）。
 - **10k 行端到端实测**（2026-09-25，`python3 backend/tests/measure_identity_scale.py 10000`，
@@ -109,8 +113,14 @@ IDENTITY_KINDS = duplicate_identity, cross_source_conflict, merged_columns
 
   规模上限因此**不是一个截断用的常数**：扫描是固定游标分批翻页直到取完
   （`PAGE_SCAN_CHUNK = 1000`，与 #177 共用同一个 `loadAllPages`），所以 10k 不会被静默丢掉。
-  游标里唯一的上限是 `PROJECT_SCAN_REFUSAL = 50000` 那条内存保险丝，命中即抛错拒算，
-  且抛错一定发生在第一次写之前——不存在"扫了一半下线了全项目"这种中间态。
+  游标里唯一的上限是 `PROJECT_SCAN_REFUSAL = 50000` 那条内存保险丝：它经 `readAllInChunks` 的
+  `onBatch(rows)` 在**读完每一批之后**判，命中即抛，所以一次拒算最多吸进 `refusal + chunk` 行；
+  抛错一定发生在第一次写之前——不存在"扫了一半下线了全项目"这种中间态。
+  这一度是坏的：`fbcacbb` 为了消灭"上限截断"把 `loadAllPages` 改成走通用游标，同时把判据挪到了
+  读全之后，"命中即抛"变成"读完即抛"，于是这条防线要防的那次分配恰好是它唯一没防住的。
+  `assist_rules_integration.mjs` 现在直接数拒算之前 dao 交出了多少行（`chunk: 3 / refusal: 4`
+  的 20 行数据集，断言 ≤ 7），并同一份 fake dao 在读全时恰好数到 20 行——两种实现可以分辨，
+  计数器本身也不是恒零的。
   可接受的运营上限按实测写定为
   **单项目 2 万行以内一次重算控制在 ~15s 量级**；再往上应当拆分项目或改成分批作业，
   而不是把常数调大。`backend/tests/identity_integration.mjs` 里还有一条纯函数级的

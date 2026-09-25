@@ -405,9 +405,15 @@ function recomputeIdentity(dao, projectId) {
     [`project = "${projectId}"`, `producer = "${PRODUCER}"`], at, IDENTITY_KINDS)
   const byId = new Map(entries.map((entry) => [entry.id, entry.page]))
   let inserted = 0
+  // 挂靠解析不出来就计数并跳过，绝不退化成"挂到第一条"；与 recomputeProject 同一形状，
+  // 这样两条批处理路径在"规则产了但写入端没接住"这件事上都会留下痕迹。
+  let unanchored = 0
   for (const item of findings) {
     const anchor = byId.get(item.evidence?.page) ?? null
-    if (!anchor) continue
+    if (!anchor) {
+      unanchored += 1
+      continue
+    }
     insertFinding(dao, collection, anchor, item, at, IDENTITY_VERSION)
     inserted += 1
   }
@@ -415,12 +421,14 @@ function recomputeIdentity(dao, projectId) {
     project: projectId,
     pages: pages.length,
     findings: inserted,
+    unanchored,
     superseded,
     backfilled_keys: backfilled,
     dismissed_groups: dismissed.size,
     producer_version: IDENTITY_VERSION,
     duration_ms: new Date() - startedAt
   }
+  if (unanchored) console.warn("identity_recompute unanchored findings", projectId, unanchored)
   console.log("identity_recompute", JSON.stringify(summary))
   return summary
 }
