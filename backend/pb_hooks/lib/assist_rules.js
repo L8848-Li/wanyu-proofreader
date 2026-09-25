@@ -331,19 +331,79 @@ function runPageRules(ctx, row) {
   ]
 }
 
+// 单条目路径用的入口：格级规则 + 挂靠标记。挂哪一条目由调用方给，本函数不猜。
+function runEntryRules(ctx, row, pageId) {
+  return runPageRules(ctx, row).map((item) => anchored(item, pageId, ANCHOR_ENTRY))
+}
+
 // 项目级批处理：列级(R3/R4) 与页级(R7) 规则加上逐条格级规则。
-function runProjectRules(ctx, rows, columns, entries) {
+//
+// entries = [{ pageId, order, pdfPage, row }]：条目归属与行内容**必须一起来**。
+// 上一版把 rows / columns / entries 分三个参数传，摊平后 finding 里没有任何条目
+// 标识，写入端只能猜挂靠——结果是除 R7 以外的全部疑点都落到项目第一条条目上，
+// 别人的原样内容片段就发到了这一条的在手校对员手上（#208 评审阻断 1）。
+// 现在本函数负责决定挂靠，返回值每条都带 page(条目 id)，写入端只认这个字段。
+// 列由条目现攒，避免「第 i 行对不上第 i 个条目」这类错位还有存在的空间。
+//
+// 挂靠口径（#176 规定 review_findings.page 必填，所以列级疑点也必须落在某一条上）：
+// - 格级/行级(R1/R2/R3格级/R5/R6) → 它所属的条目，scope=entry；
+// - 列级(R3列级/R4) → 扫描顺序第一条，scope=column_first_entry。列级 params 只有
+//   计数与码位标签、不含任何原样内容片段（assist_rules_integration.mjs 钉住了这一点），
+//   真正的消费方是管理端项目级读口；这条取舍写进 docs/plans/2026-09-25-assist-rules.md；
+// - 页级(R7) → 该 PDF 页扫描顺序里的第一个条目，scope=pdf_page_first_entry；
+//   解析不出条目就返回 page=""，由写入端跳过并计数，绝不退化成"挂到第一条"。
+const ANCHOR_ENTRY = "entry"
+const ANCHOR_COLUMN = "column_first_entry"
+const ANCHOR_PDF_PAGE = "pdf_page_first_entry"
+// 只有列级规则会产出的 message_key。单条目重算只能重新判定格级规则，所以下线旧批次时
+// 必须把这几条排除掉——否则补算某一条目会顺手抹掉挂在那一条上的列级疑点，而列级疑点
+// 只有项目级重算才会重新产出。assist_rules_integration.mjs 钉住了"列级挂靠的 key
+// 恰好等于这个集合"，所以它不会静默腐掉。
+const COLUMN_MESSAGE_KEYS = ["mixed_normalization_forms", "punctuation_width_mixed_in_column"]
+
+function anchored(item, pageId, scope) {
+  return {
+    ...item,
+    page: pageId ?? "",
+    evidence: { ...(item.evidence ?? {}), anchor: scope }
+  }
+}
+
+function columnsOf(entries) {
+  const columns = {}
+  for (const entry of entries) {
+    for (const [field, value] of Object.entries(entry.row ?? {})) {
+      if (!columns[field]) columns[field] = []
+      columns[field].push(value)
+    }
+  }
+  return columns
+}
+
+function runProjectRules(ctx, entries) {
+  const list = entries ?? []
+  const columns = columnsOf(list)
   const out = []
-  for (const row of rows ?? []) out.push(...runPageRules(ctx, row))
-  out.push(...ruleColumnForms(columns))
-  out.push(...rulePunctuationMix(columns))
-  out.push(...rulePageOrderBacktrack(entries ?? []))
-  out.push(...rulePageDensityOutliers(entries))
+  for (const entry of list) {
+    for (const item of runPageRules(ctx, entry.row)) out.push(anchored(item, entry.pageId, ANCHOR_ENTRY))
+  }
+  const columnAnchor = list.length ? list[0].pageId : ""
+  for (const item of [...ruleColumnForms(columns), ...rulePunctuationMix(columns)]) {
+    out.push(anchored(item, columnAnchor, ANCHOR_COLUMN))
+  }
+  for (const item of [...rulePageOrderBacktrack(list), ...rulePageDensityOutliers(list)]) {
+    const owner = list.find((entry) => (Number(entry.pdfPage) || 0) === item.evidence?.page)
+    out.push(anchored(item, owner?.pageId, ANCHOR_PDF_PAGE))
+  }
   return out
 }
 
 module.exports = {
   RULES_VERSION,
+  ANCHOR_ENTRY,
+  ANCHOR_COLUMN,
+  ANCHOR_PDF_PAGE,
+  COLUMN_MESSAGE_KEYS,
   LEGAL_LONG_TONES,
   READING_FIELDS,
   IPA_FIELDS,
@@ -372,5 +432,6 @@ module.exports = {
   rulePageDensityOutliers,
   ruleCombiningMarks,
   runPageRules,
+  runEntryRules,
   runProjectRules
 }

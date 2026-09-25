@@ -11,7 +11,14 @@
 // 顶层 require 在本机 JSVM 没有先例（.pb.js 的顶层绑定在回调里读不到）。
 
 const PRODUCER = "rule"
-const PAGE_SCAN_CAP = 5000
+// 全量重算的条目游标：每次读 PAGE_SCAN_CHUNK 条，翻完为止。
+// 上一版是 PAGE_SCAN_CAP = 5000 的一次性读取 + 按 project 全量下线，于是第 5001 条
+// 往后的当前批次被标 superseded 却没有新批次替换，那些条目从此永久读不到疑点
+// （#208 评审阻断 2）。现在只有两种结局：整批扫完，或在**任何写入之前**抛错拒算。
+const PAGE_SCAN_CHUNK = 1000
+// 内存保险丝，不是正确性上限：命中它就抛错，已落库的疑点一条都不动。
+// 10k 行项目的实测耗时见 docs/plans/2026-09-25-assist-rules.md §6。
+const PROJECT_SCAN_REFUSAL = 50000
 
 function nowStamp() {
   return new Date().toISOString()
@@ -82,20 +89,86 @@ function supersede(dao, collection, clauses, at) {
   return stale.length
 }
 
+// 插入之后的收尾：只下线**严格更早**的批次。
+//
+// 为什么必须有这一步：JSVM 不保证重算请求之间不交错（DAO 调用点就会让出运行时），实测
+// 同一页面 8 个并发重算会留下「A 下线 → B 下线 → A 插入 → B 插入」的形状。
+// 2026-09-25 的记录：库里 52 行里出现过 produced_at=.771 的一批被 .784/.787 陆续标掉，
+// 最后只剩 2 行当前批次——**残缺的一批比重复更难发现**，校对端看到的就是"疑点变少了"。
+//
+// 所以收尾的判据是"比我这一批早"，不是"不是我的"：
+// - 较新的批次永远不会被较旧的收尾抹掉 ⇒ 不会归零、不会残缺，最多同毫秒的几批并存；
+// - 同毫秒互不杀伤（`<` 排除相等），最坏是短暂重复 hint，任何一次后续重算都会清掉；
+// - 全局最后一个开始的请求那一批一定完整在册。
+// 比较用 stampKey 归一化后的字符串：DAO 写回的日期串是 "2026-09-25 13:52:21.771Z"
+// （空格分隔），而 nowStamp() 给的是 ISO 的 "T" 形式，直接比字符串会永远判成"更新"，
+// 让整步收尾静默失效。
+function stampKey(value) {
+  return String(value ?? "").replace("T", " ").replace(/Z$/, "").slice(0, 23)
+}
+
+function settleBatch(dao, collection, clauses, at) {
+  const current = dao.findRecordsByFilter(
+    "review_findings",
+    [...clauses, 'superseded_at = ""'].join(" && "),
+    "created",
+    100000,
+    0
+  )
+  const mine = stampKey(at)
+  let retired = 0
+  for (const record of current) {
+    if (!(stampKey(record.getString("produced_at")) < mine)) continue
+    record.set("superseded_at", at)
+    dao.save(record)
+    retired += 1
+  }
+  return retired
+}
+
+// 单条目重算的作用域：本条目 + 本生产者，**但要排除列级 key**。
+// 列级疑点(R3 列级 / R4)按挂靠口径也落在某条条目上，而单条重算只判定格级规则；
+// 不排除就会让"给一条补算"顺手抹掉挂在它身上的列级疑点，而那些只有项目重算会再产出。
+function pageScope(pageId, columnKeys) {
+  return [
+    `page = "${pageId}"`,
+    `producer = "${PRODUCER}"`,
+    ...columnKeys.map((key) => `message_key != "${key}"`)
+  ]
+}
+
 // rowOverride：提交路径传进来的「校对员刚打的那一行」。
 // 不传就用库里的当前值——pages.proofread_row_json 只在凑够票数后才写，
 // 第一遍提交时若不用 override，规则算的还是导入原文，等于没算刚提交的内容。
 function recomputePage(dao, pageId, rowOverride = null) {
-  const { runPageRules, RULES_VERSION } = require(`${__hooks}/lib/assist_rules.js`)
+  const { runEntryRules, RULES_VERSION, COLUMN_MESSAGE_KEYS } = require(`${__hooks}/lib/assist_rules.js`)
   const collection = dao.findCollectionByNameOrId("review_findings")
   const page = dao.findRecordById("pages", pageId)
   const at = nowStamp()
   const row = rowOverride && Object.keys(rowOverride).length ? rowOverride : rowForRules(page)
-  const findings = runPageRules(contextFor(dao, page), row)
-  const superseded = supersede(dao, collection,
-    [`page = "${pageId}"`, `producer = "${PRODUCER}"`], at)
+  const findings = runEntryRules(contextFor(dao, page), row, pageId)
+  const scope = pageScope(pageId, COLUMN_MESSAGE_KEYS)
+  const superseded = supersede(dao, collection, scope, at)
   for (const item of findings) insertFinding(dao, collection, page, item, at, RULES_VERSION)
-  return { page: pageId, findings: findings.length, superseded, producer_version: RULES_VERSION }
+  const settled = settleBatch(dao, collection, scope, at)
+  return {
+    page: pageId, findings: findings.length, superseded, settled,
+    producer_version: RULES_VERSION
+  }
+}
+
+// 分批读全项目的条目；游标翻到某一批不满额为止。超限抛错，调用方因此一条都不会写。
+function loadAllPages(dao, projectId, { chunk = PAGE_SCAN_CHUNK, refusal = PROJECT_SCAN_REFUSAL } = {}) {
+  const pages = []
+  for (let offset = 0; ; offset += chunk) {
+    const batch = dao.findRecordsByFilter(
+      "pages", `project = "${projectId}"`, "page_number,created", chunk, offset)
+    for (const page of batch) pages.push(page)
+    if (batch.length < chunk) return pages
+    if (pages.length >= refusal) {
+      throw new Error(`项目条目数 ${pages.length} 已达全量重算保险丝 ${refusal}，拒绝执行（未改动任何疑点）`)
+    }
+  }
 }
 
 // 项目级：列级(R3/R4) 与页级(R7) 规则要看到全量才能判，所以只在批处理里跑。
@@ -104,52 +177,48 @@ function recomputeProject(dao, projectId) {
   const { runProjectRules, makeContext, RULES_VERSION } = require(`${__hooks}/lib/assist_rules.js`)
   const startedAt = new Date()
   const collection = dao.findCollectionByNameOrId("review_findings")
-  const pages = dao.findRecordsByFilter(
-    "pages",
-    `project = "${projectId}"`,
-    "page_number,created",
-    PAGE_SCAN_CAP,
-    0
-  )
-  const rows = []
-  const columns = {}
-  const entries = []
-  for (const page of pages) {
-    const row = rowForRules(page)
-    rows.push(row)
-    for (const [field, value] of Object.entries(row)) {
-      if (!columns[field]) columns[field] = []
-      columns[field].push(value)
-    }
-    entries.push({ page, order: entries.length + 1, pdfPage: Number(page.get("pdf_page")) || 0 })
-  }
-  const samplePage = pages.length ? pages[0] : null
-  const ctx = samplePage
-    ? contextFor(dao, samplePage)
+  const pages = loadAllPages(dao, projectId)
+  // 条目与行内容一起传给规则：挂靠由规则侧决定（见 assist_rules.js 的挂靠口径注释）。
+  const entries = pages.map((page, index) => ({
+    pageId: page.id,
+    order: index + 1,
+    pdfPage: Number(page.get("pdf_page")) || 0,
+    row: rowForRules(page)
+  }))
+  const ctx = pages.length
+    ? contextFor(dao, pages[0])
     : makeContext({ projectId, keyboards: [], roles: null })
-  const findings = runProjectRules(ctx, rows, columns, entries)
+  const findings = runProjectRules(ctx, entries)
   const at = nowStamp()
+  // 下线仍然按 project 收口：游标已经保证「要么整批扫完、要么写入前抛错」，
+  // 被扫到的集合恒等于全项目，所以这里不需要再按条目列表拼 filter。
   const superseded = supersede(dao, collection,
     [`project = "${projectId}"`, `producer = "${PRODUCER}"`], at)
-  const byId = new Map(entries.map((entry) => [entry.page.id, entry.page]))
+  const byId = new Map(pages.map((page) => [page.id, page]))
+  const projectScope = [`project = "${projectId}"`, `producer = "${PRODUCER}"`]
   let inserted = 0
+  let unanchored = 0
   for (const item of findings) {
-    // 项目级 finding 也要落在某个条目上：R7 带 evidence.page，其余按出现顺序挂靠。
-    const anchor = (item.evidence && item.evidence.page
-      ? pages.find((page) => (Number(page.get("pdf_page")) || 0) === item.evidence.page)
-      : null) ?? byId.get(entries[0]?.page.id) ?? samplePage
-    if (!anchor) continue
+    const anchor = byId.get(item.page)
+    if (!anchor) {
+      // 挂靠解析不出来就跳过并计数，绝不退化成"挂到第一条"——那正是上一轮的缺陷形状。
+      unanchored += 1
+      continue
+    }
     insertFinding(dao, collection, anchor, item, at, RULES_VERSION)
     inserted += 1
   }
+  const settled = settleBatch(dao, collection, projectScope, at)
+  if (unanchored) console.warn("assist_recompute unanchored findings", projectId, unanchored)
   return {
     project: projectId,
     pages: pages.length,
     findings: inserted,
+    unanchored,
     superseded,
+    settled,
     duration_ms: new Date() - startedAt,
-    producer_version: RULES_VERSION,
-    truncated: pages.length >= PAGE_SCAN_CAP
+    producer_version: RULES_VERSION
   }
 }
 
@@ -170,7 +239,9 @@ function safeRecomputePage(dao, pageId, row, label) {
 module.exports = {
   safeRecomputePage,
   PRODUCER,
-  PAGE_SCAN_CAP,
+  PAGE_SCAN_CHUNK,
+  PROJECT_SCAN_REFUSAL,
+  loadAllPages,
   rowForRules,
   recomputePage,
   recomputeProject

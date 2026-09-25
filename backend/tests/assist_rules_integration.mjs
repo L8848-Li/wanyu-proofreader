@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 // 规则库是纯函数（不碰 DAO、不 require 别的 lib），所以能在 node 里直接加载做表驱动单测。
 const rules = require('../pb_hooks/lib/assist_rules.js')
+// 写入侧 lib 也只在函数体内碰 DAO 与 goja 全局，模块本身能在 node 里直接载入，
+// 所以游标这种"不需要数据也能证伪"的逻辑可以在不起服务器的这一段钉住。
+const writer = require('../pb_hooks/lib/assist_writer.js')
 const keyboardDefinition = require('../keyboards/hinghwa-dialect.json')
 
 const baseUrl = process.env.PB_URL || 'http://127.0.0.1:18091'
@@ -176,6 +180,100 @@ assert.ok(ctx.repertoire.size > 120, `repertoire too small: ${ctx.repertoire.siz
     Array.from({ length: 144 }, (_, i) => ({ order: i + 1, pdfPage: Math.floor(i / 6) + 1 }))), [])
 }
 
+// runProjectRules 的挂靠：每条返回值都必须带着**它自己那条目**的 id。
+// 上一版签名是 (ctx, rows, columns, entries)，摊平后 finding 里没有任何条目标识，
+// 写入端只能一律挂到项目第一条上——于是第 2 条的原样内容片段发给了第 1 条的校对员，
+// 而第 2、3 条自己的 hints 变成空（#208 评审阻断 1）。这段不起服务器就能钉住那个形状：
+// 只要挂靠再塌回第一条，P1 的空断言与 P2/P3 的等值断言会同时红。
+{
+  const nfc = 'tʰĩ1'                      // 预合成 ĩ：NFC 样本
+  const nfd = 'thin\u0301'                // n + 组合锐音符：同列的 NFD 样本
+  const entries = [
+    { pageId: 'P1', order: 1, pdfPage: 10, row: { 词条: '天', 拼音: 'thin1', 莆田IPA: nfc, 释义: '天空（京）' } },
+    { pageId: 'P2', order: 2, pdfPage: 30, row: { 词条: '甲', 拼音: 'ka1', 莆田IPA: nfd, 释义: '第一(个)' } },
+    { pageId: 'P3', order: 3, pdfPage: 12, row: { 词条: '鸭', 拼音: 'ah7', 莆田IPA: 'kaʔ7', 释义: '家禽' } }
+  ]
+  const out = rules.runProjectRules(ctx, entries)
+  assert.ok(out.length > 0, 'fixture must actually produce findings')
+  const anchors = [rules.ANCHOR_ENTRY, rules.ANCHOR_COLUMN, rules.ANCHOR_PDF_PAGE]
+  for (const item of out) {
+    assert.ok(anchors.includes(item.evidence.anchor), JSON.stringify(item.evidence))
+    assert.ok(entries.some((entry) => entry.pageId === item.page),
+      `finding 挂到了不存在的条目：${JSON.stringify({ m: item.message_key, page: item.page })}`)
+  }
+  // 逐条规则必须各归各条目：期望值由 runPageRules 现算，不在测试里另写一套。
+  const rowScoped = (pageId) => keysOf(out.filter((item) =>
+    item.page === pageId && item.evidence.anchor === rules.ANCHOR_ENTRY))
+  for (const entry of entries) {
+    assert.deepEqual(rowScoped(entry.pageId), keysOf(rules.runPageRules(ctx, entry.row)),
+      `row findings of ${entry.pageId}`)
+  }
+  // 列级与页级疑点的挂靠口径（docs/plans/2026-09-25-assist-rules.md §挂靠）：
+  // 列级挂扫描顺序第一条并带 anchor 标记；R7 挂该 PDF 页的第一个条目。
+  const columnItems = out.filter((item) => item.evidence.anchor === rules.ANCHOR_COLUMN)
+  assert.deepEqual(columnItems.map((item) => item.message_key).sort(),
+    ['mixed_normalization_forms', 'punctuation_width_mixed_in_column'],
+    JSON.stringify(columnItems.map((item) => item.message_key)))
+  // 单条重算靠 COLUMN_MESSAGE_KEYS 排除列级疑点，所以"带列级 anchor 的 key"必须恰好等于它。
+  assert.deepEqual([...new Set(columnItems.map((item) => item.message_key))].sort(),
+    [...rules.COLUMN_MESSAGE_KEYS].sort(), '列级 key 清单与挂靠结果不一致')
+  for (const item of columnItems) {
+    assert.equal(item.page, 'P1', '列级疑点必须挂在第一条目上')
+    // 列级 params 只允许计数与码位标签：它挂在无辜的条目上，绝不能带原样内容片段。
+    assert.deepEqual(Object.keys(item.params).sort(),
+      item.message_key === 'mixed_normalization_forms' ? ['minority', 'nfc', 'nfd'] : ['pair_count', 'pairs'],
+      JSON.stringify(item.params))
+    for (const value of Object.values(item.params)) {
+      assert.doesNotMatch(JSON.stringify(value), /[^\x20-\x7e]/,
+        `列级 params 混进了非 ASCII 字符（原样内容片段）：${JSON.stringify(value)}`)
+    }
+    // 直接钉住 #175 红线 1 的形状：任何条目的原样单元格内容都不许出现在 params 里。
+    for (const entry of entries) {
+      for (const value of Object.values(entry.row)) {
+        if (!value || /^[\x20-\x7e]*$/.test(value)) continue
+        assert.ok(!JSON.stringify(item.params).includes(String(value)),
+          `params 泄漏了 ${entry.pageId} 的原样内容：${item.message_key}`)
+      }
+    }
+  }
+  const backtracked = out.filter((item) => item.message_key === 'pdf_page_backtrack')
+  assert.equal(backtracked.length, 1, JSON.stringify(out.map((item) => item.message_key)))
+  assert.equal(backtracked[0].page, 'P3', 'R7 疑点要挂在回退到的那一页（P3 的 pdf_page=12）上')
+  assert.equal(backtracked[0].evidence.anchor, rules.ANCHOR_PDF_PAGE)
+  assert.equal(backtracked[0].evidence.page, 12, 'evidence.page 仍然是 PDF 页号')
+}
+
+// 全量重算的条目游标：必须翻完整批，超限必须在**任何写入之前**退出。
+// 上一版是 PAGE_SCAN_CAP = 5000 的一次性读取 + 按 project 全量下线，第 5001 条往后的
+// 当前批次被标 superseded 却没有新批次替换，那些条目从此永久读不到疑点（#208 评审阻断 2）。
+{
+  const total = 7
+  const all = Array.from({ length: total }, (_, i) => ({ id: `pg${i}` }))
+  const dao = {
+    findRecordsByFilter: (collection, filter, sort, limit, offset) =>
+      collection === 'pages' ? all.slice(offset, offset + limit) : (() => { throw new Error(`unexpected ${collection}`) })()
+  }
+  assert.deepEqual(writer.loadAllPages(dao, 'proj', { chunk: 3 }).map((page) => page.id),
+    all.map((page) => page.id), '游标必须按同一顺序翻完全部条目')
+  assert.deepEqual(writer.loadAllPages(dao, 'proj', { chunk: total }).map((page) => page.id),
+    all.map((page) => page.id), '整批一次读完时也不能漏条目')
+  assert.deepEqual(writer.loadAllPages(dao, 'proj', { chunk: 1 }).map((page) => page.id),
+    all.map((page) => page.id), 'chunk=1 是游标最容易露馅的形状')
+  assert.throws(() => writer.loadAllPages(dao, 'proj', { chunk: 3, refusal: 4 }), /保险丝/)
+  assert.ok(writer.PROJECT_SCAN_REFUSAL >= 10000,
+    `保险丝必须容得下 #178 验收的 10k 行项目：${writer.PROJECT_SCAN_REFUSAL}`)
+  // 「超限不会写坏数据」靠的是代码顺序：扫描必须先于第一次写。读源码钉住这个顺序，
+  // 因为把 supersede 挪到扫描之前以后，任何黑盒断言都要先造出 5 万条目才看得见。
+  const writerSource = readFileSync(new URL('../pb_hooks/lib/assist_writer.js', import.meta.url), 'utf8')
+  const start = writerSource.indexOf('function recomputeProject(')
+  assert.ok(start >= 0, 'assist_writer.js 里找不到 recomputeProject')
+  const projectBody = writerSource.slice(start, writerSource.indexOf('\n}\n', start))
+  const scanAt = projectBody.indexOf('loadAllPages(dao, projectId)')
+  const firstWrite = Math.min(projectBody.indexOf('supersede('), projectBody.indexOf('insertFinding('))
+  assert.ok(scanAt >= 0, 'recomputeProject 必须用分批游标读条目，不能有硬上限')
+  assert.ok(firstWrite > scanAt, `第一次写必须晚于整批扫描：scan@${scanAt} firstWrite@${firstWrite}`)
+}
+
 // 已知取舍（不是 bug，但必须写下来）：R1 的放行集合是「启用键盘字符 ∪ 固定区段」，
 // 而 IPA 调号字母 U+02E5..U+02E9（˥˦˧˨˩）既不在莆仙键盘里、也不在放行区段里。
 // 莆仙三套方案用数字标调，所以今天这是正确行为；一旦项目改用调号字母记音，
@@ -271,28 +369,76 @@ try {
   // 不许在断言里另写一套"我以为规则会报什么"。
   const trappedRow = { 词条: '甲', 拼音: 'ka1', 莆田IPA: 'ua5333', 仙游IPA: 'ka', 释义: '第一（个）测试' }
   const cleanRow = { 词条: '天', 拼音: 'thin1', 莆田IPA: 'tʰĩ1', 仙游IPA: 'tʰĩ1', 释义: '天空' }
-  const pagedRow = { 词条: '人', 拼音: 'lang2', 莆田IPA: 'lɑŋ2', 仙游IPA: 'lyŋ2', 释义: '人类' }
+  // 三行里必须有**非首条目**也产疑点，否则"其他条目为空"的断言恒真：上一版只有第 1 页
+  // 产疑点，于是全项目疑点塌到第一条目上也照样全绿（#208 评审阻断 1 + 测试恒真那条）。
+  // paged 行带四样：压平声调(格级 strong，数字串 9999 与 trapped 的 5333 可区分)、
+  // NFD 写法(与 clean 的预合成 ĩ 构成列级 R3 的两种形式)、半角括号(与 trapped 的全角构成列级 R4)。
+  const pagedRow = { 词条: '人', 拼音: 'lang2', 莆田IPA: 'kʰi\u03032', 仙游IPA: 'zuin9999', 释义: '人类(智人)' }
   const trapped = await createPage(project.id, 1, trappedRow)
   const clean = await createPage(project.id, 2, cleanRow)
   const paged = await createPage(project.id, 3, pagedRow)
   const expectedFor = (row) => rules.runPageRules(ctx, row)
     .map((item) => `${item.kind}/${item.message_key}`).sort()
   assert.ok(expectedFor(trappedRow).length >= 4, 'trapped row must exercise several rules')
+  assert.ok(expectedFor(pagedRow).length >= 1, 'non-first entry must produce its own findings')
   assert.deepEqual(expectedFor(cleanRow), [], 'clean row must be silent for the comparison to mean anything')
+  assert.deepEqual(expectedFor(trappedRow).filter((key) => key.endsWith('long_digit_run')),
+    ['reading_format_invalid/long_digit_run'])
+  assert.notDeepEqual(JSON.stringify(expectedFor(trappedRow)), JSON.stringify(expectedFor(pagedRow)),
+    '两行的疑点集合必须可区分，否则挂错条目也测不出来')
 
+  const recompute = await request(`/api/fangji/projects/${project.id}/findings/recompute`, { method: 'POST', token: boss.token })
   await request(`/api/fangji/projects/${project.id}/findings/recompute`, { method: 'POST', token: worker.token, expected: 403 })
-  await request(`/api/fangji/projects/${project.id}/findings/recompute`, { method: 'POST', token: boss.token })
-
+  assert.deepEqual({
+    pages: recompute.pages, unanchored: recompute.unanchored,
+    superseded: recompute.superseded, settled: recompute.settled
+  }, { pages: 3, unanchored: 0, superseded: 0, settled: 0 },
+  '首次全量重算：扫完 3 条、无挂靠失败、无旧批次可下线或收尾')
   const managerView = await request(`/api/fangji/projects/${project.id}/findings`, { token: boss.token })
-  const trappedKeys = managerView.items.filter((item) => item.page === trapped.id)
-    .map((item) => `${item.kind}/${item.message.key}`).sort()
-  assert.deepEqual(trappedKeys, expectedFor(trappedRow))
+  const keyOf = (item) => `${item.kind}/${item.message.key}`
+  const anchorOf = (item) => item.evidence?.anchor ?? ''
+  const onEntry = (pageId) => managerView.items.filter((item) =>
+    item.page === pageId && anchorOf(item) === rules.ANCHOR_ENTRY).map(keyOf).sort()
+  // 逐条疑点各归各条目。这三条断言一起才叫可证伪：挂靠塌回第一条时，trapped 会多出
+  // paged 的那份、paged 变空、clean 仍然空——前两条就会红。
+  assert.deepEqual(onEntry(trapped.id), expectedFor(trappedRow), JSON.stringify(onEntry(trapped.id)))
+  assert.deepEqual(onEntry(paged.id), expectedFor(pagedRow), JSON.stringify(onEntry(paged.id)))
+  assert.deepEqual(onEntry(clean.id), [], `clean entry flagged: ${JSON.stringify(onEntry(clean.id))}`)
+  const trappedKeys = onEntry(trapped.id)
   assert.ok(trappedKeys.includes('reading_format_invalid/long_digit_run'), JSON.stringify(trappedKeys))
   assert.ok(trappedKeys.includes('confusable_substitution/confusable_ascii_in_reading'), JSON.stringify(trappedKeys))
   assert.ok(trappedKeys.includes('char_out_of_repertoire/non_ipa_range_codepoints'), JSON.stringify(trappedKeys))
-  // 干净条目一条都不该有——包括 info 级，否则"零信号条目"这个前提就不成立了。
+  // 干净条目一条都不该有——包括 info 级与列级挂靠，否则"零信号条目"这个前提就不成立了。
   assert.deepEqual(managerView.items.filter((item) => item.page === clean.id), [],
     `clean entry flagged: ${JSON.stringify(managerView.items.filter((item) => item.page === clean.id))}`)
+  // 列级疑点的挂靠口径：只能落在扫描顺序第一条上（#176 规定 page 必填）。
+  const columnItems = managerView.items.filter((item) => anchorOf(item) === rules.ANCHOR_COLUMN)
+  assert.deepEqual(columnItems.map(keyOf).sort(),
+    ['encoding_form_anomaly/mixed_normalization_forms', 'punctuation_mix/punctuation_width_mixed_in_column'],
+    JSON.stringify(columnItems.map(keyOf)))
+  for (const item of columnItems) {
+    assert.equal(item.page, trapped.id, '列级疑点必须且只能挂在第一条目上')
+  }
+  assert.equal(managerView.items.filter((item) =>
+    item.page !== trapped.id && anchorOf(item) === rules.ANCHOR_COLUMN).length, 0,
+    '列级疑点只许出现在挂靠的那一条目上')
+  assert.deepEqual(managerView.items.filter((item) =>
+    ![rules.ANCHOR_ENTRY, rules.ANCHOR_COLUMN, rules.ANCHOR_PDF_PAGE].includes(anchorOf(item))), [],
+    '每条落库的疑点都必须带挂靠口径')
+  // #175 红线 1 的形状：任何一条疑点的 params 都不许带上别的条目的原样内容。
+  const rowJson = { [trapped.id]: JSON.stringify(trappedRow), [clean.id]: JSON.stringify(cleanRow),
+    [paged.id]: JSON.stringify(pagedRow) }
+  const cellText = [trappedRow, cleanRow, pagedRow].flatMap((row) => Object.values(row))
+    .filter((value) => !/^[\x20-\x7e]*$/.test(String(value)))
+  for (const item of managerView.items) {
+    const serialized = JSON.stringify(item.message.params)
+    for (const value of cellText) {
+      assert.ok(!serialized.includes(value), `${keyOf(item)} 的 params 带了原样内容片段`)
+    }
+    for (const run of item.message.params?.runs ?? []) {
+      assert.ok((rowJson[item.page] ?? '').includes(run), `${keyOf(item)} 的 ${run} 不属于它挂靠的那一条`)
+    }
+  }
   for (const item of managerView.items) {
     assert.equal(item.producer, 'rule')
     assert.equal(item.producer_version, rules.RULES_VERSION)
@@ -319,15 +465,29 @@ try {
       producer: 'ocr', producer_version: 'ocr-v1', produced_at: '2026-09-01'
     }
   })
-  const ruleRowsOf = (pageId) => request(`/api/collections/review_findings/records?filter=${encodeURIComponent(`page = "${pageId}" && producer = "rule"`)}`, { token: superAuth.token })
+  const ruleRowsOf = async (pageId) => {
+    const list = await request(`/api/collections/review_findings/records?perPage=200&sort=created&filter=${encodeURIComponent(`page = "${pageId}" && producer = "rule"`)}`, { token: superAuth.token })
+    // 这个口子自己就会静默截断：并发重算一节要看的就是"到底留下了几份批次"，
+    // 读口被 30 条默认分页挡住就会把重复看成"没有重复"。
+    assert.equal(list.items.length, list.totalItems, `读取被分页截断：${list.items.length}/${list.totalItems}`)
+    return list
+  }
+  const anchorOfRaw = (row) => JSON.parse(row.evidence_json || '{}').anchor ?? ''
+  const current = (rows) => rows.filter((row) => row.superseded_at === '')
+  const entryRows = (rows) => current(rows).filter((row) => anchorOfRaw(row) === rules.ANCHOR_ENTRY)
+  const columnRows = (rows) => current(rows).filter((row) => anchorOfRaw(row) === rules.ANCHOR_COLUMN)
+  const keysOfRaw = (rows) => rows.map((row) => `${row.kind}/${row.message_key}`).sort()
   const beforeRecompute = await ruleRowsOf(trapped.id)
-  const beforeCurrent = beforeRecompute.items.filter((row) => row.superseded_at === '')
-  assert.deepEqual(beforeCurrent.map((row) => `${row.kind}/${row.message_key}`).sort(), expectedFor(trappedRow))
+  assert.deepEqual(keysOfRaw(entryRows(beforeRecompute.items)), expectedFor(trappedRow))
+  assert.equal(columnRows(beforeRecompute.items).length, 2, '列级疑点此刻挂在第一条目上')
   await request(`/api/fangji/pages/${trapped.id}/findings/recompute`, { method: 'POST', token: worker.token })
   const afterRuleRows = await ruleRowsOf(trapped.id)
-  const freshRuleRows = afterRuleRows.items.filter((row) => row.superseded_at === '')
-  assert.deepEqual(freshRuleRows.map((row) => `${row.kind}/${row.message_key}`).sort(), expectedFor(trappedRow),
+  const freshRuleRows = entryRows(afterRuleRows.items)
+  assert.deepEqual(keysOfRaw(freshRuleRows), expectedFor(trappedRow),
     '重算后应当只剩一份当前批次')
+  // 单条重算判定不了列级规则，所以它不得顺手抹掉挂在这一条身上的列级疑点：
+  // 那些只有项目级重算会重新产出，被抹掉就是静默永久丢失。
+  assert.equal(columnRows(afterRuleRows.items).length, 2, '单条重算必须保留列级疑点')
   assert.ok(afterRuleRows.items.filter((row) => row.superseded_at !== '').length >= expectedFor(trappedRow).length,
     '旧批次必须留在库里')
   assert.ok(freshRuleRows.every((row) => row.produced_at !== ''))
@@ -335,6 +495,41 @@ try {
   assert.equal(ocrAfter.superseded_at, '', '规则重算不得下线 OCR 生产者的疑点')
   const ruleFinding = freshRuleRows.find((row) => row.message_key === 'long_digit_run')
   assert.equal(ruleFinding.severity, 'strong')
+
+  // 同一条目上的并发重算：可观测结果必须仍然是"一份当前批次"。
+  // 上一轮的非阻断项——两边的下线都发生在插入之前，交错时会留下两份批次（hint 成倍重复）。
+  // 插入后按 produced_at 收敛（retainNewestBatch）让结论与交错顺序无关。
+  const concurrent = await Promise.all(Array.from({ length: 8 }, () =>
+    request(`/api/fangji/pages/${trapped.id}/findings/recompute`, { method: 'POST', token: boss.token })))
+  assert.equal(concurrent.length, 8, '并发重算请求不得有失败')
+  const raced = await ruleRowsOf(trapped.id)
+  const currentEntry = entryRows(raced.items)
+  const currentSet = [...new Set(currentEntry.map((row) => `${row.kind}/${row.message_key}`))].sort()
+  const expectedSet = [...new Set(expectedFor(trappedRow))].sort()
+  // 校对端可见的疑点集合必须与规则算出来的一致：不缺席（残缺批次会让某个 key 彻底消失），
+  // 也不多出一个规则根本不产的东西。这是并发交错下唯一稳定成立的不变量——
+  // "恰好一份批次"在 JSVM 让出运行时的 DAO 调用点上不成立（见 assist_writer.js 的收尾注释）。
+  assert.deepEqual(currentSet, expectedSet,
+    `并发重算后的当前批次：${JSON.stringify({ current: currentEntry.map((row) => [row.message_key, row.produced_at]), expected: expectedSet })}`)
+  // 库里至少留着一份完整的批次（同毫秒的几批可以并存，那是重复不是丢信号）。
+  const batches = new Map()
+  for (const row of currentEntry) batches.set(row.produced_at, [...(batches.get(row.produced_at) ?? []), row])
+  const largest = Math.max(...[...batches.values()].map((rows) => rows.length))
+  // 重复量只打印不断言：`produced_at` 是 #176 schema 里唯一的批次标记，同一毫秒开始的
+  // 几批在数据上无法区分（实测见 docs/plans/2026-09-25-assist-rules.md §4）。
+  // 把「不许重复」写成断言要么逼出 #176 的 schema 改动，要么让这个测试随时序飘红。
+  console.log(`ASSIST_CONCURRENCY ${JSON.stringify({
+    requests: concurrent.length, current_rows: currentEntry.length,
+    distinct_keys: currentSet.length, distinct_batches: batches.size,
+    largest_batch: largest, repeat_factor: Number((currentEntry.length / currentSet.length).toFixed(2))
+  })}`)
+  assert.ok([...batches.values()].some((rows) =>
+    [...new Set(rows.map((row) => `${row.kind}/${row.message_key}`))].sort().join() === expectedSet.join()),
+    `当前批次里没有一份是完整的：${JSON.stringify([...batches.keys()])}`)
+  assert.equal(columnRows(raced.items).length, 2, '并发重算同样不得波及列级疑点')
+  assert.ok(raced.totalItems > expectedFor(trappedRow).length + 2 + 5,
+    `8 次并发重算应当在库里留下多份历史批次（否则这个测试没测到交错）：${raced.totalItems}`)
+  assert.equal(columnRows(raced.items).length, 2, '并发重算同样不得波及列级疑点')
 
   // 提交路径：刚提交的那一行要立刻参与判定，而不是等全量重算。
   const submit = await request(`/api/fangji/pages/${trapped.id}/submit`, {
@@ -351,16 +546,28 @@ try {
   assert.deepEqual(JSON.parse(runs[0].params_json).runs, ['9999'], '应对刚提交的行重算，而不是导入原文')
 
   // p95：单条重算必须够便宜（#177 验收：提交路径不回退，基准 p95 < 50 ms）。
-  const durations = []
-  for (let i = 0; i < 30; i += 1) {
-    const startedAt = Date.now()
-    await request(`/api/fangji/pages/${paged.id}/findings/recompute`, { method: 'POST', token: boss.token })
-    durations.push(Date.now() - startedAt)
+  // 三种形状都要量：静默行、单疑点行、多疑点行（含真实的下线 + 插入）。
+  // 上一轮只测了静默行，那个数字不代表提交路径。
+  const timed = async (label, pageId, findings) => {
+    const durations = []
+    for (let i = 0; i < 30; i += 1) {
+      const startedAt = Date.now()
+      await request(`/api/fangji/pages/${pageId}/findings/recompute`, { method: 'POST', token: boss.token })
+      durations.push(Date.now() - startedAt)
+    }
+    durations.sort((a, b) => a - b)
+    const p95 = durations[Math.floor(durations.length * 0.95) - 1]
+    console.log(`ASSIST_P95 ${JSON.stringify({
+      case: label, findings, samples: durations.length,
+      p50: durations[Math.floor(durations.length / 2)], p95, max: durations[durations.length - 1]
+    })}`)
+    assert.ok(p95 < 50, `${label} single-entry recompute p95 = ${p95} ms (>= 50ms)`)
+    return p95
   }
-  durations.sort((a, b) => a - b)
-  const p95 = durations[Math.floor(durations.length * 0.95) - 1]
-  console.log(`ASSIST_P95 ${JSON.stringify({ samples: durations.length, p50: durations[Math.floor(durations.length / 2)], p95, max: durations[durations.length - 1] })}`)
-  assert.ok(p95 < 50, `single-entry recompute p95 = ${p95} ms (>= 50ms)`)
+  await timed('silent_row', clean.id, 0)
+  await timed('one_finding', paged.id, expectedFor(pagedRow).length)
+  const busy = await timed('many_findings', trapped.id, expectedFor(trappedRow).length)
+  assert.ok(busy > 0, '计时必须真的走过 HTTP 往返，不能恒为 0')
 
   console.log('Assist rules integration test passed.')
 } finally {

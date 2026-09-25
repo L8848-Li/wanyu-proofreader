@@ -487,8 +487,13 @@ routerAdd("POST", `${FANGJI_API}/pages/{pageId}/submit`, (c) => {
   }
 
   // #177：提交成功后对刚提交的那一行重算疑点；疑点生产失败不影响已落库的提交。
-  const { safeRecomputePage: assistSafeRecompute } = require(`${__hooks}/lib/assist_writer.js`)
-  assistSafeRecompute($app, pageId, assistSubmittedRow, "assist_recompute_after_submit")
+  // require 也在 try 内：lib 载入失败同样不许把已经落库的提交变成错误。
+  try {
+    const { safeRecomputePage: assistSafeRecompute } = require(`${__hooks}/lib/assist_writer.js`)
+    assistSafeRecompute($app, pageId, assistSubmittedRow, "assist_recompute_after_submit")
+  } catch (error) {
+    console.warn("assist_recompute_after_submit failed", pageId, String(error))
+  }
   return c.json(200, response)
 }, $apis.requireAuth("users"))
 
@@ -667,10 +672,13 @@ routerAdd("POST", `${FANGJI_API}/pages/{pageId}/arbitrate`, (c) => {
   })
 
   // #177：仲裁落定的是这一条的最终行，同样要重算，否则下一轮读到的还是仲裁前的疑点。
-  const { safeRecomputePage: assistSafeArb } = require(`${__hooks}/lib/assist_writer.js`)
-  assistSafeArb($app, pageId, assistArbitratedRow, "assist_recompute_after_arbitration")
+  try {
+    const { safeRecomputePage: assistSafeArb } = require(`${__hooks}/lib/assist_writer.js`)
+    assistSafeArb($app, pageId, assistArbitratedRow, "assist_recompute_after_arbitration")
+  } catch (error) {
+    console.warn("assist_recompute_after_arbitration failed", pageId, String(error))
+  }
   return c.json(200, response)
-
 }, $apis.requireAuth("users"))
 
 routerAdd("GET", `${FANGJI_API}/proofreader-stats`, (c) => {
