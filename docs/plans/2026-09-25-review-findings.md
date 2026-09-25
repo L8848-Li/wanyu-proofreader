@@ -186,21 +186,37 @@ superuser 走 API 也一样被拒。`findings_integration.mjs` 对 9 个字段�
 - 日期字段比较统一用 `record.getString(name)`，别用 `String(record.get(name))`——
   后者表示不稳定，会把合法的 `superseded_at` 改动误判成覆写。
 
-## 8. `FindingProducer` 边界（占位，#181 填写签名）
+## 8. `FindingProducer` 边界
 
-任何生产者（`rule` / `ocr` / `bundle_import`，以及未来 L2 模型）向本集合写入时必须提供的最小信息，
-已经由 schema 固定为：
+目的：让形态更换（云 API / sidecar / 浏览器内推理 / 规则）不改本文件 §1 的字段。
+完整的决策理由见 [`2026-09-25-model-assist-inference.md`](./2026-09-25-model-assist-inference.md) §3
+（#181）；**签名以本节为准，两处要一起改**。
 
 ```
-producer ∈ {rule, ocr, bundle_import}   producer_version: string
-kind ∈ §2 枚举                          severity ∈ {info, warn, strong}
-message_key: string                     params_json: 结构信息
-page (+field_name?)  produced_at: batch stamp
+FindingProducer = interface {
+  Produce(ctx ProducerContext) -> []FindingDraft
+  Identity() -> {producer: "rule"|"ocr"|"bundle_import"|"model", version: string}
+  Capabilities() -> {needsEgress: bool, readsOtherPeopleSubmissions: false, writesBack: false}
+}
+
+FindingDraft = {
+  page_id, field_name?, kind, severity ∈ {info|warn|strong},
+  message_key, params_json, evidence_json, produced_at
+}
+
+ProducerContext = {page, project, column_roles, enabled_keyboards}
 ```
 
-形态更换（云 API / sidecar / 浏览器内推理）**不改本文件的数据结构**，只改 `producer` 与
-`producer_version` 的取值来源。`FindingProducer` 的接口签名（伪码）由 #181 决策文档给出并
-追加到本节；该文档不得改动 §1 的字段。
+三条约束由**接口形状**保证，不靠文档措辞：
+
+1. `readsOtherPeopleSubmissions` 的类型是 `false` 字面量——上下文里根本没有他人提交字段，
+   「永不含他人结果」因此是不可表示，而不是"请注意"（#175 红线 1）。
+2. `needsEgress` 未声明按 `true` 处理（保守），供出站闸门判断。
+3. 生产者只返回 `FindingDraft`，接口上没有写回任何值的方法。
+
+**对本文件数据结构的唯一影响点**：`producer` 枚举要新增 `"model"`。
+那是一次 select 值变更（需要迁移），本文件此刻**不改**——它属于 L2 真正开工时的那次改动，
+在这里预先占位会让 #176 为一个不存在的能力放宽枚举。除此之外的字段一个都不用动。
 
 ## 9. 消费方指引
 
