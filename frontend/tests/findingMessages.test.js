@@ -87,9 +87,10 @@ test('each wording renders and stays free of cell text', () => {
     ['required_role_field_empty', { role: 'meaning' }],
     ['pdf_page_backtrack', { from_page: 40, to_page: 12, backtrack: 28 }],
     ['page_entry_count_outlier', { entries_on_page: 31, median_entries: 6, ceiling: 18 }],
-    // #178 跨行检出的三条。第一条刻意把生产方真的会带的 identity_headword / identity_reading
-    // 也塞进去：措辞不许把词头与记音渲染进正文（findingMessages.js 里那句隐私承诺），
-    // 进表之后那句承诺才有东西守着，而不是只靠注释自觉。
+    // #178 跨行检出的三条。第一条是**故意的对抗样本**：生产方今天不带这两个键
+    // （assist_identity.js 只发 differs_on / partner_count / sources），但措辞不许把词头与
+    // 记音渲染进正文（findingMessages.js 里那句隐私承诺）这件事，得在有人把它们塞回来时立刻红，
+    // 而不是只靠注释自觉——所以这里偏要带上它们。
     ['same_identity_different_content', {
       partner_count: 2, differs_on: ['释义', '拼音'],
       identity_headword: '喼测试', identity_reading: 'kʰɐt̚5'

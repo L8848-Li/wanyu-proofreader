@@ -306,6 +306,23 @@ try {
   const survivors = await request(`/api/collections/pages/records?filter=${encodeURIComponent(`project = "${project.id}"`)}`, { token: superAuth.token })
   assert.equal(survivors.items.length, 4, '身份冲突检出不许合并或删除任何条目')
 
+  // #175 红线 1 在数据形状上的落点（契约：review-findings.md §8.1 第 1 条，按绝对解释）。
+  // identity 生产者曾经把词头与记音的字面值放进 params（全仓无人消费），删键之后由这条断言
+  // 保证它们不会换个名字回来：params 里不许出现任何一条的单元格原文。
+  const cellText = survivors.items
+    .flatMap((page) => Object.values(JSON.parse(page.ocr_row_json || '{}')))
+    .map((value) => String(value)).filter((value) => value && !/^[\x20-\x7e]*$/.test(value))
+  assert.ok(cellText.length > 0, 'privacy 扫描的原文清单为空，下面这圈就是恒真')
+  const identityFindings = findings.filter((item) => item.producer_version === identity.IDENTITY_VERSION)
+  assert.ok(identityFindings.length > 0, 'identity 生产者必须真的产了疑点')
+  for (const item of identityFindings) {
+    const serialized = JSON.stringify(JSON.parse(item.params_json))
+    for (const value of cellText) {
+      assert.equal(serialized.includes(value), false,
+        `${item.kind} 的 params 带了原样内容片段：${serialized}`)
+    }
+  }
+
   // merged_columns 由规则生产者报出（与 #125 同名 kind、不同生产者）
   const merged = findings.filter((item) => item.kind === 'merged_columns')
   assert.ok(merged.length >= 1)

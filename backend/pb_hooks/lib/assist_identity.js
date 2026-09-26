@@ -116,9 +116,12 @@ function findIdentityConflicts(entries, dismissed = new Set()) {
         severity: "strong",
         field: others.includes("释义") ? "释义" : others[0],
         message_key: "same_identity_different_content",
+        // params 只带结构信息（列名、计数、来源标识）。词头与记音的**字面值**曾经在这里
+        // 出现过（identity_headword / identity_reading），全仓没有任何消费方读它们，而
+        // review_findings.params_json 会随 hint 原样下发给该条目的在手校对员
+        // （契约见 docs/plans/2026-09-25-review-findings.md §8.1 第 1 条：按绝对解释，
+        // 连"本条目自己的原文"也不带）。措辞只需要 differs_on 与 partner_count。
         params: {
-          identity_headword: item.parts.headword,
-          identity_reading: item.parts.reading,
           differs_on: others,
           partner_count: partners.length,
           sources
