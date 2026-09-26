@@ -13,9 +13,10 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const detectors = path.join(here, '..', '..', 'scripts', 'corpus_probe', 'detectors.py')
+const rulesLib = path.join(here, '..', '..', 'backend', 'pb_hooks', 'lib', 'assist_rules.js')
 
-// 措辞表与检测器必须一起改：检测器新增一个 message_key 而前端没配措辞时，
-// 校对员会看到 FALLBACK 文案，而这条测试会先一步失败。
+// 措辞表与生产者必须一起改：检测器或规则引擎新增一个 message_key 而前端没配措辞时，
+// 校对员会看到 FALLBACK 文案，而这两条测试会先一步失败。
 function detectorMessageKeys() {
   const source = readFileSync(detectors, 'utf8')
   const pattern = /finding\(\s*[A-Z_]+,\s*[A-Z]+,\s*[^,]+,\s*"([a-z_]+)"/g
@@ -25,9 +26,27 @@ function detectorMessageKeys() {
   return keys
 }
 
+// #177 的 JS 规则引擎：finding(kind, severity, field, "message_key", ...)
+function ruleEngineMessageKeys() {
+  const source = readFileSync(rulesLib, 'utf8')
+  const pattern = /finding\(\s*"[a-z_]+",\s*"(?:info|warn|strong)",\s*[^,]+,\s*"([a-z_]+)"/g
+  const keys = new Set()
+  for (const match of source.matchAll(pattern)) keys.add(match[1])
+  // 少于 5 个说明规则库被改动过或正则失配——那本身就是一次漂移，必须失败而不是静默通过。
+  assert.ok(keys.size >= 5, `expected the rule engine's message keys, got ${[...keys]}`)
+  return keys
+}
+
 test('every detector message key has a wording entry', () => {
   const registered = new Set(findingMessageKeys())
   for (const key of detectorMessageKeys()) {
+    assert.ok(registered.has(key), `findingMessages.js is missing wording for ${key}`)
+  }
+})
+
+test('every rule engine message key has a wording entry', () => {
+  const registered = new Set(findingMessageKeys())
+  for (const key of ruleEngineMessageKeys()) {
     assert.ok(registered.has(key), `findingMessages.js is missing wording for ${key}`)
   }
 })
@@ -44,11 +63,19 @@ test('each wording renders and stays free of cell text', () => {
     ['combining_marks_present', { marks: ['0x303'] }],
     ['non_ipa_range_codepoints', { codepoints: ['0x3b6'] }],
     ['cjk_extension_present', { codepoints: ['0x20bb8'] }],
-    ['row_width_differs', { cells: 7, headers: 6 }]
+    ['row_width_differs', { cells: 7, headers: 6 }],
+    ['confusable_ascii_in_reading', { suggestions: [{ found: 'U+0061', suggested: ['U+0251'] }], positions: [3], hit_count: 1 }],
+    ['punctuation_width_mixed_in_column', { pairs: [{ full: 'U+FF08', half: 'U+0028' }], pair_count: 1 }],
+    ['required_role_field_empty', { role: 'meaning' }],
+    ['pdf_page_backtrack', { from_page: 40, to_page: 12, backtrack: 28 }],
+    ['page_entry_count_outlier', { entries_on_page: 31, median_entries: 6, ceiling: 18 }]
   ]
   for (const [key, params] of cases) {
     const text = renderFindingMessage({ key, params })
-    assert.ok(text.length > 8, `${key} rendered ${text}`)
+    // 短是可以的（「释义列为空」只有五个字，列名本来就在 field 里），
+    // 不可以的是空串、退化成正则/FALLBACK、以及把 params 原样吐出来。
+    assert.ok(text.length >= 4, `${key} rendered ${JSON.stringify(text)}`)
+    assert.ok(!text.startsWith(FALLBACK_PREFIX), `${key} fell through to the fallback: ${text}`)
     assert.ok(!/[{}[\]]/.test(text), `${key} leaked raw params: ${text}`)
   }
 })
