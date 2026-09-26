@@ -86,7 +86,16 @@ test('each wording renders and stays free of cell text', () => {
     ['punctuation_width_mixed_in_column', { pairs: [{ full: 'U+FF08', half: 'U+0028' }], pair_count: 1 }],
     ['required_role_field_empty', { role: 'meaning' }],
     ['pdf_page_backtrack', { from_page: 40, to_page: 12, backtrack: 28 }],
-    ['page_entry_count_outlier', { entries_on_page: 31, median_entries: 6, ceiling: 18 }]
+    ['page_entry_count_outlier', { entries_on_page: 31, median_entries: 6, ceiling: 18 }],
+    // #178 跨行检出的三条。第一条刻意把生产方真的会带的 identity_headword / identity_reading
+    // 也塞进去：措辞不许把词头与记音渲染进正文（findingMessages.js 里那句隐私承诺），
+    // 进表之后那句承诺才有东西守着，而不是只靠注释自觉。
+    ['same_identity_different_content', {
+      partner_count: 2, differs_on: ['释义', '拼音'],
+      identity_headword: '喼测试', identity_reading: 'kʰɐt̚5'
+    }],
+    ['multiple_headwords_in_cell', { segments: 3, sample_lengths: [2, 5, 1] }],
+    ['reading_inside_meaning_row', { has_tone_digits: true, has_ipa_marks: true }]
   ]
   for (const [key, params] of cases) {
     const text = renderFindingMessage({ key, params })
@@ -95,6 +104,12 @@ test('each wording renders and stays free of cell text', () => {
     assert.ok(text.length >= 4, `${key} rendered ${JSON.stringify(text)}`)
     assert.ok(!text.startsWith(FALLBACK_PREFIX), `${key} fell through to the fallback: ${text}`)
     assert.ok(!/[{}[\]]/.test(text), `${key} leaked raw params: ${text}`)
+    // 别人条目的内容不许出现在这一条的措辞里（字段名与计数可以）。
+    for (const secret of [params.identity_headword, params.identity_reading]) {
+      if (typeof secret === 'string' && secret.length) {
+        assert.ok(!text.includes(secret), `${key} 把词头/记音渲染进了措辞正文：${text}`)
+      }
+    }
   }
 })
 

@@ -284,6 +284,8 @@ function recomputeProject(dao, projectId) {
 // ---------- #180 难度标签 ----------
 // 疑点算完之后顺手刷新 tier：#180 只出数据与接口，不新造触发器，
 // 复用 #177 的两条路径（单条重算 / 项目全量），tier 才不会出现"疑点是新的、难度是旧的"。
+// 例外是 #178 的跨行路径：它一条 tier 都不刷，改由返回值里的 difficulty_stale 说明，
+// 跑完要再跑一次项目重算才是新的（理由与代价见 docs/plans/2026-09-25-cross-row-conflicts.md）。
 //
 // 读的是**全部当前批次疑点，不按 gate 过滤**：信号要的是"机器认为这行有多少问题"，
 // 与"校对员被打了几个标"是两件事；blocked_reason 依赖的 merged_columns 更是只有
@@ -426,6 +428,10 @@ function recomputeIdentity(dao, projectId) {
     backfilled_keys: backfilled,
     dismissed_groups: dismissed.size,
     producer_version: IDENTITY_VERSION,
+    // 本路径**不刷 tier**（每页刷一次的 N+1 代价见 docs §耗时那一节），而 duplicate_identity
+    // 与 merged_columns 都是 strong、会进判定表。所以这一批之后每一页的 difficulty_tier 描述的是
+    // 跨行检出之前的疑点集合。字段让调用方看得见这件事，runbook 是"再跑一次 findings/recompute"。
+    difficulty_stale: inserted > 0 || superseded > 0,
     duration_ms: new Date() - startedAt
   }
   if (unanchored) console.warn("identity_recompute unanchored findings", projectId, unanchored)

@@ -61,6 +61,9 @@ routerAdd("POST", "/api/fangji/pages/{pageId}/findings/recompute", (c) => {
 // POST /api/fangji/projects/{projectId}/identity/recompute
 // #178 的跨行批处理：分组比较要看到全量，所以只能是 manager 显式调的作业口，
 // 绝不挂到提交路径上（#178 正文明确要求）。同时回填 entry_identity_key。
+// 注意它**不刷 difficulty_tier**：本路径产的 duplicate_identity / merged_columns 都是 strong、
+// 会改 tier，但要等下一次 `POST /projects/{id}/findings/recompute` 才落库。返回值里的
+// `difficulty_stale` 就是给调用方看这个窗口的（#162 按 tier 筛选排序，窗口期排序是旧的）。
 routerAdd("POST", "/api/fangji/projects/{projectId}/identity/recompute", (c) => {
   const { assertId: proofAssertId, requireManager: proofRequireManager } = require(`${__hooks}/lib/project_access.js`)
   const { recomputeIdentity: assistRecomputeIdentity } = require(`${__hooks}/lib/assist_writer.js`)

@@ -129,6 +129,15 @@ IDENTITY_KINDS = duplicate_identity, cross_source_conflict, merged_columns
   （每页一次疑点查询），10k 页就是 10k 次查询；跨行检出只需要一次全量分组。
   扫描语义已经统一（同一个 `loadAllPages`），剩下的差距要靠把难度刷新改成批量读来收，
   而不是靠调大上限——上限只用于拒算，不用于截断。
+- **不对称的另一半是新鲜度，而且它是有意选择**：`recomputeIdentity` 一次 `refreshDifficulty` 都不调，
+  而它正是 `duplicate_identity`(strong) 与 `merged_columns`(strong) 的唯一生产者——这两类都能改 tier
+  （两条同页 strong 就把 `strong_findings_ge_1` 抬到 `ge_2`），而 #162 是按 `difficulty_tier` 筛选排序的。
+  于是跑完 `identity/recompute` 之后，管理端看到的排序描述的还是这次跨行检出**之前**的疑点集合。
+  现在的收法是评审提的第 2 条：返回值带 `difficulty_stale`（本轮有产出或有下线时为 true），
+  路由注释与本节都写明「之后要再跑一次 `POST /projects/{id}/findings/recompute`，tier 才是新的」，
+  而不是把每页一次的 N+1 塞进本支（那条成本已量化：最坏 0.61 → 1.07 ms/行，见上面的实测）。
+  疑点不会丢：下一次项目级重算读的是 `superseded_at = ""` 且不按 kind 过滤，会自己追平。
+  #162 真按 tier 排序上线时，应当回来做第 1 条（identity 路径顺手刷 tier）。
 - 分组结果按 key 排序后再产出，所以同一份数据的 finding 顺序稳定，diff 可复现。
 - **撤回人工结论是物理删除、不留痕**：#178 只要求「人工结论在重算时保留」，没有要求撤销可审计，
   所以 `finding_dismissals.status` 只有 `not_conflict` 一个值。要留痕得先给该列加值

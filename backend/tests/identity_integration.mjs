@@ -277,7 +277,7 @@ try {
   // 下面的交叉断言才有东西可验——否则这个测试是空跑。
   const p4 = await mk(4, { 词条: '甲 乙', 拼音: 'ka1', 莆田IPA: 'ua5333', 释义: '两个词头挤在一列' })
 
-  await request(`/api/fangji/projects/${project.id}/identity/recompute`, { method: 'POST', token: boss.token })
+  const first = await request(`/api/fangji/projects/${project.id}/identity/recompute`, { method: 'POST', token: boss.token })
   const current = async () => (await request(`/api/collections/review_findings/records?filter=${encodeURIComponent('superseded_at = ""')}`, { token: superAuth.token }))
     .items.filter((item) => item.project === project.id)
 
@@ -288,6 +288,18 @@ try {
   assert.ok(dup.every((item) => item.producer_version === identity.IDENTITY_VERSION))
   const partnerOfFirst = dup.find((item) => item.page === p1.id)
   assert.deepEqual(JSON.parse(partnerOfFirst.evidence_json).partners, [p2.id], '两条必须互指')
+
+  // 新鲜度这一对断言是 difficulty_stale 的根据，不是装饰：
+  // 本 fixture 里 #177 的重算一次都没跑过，所以 p1 的难度三件套此刻仍应是"从没算过"（空）。
+  // 也就是说跨行检出确实**没有**顺手刷 tier——它产的那条 strong duplicate_identity 还在窗口期里。
+  assert.equal(first.difficulty_stale, true, `本轮有产出却没标记 tier 过期：${JSON.stringify(first)}`)
+  const stalePage = await request(`/api/collections/pages/records/${p1.id}`, { token: superAuth.token })
+  assert.ok(!stalePage.difficulty_tier && !stalePage.difficulty_basis_json,
+    `identity 路径不该刷 tier，实际已写成 ${JSON.stringify([stalePage.difficulty_tier, stalePage.difficulty_basis_json])}`)
+  // 窗口由谁关闭：跑一次 #177 的项目重算，tier 才落库。这两条一起把 runbook 那句话变成断言。
+  await request(`/api/fangji/projects/${project.id}/findings/recompute`, { method: 'POST', token: boss.token })
+  const refreshed = await request(`/api/collections/pages/records/${p1.id}`, { token: superAuth.token })
+  assert.ok(refreshed.difficulty_tier, '项目重算之后 tier 仍为空，说明这条链根本没接上')
 
   // R-DEDUP 反向：同词头不同拼音的第三条不得被牵连，且两条都还在（未被合并、未被删）
   assert.equal(dup.some((item) => item.page === p3.id), false)
