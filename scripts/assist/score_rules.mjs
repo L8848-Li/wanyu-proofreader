@@ -4,6 +4,7 @@
 //
 //   node scripts/assist/score_rules.mjs --db backend/pb_data/data.db --json /tmp/score.json
 //   node scripts/assist/score_rules.mjs --records export.json --report docs/testing/assist-baseline-<date>.md
+//   --date 固定标题里的生成日期（只改措辞模板、数字未变时用；默认取当天）
 //
 // 全程只读；报告只含计数与比率，不含单元格正文。
 import { parseArgs } from 'node:util'
@@ -43,10 +44,14 @@ function main() {
   const { values } = parseArgs({ options: {
     db: { type: 'string' }, records: { type: 'string' }, keyboard: { type: 'string' },
     roles: { type: 'string' }, json: { type: 'string' }, report: { type: 'string' },
-    'real-report': { type: 'string' }, help: { type: 'boolean', default: false }
+    'real-report': { type: 'string' }, date: { type: 'string' }, help: { type: 'boolean', default: false }
   } })
   if (values.help || (!values.db && !values.records)) {
-    console.error('用法: score_rules.mjs (--db <sqlite> | --records <json>) [--keyboard <json>] [--roles <json>] [--json out] [--report out]')
+    console.error('用法: score_rules.mjs (--db <sqlite> | --records <json>) [--keyboard <json>] [--roles <json>] [--json out] [--report out] [--date YYYY-MM-DD]')
+    return 2
+  }
+  if (values.date && !/^\d{4}-\d{2}-\d{2}$/.test(values.date)) {
+    console.error('--date 必须是 YYYY-MM-DD')
     return 2
   }
   const dataset = values.db ? loadFromSqlite(values.db) : loadFromRecords(values.records)
@@ -64,7 +69,9 @@ function main() {
   const report = renderReport(synthetic, {
     synthetic,
     real: real && real.scored ? real : null,
-    generatedAt: new Date().toISOString().slice(0, 10),
+    // --date 让「刷新报告措辞」不顺手改掉标题日期：数字没变时标题也不该变，否则只能手改
+    // 生成物那一行，而手改的部分下一次重跑就被覆盖。
+    generatedAt: values.date || new Date().toISOString().slice(0, 10),
     sourceNote: `样本来自 ${values.db ? path.basename(values.db) : path.basename(values.records)}：`
       + `条目 ${dataset.pages.length}、提交 ${dataset.attempts.length}、字段级样本 ${labels.length}。`
       + ` 键盘口径 = ${path.basename(keyboardPath)}；列角色 = ${roles ? '已提供' : '未提供（#170 未落地，R5 不参与打分）'}。`
