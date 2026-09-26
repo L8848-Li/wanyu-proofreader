@@ -134,9 +134,11 @@ FindingProducer = interface {
 FindingDraft = {
   page_id, field_name?, kind, severity ∈ {info|warn|strong},
   message_key, params_json,      // 只允许结构信息（码位/计数/列名/偏移）
-  evidence_json,                 // {anchor, bbox?, char_offsets?, page?, partners?} —— 见下方约束 4
-                                   // anchor 必填（约束 5）；其余按生产者实际需要。#178 的跨行
-                                   // 生产者用的是 {page, partners}，所以这里不能只列三种来源的键名。
+  evidence_json,                 // {anchor, bbox?, char_offsets?, page?, partners?} —— 见下方约束 4/5
+                                   // anchor **每条**必填，不区分行级与非行级：#208 的生产者一律过
+                                   // anchored()，格级也落 anchor: "entry"；#178 的跨行生产者（在 #212）
+                                   // 带 {anchor, page, partners}。这样读取端不必先判作用域
+                                   // 再决定"这条有没有口径可读"。其余键按生产者实际需要。
   produced_at
 }
 
@@ -144,9 +146,10 @@ ProducerContext = {
   page, project, column_roles, enabled_keyboards,   // 全部来自已有数据
   // 明确不存在的东西：他人的 attempt 内容、轮次线索、其他校对者的身份
   //
-  // 作用域要写明，因为链上两个已落地的生产者都不是单条目作用域：#208 的 runProjectRules
-  // 要一次拿到全项目条目才能判列级/页级规则，#178 的 findIdentityConflicts(entries, …)
-  // 更是靠跨条目分组才存在。所以这张签名单前看会低估生产者实际可读的范围。
+  // 作用域要写明，因为链上两个已实现的生产者都不是单条目作用域（#208 已随 49bd5f2 进 main，
+  // #178 的跨行检出目前在 #212 上）：#208 的 runProjectRules 要一次拿到全项目条目才能判
+  // 列级/页级规则，#178 的 findIdentityConflicts(entries, …) 更是靠跨条目分组才存在。
+  // 所以只看这张签名会低估生产者实际可读的范围。
   // 线画在这里，而不是靠签名猜：
   //   · 整项目作用域**允许**读同项目其他条目的**源文本 / 行内容 / PDF 页归属**——
   //     列级、页级、跨行判据客观上需要它；
