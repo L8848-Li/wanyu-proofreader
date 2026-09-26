@@ -129,6 +129,10 @@ assert.deepEqual(stripSecrets(labels).filter((item) => !item.accepted)
     assert.match(report, /## 合成样本指标/, '报告缺合成栏')
     assert.match(report, /## 真实样本指标/, '报告缺真实栏（合成指标不得单独出现）')
     assert.match(report, /n\/a/, '真实栏在数据到位前必须是 n/a，不是 0')
+    // 证据范围这一句必须在生成物里：R3 列级 / R4 / R7 不参与打分，而这份报告会被人单独引用
+    // （README §8 那种「所有规则一律保持 off」的结论）。它由 renderReport 生成，所以模板一改
+    // 就能红，而不是靠某个人的记性。
+    assert.match(report, /不参与打分[\s\S]{0,60}不在本报告的证据范围内/, '报告缺证据范围声明')
     // 报告里的数字必须等于手算表：光"能跑出一堆字"不算验收。
     const row = fixture.expected.R2
     assert.match(report, new RegExp(
@@ -153,6 +157,26 @@ assert.deepEqual(stripSecrets(labels).filter((item) => !item.accepted)
   } finally {
     unlinkSync(reportPath); unlinkSync(jsonPath)
   }
+  // --date 存在的理由：只刷新措辞模板时不许顺手改掉标题日期（数字没变，标题也不该变；
+  // 否则大家就只能手改生成物的那一行，而手改的东西下一次重跑就被覆盖）。
+  const datedPath = path.join(tmpdir(), `assist-cli-date-${Date.now()}.md`)
+  execFileSync(process.execPath,
+    [cliPath, '--records', fixturePath, '--report', datedPath, '--date', '2001-02-03'],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  try {
+    assert.match(readFileSync(datedPath, 'utf8'), /^# 辅助规则基线报告（2001-02-03）$/m,
+      '--date 没有流到标题')
+  } finally {
+    unlinkSync(datedPath)
+  }
+  let badDate = ''
+  try {
+    execFileSync(process.execPath, [cliPath, '--records', fixturePath, '--date', '2001-2-3'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  } catch (error) {
+    badDate = String(error.stderr ?? '')
+  }
+  assert.match(badDate, /YYYY-MM-DD/, '非法 --date 必须被拒绝，而不是写出一个怪标题')
 }
 
 // ---------- 打分覆盖度：引擎产出的每条规则都要被量到，或写明为什么不量 ----------

@@ -12,6 +12,8 @@
 | R6 tone_token_count_differs | 0 | 0 | 0 | 1 | n/a | 0 | n/a | off | n/a；无命中样本，证据不足以下结论 |
 | R5 missing_field | 1 | 1 | 0 | 1 | 1 | 0.5 | [0.2065, 1] | off | n/a；样本量 1 低于 strong 档要求的 100 |
 
+> 本表只列弱标注粒度 `(提交, 字段)` 能度量的判据；R3 列级 `mixed_normalization_forms`、R4 `punctuation_mix`、R7 的两个判据不参与打分，**它们的档位决策不在本报告的证据范围内**（理由见 `scripts/assist/README.md` §4）。
+
 ## 真实样本指标
 n/a —— 部署库内尚无真实分歧/仲裁样本。
 
