@@ -189,13 +189,20 @@ export function scoreRules(labels, ruleList) {
     .map((item) => `${item.attempt}\u0000${item.field}`))
   const inScope = (rule, field, ctx) => (SCOPES[rule.scope ?? "all"])(field, ctx)
   const equivalentCount = labels.filter((item) => item.reason_code === "unicode_equivalent").length
+  // 这两份索引与规则无关（键是 attempt），却原来长在规则循环里：5 条规则就把全量 labels
+  // 重建 5 遍，再对每个 attempt 做一次 `labels.filter` 全表扫，合起来是
+  // O(规则数 × 样本数) + O(条目数 × 样本数)。今天的 fixture 看不出来，#179 下一步拿 #93
+  // 试点的真实数据（1 万条目 / 5 万字段样本）跑就是亿级比较。提到循环外各建一次。
+  const rowsByAttempt = new Map()
+  const labelsByAttempt = new Map()
+  for (const label of labels) {
+    if (!rowsByAttempt.has(label.attempt)) rowsByAttempt.set(label.attempt, new Map())
+    rowsByAttempt.get(label.attempt).set(label.field, label._submitted_value)
+    if (!labelsByAttempt.has(label.attempt)) labelsByAttempt.set(label.attempt, [])
+    labelsByAttempt.get(label.attempt).push(label)
+  }
   const scored = []
   for (const rule of ruleList) {
-    const rowsByAttempt = new Map()
-    for (const label of labels) {
-      if (!rowsByAttempt.has(label.attempt)) rowsByAttempt.set(label.attempt, new Map())
-      rowsByAttempt.get(label.attempt).set(label.field, label._submitted_value)
-    }
     let tp = 0
     let fp = 0
     let fn = 0
@@ -204,16 +211,20 @@ export function scoreRules(labels, ruleList) {
     for (const [attempt, fields] of rowsByAttempt) {
       const rowValues = Object.fromEntries(fields)
       const flagged = ruleFlagsRow(rule, rowValues)
-      for (const label of labels.filter((item) => item.attempt === attempt)) {
+      for (const label of labelsByAttempt.get(attempt)) {
         const hit = flagged.has(label.field)
         const negative = negatives.has(`${attempt}\u0000${label.field}`)
-        const bucket = bump(byField, label.field, hit, negative)
-        bump(byProject, label.project, hit, negative)
-        void bucket
+        // 分项的 fn 必须与规则级同一个作用域口径。原来两边不一样：规则级只数「本条规则管得着」
+        // 的负例，分项却把所有负例都记成漏检，于是 by_field 的 fn 之和对不上 rule.fn——
+        // ipa 域的 R2 会出现「规则级 fn=0，分项里挂着一条 `释义` 的漏检」这种相反结论。
+        // tp/fp/hits 两边都不判作用域，维持原有一致性。
+        const scopedNegative = negative && inScope(rule, label.field, rule.context)
+        bump(byField, label.field, hit, negative, scopedNegative)
+        bump(byProject, label.project, hit, negative, scopedNegative)
         if (hit && negative) tp += 1
         else if (hit && !negative) fp += 1
         // 只有落在本规则作用域里的负例才算「本该抓到而没抓到」。
-        else if (!hit && negative && inScope(rule, label.field, rule.context)) fn += 1
+        else if (!hit && scopedNegative) fn += 1
       }
     }
     const n = tp + fp
@@ -237,12 +248,14 @@ export function scoreRules(labels, ruleList) {
   return { scored, unicode_equivalent_excluded: equivalentCount, samples: labels.length }
 }
 
-function bump(map, key, hit, negative) {
+// `scopedNegative` 只管 fn：漏检要按规则作用域算，与 scoreRules 里规则级那一条同口径。
+// tp/fp 仍然看未判作用域的 `negative`——那是「命中里有多少是真问题」，与作用域无关。
+function bump(map, key, hit, negative, scopedNegative = negative) {
   const current = map.get(key) ?? { hits: 0, tp: 0, fp: 0, fn: 0 }
   if (hit) current.hits += 1
   if (hit && negative) current.tp += 1
   else if (hit) current.fp += 1
-  else if (negative) current.fn += 1
+  else if (scopedNegative) current.fn += 1
   map.set(key, current)
   return current
 }

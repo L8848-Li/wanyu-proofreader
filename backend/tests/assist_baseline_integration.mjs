@@ -12,6 +12,8 @@ import { defaultRuleSet } from '../../scripts/assist/score_rules.mjs'
 
 const require = createRequire(import.meta.url)
 const keyboard = require('../keyboards/hinghwa-dialect.json')
+// 作用域清单取规则引擎自己的那份，免得测试里再抄一个字面量版本。
+const rules = require('../pb_hooks/lib/assist_rules.js')
 
 const baseUrl = process.env.PB_URL || 'http://127.0.0.1:18091'
 const superAuth = await request('/api/collections/_superusers/auth-with-password', {
@@ -81,6 +83,25 @@ for (const [name, want] of Object.entries(fixture.expected)) {
   assert.equal(item.gate.basis, want.basis, name)
 }
 assert.equal(scored.unicode_equivalent_excluded, fixture.unicode_equivalent_excluded, '伪分歧要被单独计数')
+// 分项之和必须等于规则级那一行：by_field / by_project 是给人以外的人（下游按字段挑规则档）
+// 读的机器口径。上一版只有 fn 两边不同口径（规则级判 inScope，分项不判），R2 就出现
+// 「规则级 fn=0、分项里却有一条挂在 `释义` 上的漏检」——同一份数据给出相反结论。
+for (const item of scored.scored) {
+  for (const dimension of ['by_field', 'by_project']) {
+    for (const key of ['hits', 'tp', 'fp', 'fn']) {
+      const sum = Object.values(item[dimension]).reduce((total, row) => total + row[key], 0)
+      assert.equal(sum, item[key === 'hits' ? 'hits' : key],
+        `${item.rule}.${key} 与 ${dimension} 之和对不上：分项 ${sum} vs 规则级 ${item[key]}`)
+    }
+  }
+}
+// 上面那圈求和要有牙齿，fixture 里就必须同时存在两类负例：落在某条规则作用域内的（算漏检）
+// 与作用域外的（不算）。后者是上一版会被错记成漏检的那一类——R2 的 ipa 域碰上 `释义` 的陷阱。
+assert.ok(scored.scored.some((item) => item.fn > 0), 'fixture 里必须真有漏检，否则求和是恒真空转')
+const outOfScopeNegatives = labels.filter((item) => !item.accepted
+  && item.reason_code !== 'unicode_equivalent' && !rules.IPA_FIELDS.includes(item.field))
+assert.ok(outOfScopeNegatives.length > 0,
+  `fixture 里必须含"作用域外负例"，否则 inScope 这半边没人测：${JSON.stringify(labels.map((l) => [l.field, l.accepted]))}`)
 assert.deepEqual(stripSecrets(labels).filter((item) => !item.accepted)
   .map((item) => `${item.attempt}/${item.field}`).sort(), [...fixture.negative_pairs].sort())
 
