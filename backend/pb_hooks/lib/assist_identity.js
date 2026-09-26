@@ -18,6 +18,12 @@
 // 不跨项目、不裁决谁对、不写回任何值。
 
 const IDENTITY_VERSION = "identity-v1"
+// 挂靠口径的词表由 assist_rules.js 拥有（ANCHOR_ENTRY / ANCHOR_COLUMN / ANCHOR_PDF_PAGE）。
+// #178 的三条疑点都是"逐成员产条、挂在这个成员自己那一条上"，所以一律 entry；契约侧
+// anchor 是**每条**必填（docs/plans/2026-09-25-review-findings.md §8.1 第 2 条），
+// 读取端不必先判作用域再决定这条有没有口径。identity_integration.mjs 钉住两个词表值一致，
+// 免得这里是一份会各自漂移的字面量。
+const ANCHOR_ENTRY = "entry"
 
 // 莆仙正本的列名。#170 落地后要改成按角色查询（与 #177 的 R5/R6 同一处债务）。
 const HEADWORD_FIELDS = ["词条"]
@@ -126,7 +132,7 @@ function findIdentityConflicts(entries, dismissed = new Set()) {
           partner_count: partners.length,
           sources
         },
-        evidence: { page: item.id, partners }
+        evidence: { anchor: ANCHOR_ENTRY, page: item.id, partners }
       })
     }
   }
@@ -152,7 +158,7 @@ function findRowShapeAnomalies(entry) {
         kind: "merged_columns", severity: "strong", field,
         message_key: "multiple_headwords_in_cell",
         params: { segments: segments.length, sample_lengths: segments.slice(0, 4).map((s) => Array.from(s).length) },
-        evidence: { page: entry.id, char_offsets: [] }
+        evidence: { anchor: ANCHOR_ENTRY, page: entry.id, char_offsets: [] }
       })
     }
   }
@@ -164,7 +170,7 @@ function findRowShapeAnomalies(entry) {
         kind: "merged_columns", severity: "warn", field,
         message_key: "reading_inside_meaning_row",
         params: { has_tone_digits: TONE_RUN.test(value), has_ipa_marks: IPA_HINT.test(value) },
-        evidence: { page: entry.id }
+        evidence: { anchor: ANCHOR_ENTRY, page: entry.id }
       })
     }
   }
@@ -172,6 +178,7 @@ function findRowShapeAnomalies(entry) {
 }
 
 module.exports = {
+  ANCHOR_ENTRY,
   IDENTITY_VERSION,
   HEADWORD_FIELDS,
   READING_FIELDS,

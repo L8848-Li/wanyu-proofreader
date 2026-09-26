@@ -4,6 +4,11 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const identity = require('../pb_hooks/lib/assist_identity.js')
+const rules = require('../pb_hooks/lib/assist_rules.js')
+// 挂靠口径的词表由 assist_rules.js 拥有（#208 那边所有疑点都过 anchored()）。#178 也要求
+// 每条疑点带 anchor，两边的字面量必须是同一个值，否则改名会各自漂移而谁都不红。
+assert.equal(identity.ANCHOR_ENTRY, rules.ANCHOR_ENTRY,
+  'anchor 词表漂移：assist_identity 与 assist_rules 的 ANCHOR_ENTRY 不再是同一个值')
 
 const baseUrl = process.env.PB_URL || 'http://127.0.0.1:18091'
 const platformAuth = await request('/api/collections/users/auth-with-password', {
@@ -316,6 +321,10 @@ try {
   const identityFindings = findings.filter((item) => item.producer_version === identity.IDENTITY_VERSION)
   assert.ok(identityFindings.length > 0, 'identity 生产者必须真的产了疑点')
   for (const item of identityFindings) {
+    // 契约：anchor 每条必填，不区分行级/非行级（review-findings.md §8.1 第 2 条）。
+    // 这条断言就是 #178 侧的落点——读取端不必先判作用域再决定这条有没有口径。
+    assert.equal(JSON.parse(item.evidence_json).anchor, identity.ANCHOR_ENTRY,
+      `${item.kind} 的 evidence 缺挂靠口径`)
     const serialized = JSON.stringify(JSON.parse(item.params_json))
     for (const value of cellText) {
       assert.equal(serialized.includes(value), false,
