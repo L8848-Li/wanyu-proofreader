@@ -17,7 +17,7 @@
 | 字段 | 类型 | 必填 | 含义 |
 | --- | --- | --- | --- |
 | `project` | relation → `projects` | 是 | 级联删除随项目 |
-| `page` | relation → `pages` | 是 | finding 的落点；行级/列级 finding 也挂在条目上 |
+| `page` | relation → `pages` | 是 | finding 的落点；行级/列级 finding 也挂在条目上——**挂哪一条由生产者声明口径，见 §8.1** |
 | `field_name` | text | 否 |  CSV 列名，空 = 整条级。**用文本不用枚举**：列名由项目决定，与 #170 的「角色」不是同一层 |
 | `round` | number | 否 | 产出时所在轮次，**仅供事后统计，绝不下发给校对端**（#175 红线 1 / 盲校） |
 | `kind` | select（10 值，见 §2） | 是 | 疑点大类 |
@@ -186,21 +186,58 @@ superuser 走 API 也一样被拒。`findings_integration.mjs` 对 9 个字段�
 - 日期字段比较统一用 `record.getString(name)`，别用 `String(record.get(name))`——
   后者表示不稳定，会把合法的 `superseded_at` 改动误判成覆写。
 
-## 8. `FindingProducer` 边界（占位，#181 填写签名）
+## 8. `FindingProducer` 边界
 
-任何生产者（`rule` / `ocr` / `bundle_import`，以及未来 L2 模型）向本集合写入时必须提供的最小信息，
-已经由 schema 固定为：
+目的：让形态更换（云 API / sidecar / 浏览器内推理 / 规则）不改本文件 §1 的字段。
+完整的决策理由见 [`2026-09-25-model-assist-inference.md`](./2026-09-25-model-assist-inference.md) §3
+（#181）；**签名以本节为准，两处要一起改**。
 
 ```
-producer ∈ {rule, ocr, bundle_import}   producer_version: string
-kind ∈ §2 枚举                          severity ∈ {info, warn, strong}
-message_key: string                     params_json: 结构信息
-page (+field_name?)  produced_at: batch stamp
+FindingProducer = interface {
+  Produce(ctx ProducerContext) -> []FindingDraft
+  Identity() -> {producer: "rule"|"ocr"|"bundle_import"|"model", version: string}
+  Capabilities() -> {needsEgress: bool, readsOtherPeopleSubmissions: false, writesBack: false}
+}
+
+FindingDraft = {
+  page_id, field_name?, kind, severity ∈ {info|warn|strong},
+  message_key, params_json, evidence_json, produced_at
+  // evidence_json.anchor：本条挂在 page_id 上的口径（生产者自己决定，见 §8.1）
+}
+
+// 作用域：两个已实现的生产者都是整项目作用域（#208 项目级规则已进 main，#178 跨行检出在 #212 上）。
+// 允许读同项目其他条目的源文本与行内容；不允许读他人的 attempt / 提交结果 / 轮次线索；
+// 读到的其他条目内容不得再出现在本条 finding 的 params / evidence 里。详见
+// model-assist-inference.md §3 的 ProducerContext 注释。
+ProducerContext = {page, project, column_roles, enabled_keyboards}
 ```
 
-形态更换（云 API / sidecar / 浏览器内推理）**不改本文件的数据结构**，只改 `producer` 与
-`producer_version` 的取值来源。`FindingProducer` 的接口签名（伪码）由 #181 决策文档给出并
-追加到本节；该文档不得改动 §1 的字段。
+三条约束由**接口形状**保证，不靠文档措辞；另有两条是对 `FindingDraft` 字段内容与挂靠口径的要求
+（见 §8.1，不会因为签名存在而自动成立），合计五条，与 `model-assist-inference.md` §3 同一口径：
+
+1. `readsOtherPeopleSubmissions` 的类型是 `false` 字面量——上下文里根本没有他人提交字段，
+   「永不含他人结果」因此是不可表示，而不是"请注意"（#175 红线 1）。
+2. `needsEgress` 未声明按 `true` 处理（保守），供出站闸门判断。
+3. 生产者只返回 `FindingDraft`，接口上没有写回任何值的方法。
+
+### 8.1 两条由 #208 评审逼出来的硬约束
+
+1. `params_json` / `evidence_json` 不得含原样内容片段——两列都会随 hint 下发给该条目的
+   在手校对员（`hintView`）。#175 红线 1 在数据形状上的落点就是这里。
+   这条按**绝对**解释，不区分"本条目自己的原文"与"别人条目的原文"：生产者永远不需要携带任何
+   原样内容就能让校对员定位问题（这一行他本来就看得到），而一旦开了"本条目的可以带"这个口子，
+   "算不算本条目"就退化成每个生产者的自由判断。链上曾有一处反例——#178 的 identity params 带过
+   `identity_headword` / `identity_reading` 两个无人消费的原文键，已按这条收掉——删键在 **#212**
+   的 `5e976c6`（同一支里 `b6ec758` 补的是约束 2 的 anchor，两件事别混），该支尚未合并。
+2. 生产者必须自己决定每一条 finding（行级也一样）挂在哪个条目上，并把口径写进 `evidence.anchor`。
+   `page` 必填（§1 字段表与迁移里的 `relation("page", …)`，`required: true`）而"整列/整页"级判据客观存在，
+   这个缺口早晚要被填；写在生产者侧、读取侧只认 `page`，就不会出现"解析不出来就退化成
+   第一条"那种把别人的内容发给当前校对员的形状。规则生产者的具体口径见
+   [`2026-09-25-assist-rules.md`](./2026-09-25-assist-rules.md) §3.6 —— 那一节已随 **#208** 进 main。
+
+**对本文件数据结构的唯一影响点**：`producer` 枚举要新增 `"model"`。
+那是一次 select 值变更（需要迁移），本文件此刻**不改**——它属于 L2 真正开工时的那次改动，
+在这里预先占位会让 #176 为一个不存在的能力放宽枚举。除此之外的字段一个都不用动。
 
 ## 9. 消费方指引
 
