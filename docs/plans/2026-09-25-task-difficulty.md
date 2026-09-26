@@ -51,8 +51,25 @@
 `glyph_table`（缺字表可解）、`scanned_read`（扫描页需人工识读）、
 `column_merge`（列合并要修）、`rights_gate`（授权未决）、`unknown`。
 今天能从数据里**自动认出**的只有 `column_merge`（有 `merged_columns` 疑点）与
-`glyph_table`（有 `missing_glyph_placeholder` 疑点）；认不出就留 `unknown`，不猜。
-其余桶要等 #123/#124 给出信号。
+`glyph_table`（有 `missing_glyph_placeholder` 疑点）；认不出就按 `unknown` 参与推导，不猜，
+而且**只进推导、不写回这一列**（下面一段讲为什么）。其余桶要等 #123/#124 给出信号。
+
+**这一列只由人写，自动路径不 stamp 它**（#211/#212 评审阻断的修法选了这一步，而不是
+「让自动桶盖住机器上一轮写的 `unknown`」）。两条理由都会咬人：
+
+- `normalizeBlocked("")` 的返回值就是 `"unknown"`，「没人填过」与「填了但认不出桶」在库里是同一个
+  字符串。自动路径只要 stamp 过一次，这一列从第二次刷新起就永久非空，`stored || auto` 那种写法
+  从此短路，上面承诺的两行判定表一次也不会命中，而 #188 读到的是「每条都非空、但全是 unknown」——
+  与 §4「没测过不能当 0」是同一条原则的破口。
+- 自动写进去的**真实桶**更麻烦：库里分不出它与人在管理端选的同名值，疑点消失后就没法降级，
+  而 #180 第 59 行规定这一列「只描述为什么**现在**做不下去」。
+
+所以自动认出的桶只进本轮 derivation，落点是 `difficulty_basis_json` 里的 `column_merge_blocked` /
+`glyph_table_blocked`（`deriveDifficulty` 照旧据它给 A/B/C）。消费口径：**要「机器现在认为卡在哪」读
+basis，要「人说过卡在哪」读 `blocked_reason`**；后者为空表示没人说过，不表示「机器看过且不卡」。
+将来若要让机器也写这一列，得先加一个来源字段区分人工与机器——那是 schema 决策，不在本 issue 顺手做。
+`difficulty_integration.mjs` 里那三条 `blocked_reason === ''` 断言就是这条决定的守卫：有人把 stamp
+加回来，它们会红。
 
 ## 4. 空值的三种状态（#162 必须区分）
 

@@ -182,7 +182,9 @@ try {
   assert.equal(after.difficulty_version, difficulty.DIFFICULTY_VERSION)
   const basis = JSON.parse(after.difficulty_basis_json)
   assert.ok(basis.includes('missing_pdf_page'), JSON.stringify(basis))
-  assert.equal(after.blocked_reason, 'unknown', '规则引擎目前不产 merged_columns，阻塞原因不该被猜成 column_merge')
+  // 规则引擎目前不产 merged_columns，机器也不许把猜出来的桶 stamp 回这一列：
+  // `blocked_reason` 非空 = 有人说过（#188 靠这条区分），空 = 没人说过。
+  assert.equal(after.blocked_reason, '', `自动路径不得 stamp 人工字段：${after.blocked_reason}`)
 
   // 幂等且稳定：再算一次结果不变（#180 验收：可复算）。
   const second = await request(`/api/fangji/pages/${messy.id}/findings/recompute`, { method: 'POST', token: boss.token })
@@ -226,6 +228,14 @@ try {
     `另一个 producer_version 的疑点没被算进 tier：${JSON.stringify({ strong: beforeForeign.length + 1, basis: mixedBasis })}`)
   assert.equal(mixed.difficulty_version, difficulty.DIFFICULTY_VERSION,
     'tier 上记的必须是推导自身的版本，不是任何一个输入批次的 producer_version')
+  // 这两行是 #211/#212 评审阻断 2 的牙齿。自动认出的桶必须真的进到本轮 derivation 里
+  // （basis 出现 column_merge_blocked，也就是 tier 会因此进 B）；而它**不得**写回
+  // blocked_reason：一旦写回，库里就分不出机器 stamp 与人选的桶，`stored || auto` 那种
+  // 写法还会让这一列从第一次刷新起永久非空、疑点侧再也没机会执行。
+  assert.equal(mixedBasis.includes('column_merge_blocked'), true,
+    `注入 merged_columns 强疑点后 basis 里没有自动认出的桶：${JSON.stringify(mixedBasis)}`)
+  assert.equal(mixed.blocked_reason, '',
+    `自动认出的桶被写进了人工字段：${mixed.blocked_reason}`)
 
   // 把那条"另一个版本"的疑点下线（#178 的批次就是这么被 kind 收口下线的），tier 要回到原样。
   await request(`/api/collections/review_findings/records/${foreign.id}`, {
@@ -236,6 +246,11 @@ try {
   assert.equal(rolledBack.difficulty_basis_json, after.difficulty_basis_json,
     `下线后没有回到原始结果（重复计数或读到了已下线的行）：${rolledBack.difficulty_basis_json}`)
   assert.equal(rolledBack.difficulty_tier, after.difficulty_tier)
+  // 疑点下线后 basis 要回到原样（上面那条），这一列也必须还是"没人说过"。
+  // 这条断言就是「不 stamp」这个决定的守卫：将来有人把 blocked_reason 写回这条路径，
+  // 这里会红，逼他回来回答"机器写的桶和人写的桶怎么区分、疑点消失后怎么降级"。
+  assert.equal(rolledBack.blocked_reason, '',
+    `下线疑点之后这一列被机器写过：${rolledBack.blocked_reason}`)
 
   // 盲校未退化：tier 是筛选维度，不是给校对员的轮次线索。
   // GET /task 用显式字段列表，因此新字段不会跟着下发；这里把它钉成断言，

@@ -118,11 +118,16 @@ function retire(dao, collection, clauses, shouldRetire, stamp, { chunk = RETIRE_
 // #208 的评审阻断 2 与本轮在 recomputeIdentity/refreshDifficulty 里发现的两个
 // 上限（5000 条人工结论 / 500 条单页疑点）都是同一个形状，所以收敛到这里一份实现。
 // 只适用于"读期间不写"的场景（写会让结果集缩小，那种翻页见 retire）。
-function readAllInChunks(dao, collection, filter, sort, { chunk = READ_CHUNK } = {}) {
+//
+// `onBatch(rows)` 是给"必须边读边判上限"的调用方留的口子：在**读完每一批之后**回调，
+// 从那里抛错就是"读到一半退出"，既不返回部分结果，也不会先把整个结果集吸进内存。
+// 不需要上限的调用方（人工结论、单页疑点）不传，语义与之前完全一致。
+function readAllInChunks(dao, collection, filter, sort, { chunk = READ_CHUNK, onBatch = null } = {}) {
   const rows = []
   for (let offset = 0; ; offset += chunk) {
     const batch = dao.findRecordsByFilter(collection, filter, sort, chunk, offset)
     for (const record of batch) rows.push(record)
+    if (onBatch) onBatch(rows)
     if (batch.length < chunk) return rows
   }
 }
@@ -192,14 +197,19 @@ function recomputePage(dao, pageId, rowOverride = null) {
 }
 
 // 分批读全项目的条目；游标翻到某一批不满额为止。超限抛错，调用方因此一条都不会写。
+//
+// 保险丝必须在读取**过程中**判，不能"读全再判"：这条线要防的就是把整项目的行吸进
+// JSVM 内存，读完才判等于先付全额成本再拒算。上一版正是这个形状（#212 复审阻断）。
+// 走 readAllInChunks 的 onBatch：命中即抛，最多只会比 refusal 多吸进一批（chunk）的行。
 function loadAllPages(dao, projectId, { chunk = PAGE_SCAN_CHUNK, refusal = PROJECT_SCAN_REFUSAL } = {}) {
-  const pages = readAllInChunks(dao, "pages", `project = "${projectId}"`, "page_number,created", { chunk })
-  // 保险丝在扫完之后仍然要判：readAllInChunks 不设上限，而拒算是为了不让
-  // 一次重算把整项目的行都吸进内存。抛错一定发生在第一次写之前。
-  if (pages.length >= refusal) {
-    throw new Error(`项目条目数 ${pages.length} 已达全量重算保险丝 ${refusal}，拒绝执行（未改动任何疑点）`)
-  }
-  return pages
+  return readAllInChunks(dao, "pages", `project = "${projectId}"`, "page_number,created", {
+    chunk,
+    onBatch: (rows) => {
+      if (rows.length >= refusal) {
+        throw new Error(`项目条目数 ${rows.length} 已达全量重算保险丝 ${refusal}，拒绝执行（未改动任何疑点）`)
+      }
+    }
+  })
 }
 
 // 项目级：列级(R3/R4) 与页级(R7) 规则要看到全量才能判，所以只在批处理里跑。
@@ -265,8 +275,14 @@ function recomputeProject(dao, projectId) {
 // 读的是**全部当前批次疑点，不按 gate 过滤**：信号要的是"机器认为这行有多少问题"，
 // 与"校对员被打了几个标"是两件事；blocked_reason 依赖的 merged_columns 更是只有
 // OCR(#125)/#178 才产，按 gate 过滤会永远看不到它。
+//
+// 不对称要写明：本函数取的是**库里那一行**（`rowForRules(page)`），而提交路径传给规则的
+// 是校对员刚打的那一行 `rowOverride`。于是刚提交的那一瞬间，形状信号（字段数 / 值长）
+// 量的还是旧内容。今天完全无害——单条路径 `projectStats = null`，`field_count_outlier` 与
+// `row_shape_outlier` 两条判据都读不到中位数，不会因此给出错的 tier。但将来把 stats 传进
+// 单条路径，这里就会静默拿到过期形状，届时要把它改成 (page, rowOverride) 两路取值。
 function refreshDifficulty(dao, page, stats = null) {
-  const { deriveDifficulty, blockedReasonFromFindings, DIFFICULTY_VERSION } =
+  const { deriveDifficulty, blockedReasonFromFindings, BLOCKED_BUCKETS, DIFFICULTY_VERSION } =
     require(`${__hooks}/lib/assist_difficulty.js`)
   const findings = readAllInChunks(
     dao, "review_findings", `page = "${page.id}" && superseded_at = ""`, "kind"
@@ -277,13 +293,24 @@ function refreshDifficulty(dao, page, stats = null) {
   }))
   const row = rowForRules(page)
   const valueLengths = Object.values(row).map((value) => Array.from(String(value ?? "")).length)
-  const blocked = page.getString("blocked_reason")
+  // `blocked_reason` 只由人写，机器算出的桶**不 stamp 回库**（见下面为什么）。
+  // 这里读的到的值因此就是人的结论：空 = 没人说过（决策 4 的"没测过"必须与"看过但认不出"
+  // 可分，两者在库里不再是同一个字符串）。
+  const stored = page.getString("blocked_reason")
+  const manual = BLOCKED_BUCKETS.includes(stored) ? stored : ""
   const signal = {
     findings,
     // #170 未落地：roles 为 null，涉及列角色的两条信号因此不产生（不是判成 A）。
     roles: null,
     pdfPage: Number(page.get("pdf_page")) || 0,
-    blockedReason: blocked || blockedReasonFromFindings(findings),
+    // 人说过就用人的；没人说过才按本轮疑点现算。算出来的桶只进本轮 derivation
+    // （体现为 difficulty_basis_json 里的 column_merge_blocked / glyph_table_blocked），
+    // 不写回这一列——写回就会把 #211/#212 评审挡的那条链子接上：
+    // `normalizeBlocked("")` 也返回 "unknown"，一旦机器 stamp，这一列从第一次刷新起永久非空，
+    // `stored || auto` 从此短路，#188 读到的将"每条都非空、但全是 unknown"；而机器写进去的
+    // 真实桶更糟，库里分不出它与人工选的同名值，疑点消失后无法降级，与 #180 第 59 行
+    // 「只描述为什么**现在**做不下去」直接冲突。取舍写在 docs/plans/2026-09-25-task-difficulty.md §3。
+    blockedReason: manual || blockedReasonFromFindings(findings),
     fieldCount: Object.keys(row).length,
     valueLengths,
     projectStats: stats,
@@ -294,12 +321,10 @@ function refreshDifficulty(dao, page, stats = null) {
   const derived = deriveDifficulty(signal)
   if (page.getString("difficulty_tier") !== derived.tier
     || page.getString("difficulty_version") !== derived.version
-    || page.getString("difficulty_basis_json") !== JSON.stringify(derived.basis)
-    || page.getString("blocked_reason") !== derived.blocked_reason) {
+    || page.getString("difficulty_basis_json") !== JSON.stringify(derived.basis)) {
     page.set("difficulty_tier", derived.tier)
     page.set("difficulty_basis_json", JSON.stringify(derived.basis))
     page.set("difficulty_version", derived.version)
-    page.set("blocked_reason", derived.blocked_reason)
     dao.save(page)
   }
   return derived

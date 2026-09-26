@@ -356,6 +356,31 @@ assert.ok(ctx.repertoire.size > 120, `repertoire too small: ${ctx.repertoire.siz
   assert.throws(() => writer.loadAllPages(dao, 'proj', { chunk: 3, refusal: 4 }), /保险丝/)
   assert.ok(writer.PROJECT_SCAN_REFUSAL >= 10000,
     `保险丝必须容得下 #178 验收的 10k 行项目：${writer.PROJECT_SCAN_REFUSAL}`)
+  // 保险丝还得真的"约束内存"，不能只是"最后拒算"：数一数抛错之前 dao 交出了多少行。
+  // 上面那条 /保险丝/ 断言在"读全再判"的实现下同样会绿——它测的是会不会拒算，
+  // 掉的是拒算前读了多少行，而那正是唯一会变的一维（#212 复审阻断）。
+  const counted = (total) => {
+    const handed = { rows: 0 }
+    const rows = Array.from({ length: total }, (_, i) => ({ id: `q${i}` }))
+    return {
+      handed,
+      dao: {
+        findRecordsByFilter: (collection, filter, sort, limit, offset) => {
+          const slice = collection === 'pages' ? rows.slice(offset, offset + limit) : []
+          handed.rows += slice.length
+          return slice
+        }
+      }
+    }
+  }
+  const oversize = counted(20)
+  assert.throws(() => writer.loadAllPages(oversize.dao, 'proj', { chunk: 3, refusal: 4 }), /保险丝/)
+  assert.ok(oversize.handed.rows <= 4 + 3,
+    `拒算前已读出 ${oversize.handed.rows} 行，保险丝没约束住内存（上限应是 refusal + chunk）`)
+  // 计数器自己也必须被证明在数：同一份 dao 读全时恰好 20 行，否则上面那条是恒真的。
+  const readWhole = counted(20)
+  assert.equal(writer.loadAllPages(readWhole.dao, 'proj', { chunk: 3, refusal: 999 }).length, 20)
+  assert.equal(readWhole.handed.rows, 20, `计数器没数到真实读取行数：${readWhole.handed.rows}`)
   // 「超限不会写坏数据」靠的是代码顺序：扫描必须先于第一次写。读源码钉住这个顺序，
   // 因为把 supersede 挪到扫描之前以后，任何黑盒断言都要先造出 5 万条目才看得见。
   const writerSource = readFileSync(new URL('../pb_hooks/lib/assist_writer.js', import.meta.url), 'utf8')
