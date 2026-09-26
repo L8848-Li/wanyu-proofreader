@@ -227,7 +227,8 @@ ProducerContext = {page, project, column_roles, enabled_keyboards}
    这条按**绝对**解释，不区分"本条目自己的原文"与"别人条目的原文"：生产者永远不需要携带任何
    原样内容就能让校对员定位问题（这一行他本来就看得到），而一旦开了"本条目的可以带"这个口子，
    "算不算本条目"就退化成每个生产者的自由判断。链上曾有一处反例——#178 的 identity params 带过
-   `identity_headword` / `identity_reading` 两个无人消费的原文键，已按这条删键收掉。
+   `identity_headword` / `identity_reading` 两个无人消费的原文键，已按这条收掉——删键在 **#212**
+   的 `5e976c6`（同一支里 `b6ec758` 补的是约束 2 的 anchor，两件事别混），该支尚未合并。
 2. 生产者必须自己决定每一条 finding（行级也一样）挂在哪个条目上，并把口径写进 `evidence.anchor`。
    `page` 必填（§1 字段表与迁移里的 `relation("page", …)`，`required: true`）而"整列/整页"级判据客观存在，
    这个缺口早晚要被填；写在生产者侧、读取侧只认 `page`，就不会出现"解析不出来就退化成

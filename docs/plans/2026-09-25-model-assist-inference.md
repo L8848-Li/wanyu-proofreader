@@ -137,8 +137,9 @@ FindingDraft = {
   evidence_json,                 // {anchor, bbox?, char_offsets?, page?, partners?} —— 见下方约束 4/5
                                    // anchor **每条**必填，不区分行级与非行级：#208 的生产者一律过
                                    // anchored()，格级也落 anchor: "entry"；#178 的跨行生产者（在 #212）
-                                   // 带 {anchor, page, partners}。这样读取端不必先判作用域
-                                   // 再决定"这条有没有口径可读"。其余键按生产者实际需要。
+                                   // 每条都带 anchor 与 page，另按疑点种类带 partners（duplicate_identity）
+                                   // 或 char_offsets（merged_columns 的两条一条带、一条不带）。
+                                   // 所以读取端不必先判作用域再决定"这条有没有口径可读"。
   produced_at
 }
 
