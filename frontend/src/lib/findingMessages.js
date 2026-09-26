@@ -66,7 +66,34 @@ const MESSAGES = {
   cjk_extension_present: (params) =>
     `出现 BMP 之外的汉字（${codepointList(params, 'codepoints') || '未列出'}），表示方式待 #123 决定`,
   row_width_differs: (params) =>
-    `本行的单元格数与表头不符（${count(params?.cells)} 对 ${count(params?.headers)}），疑似列合并或错位`
+    `本行的单元格数与表头不符（${count(params?.cells)} 对 ${count(params?.headers)}），疑似列合并或错位`,
+
+  // #177 规则引擎新增的措辞键。同样只出现码位与计数，不出现字形。
+  confusable_ascii_in_reading: (params) => {
+    const suggestions = Array.isArray(params?.suggestions) ? params.suggestions : []
+    const detail = suggestions.slice(0, 3).map((item) => {
+      const targets = Array.isArray(item?.suggested) ? item.suggested.join(' 或 ') : String(item?.suggested || '')
+      return `${item?.found || '未知码位'}→${targets}`
+    }).join('、')
+    const where = Array.isArray(params?.positions) && params.positions.length
+      ? `（第 ${params.positions.slice(0, 3).join('、')}${params.positions.length > 3 ? ' 等' : ''} 个字符）`
+      : ''
+    return `记音里出现易混 ASCII${where}${detail ? `，建议 ${detail}` : ''}`
+  },
+  punctuation_width_mixed_in_column: (params) => {
+    const pairs = Array.isArray(params?.pairs) ? params.pairs : []
+    const detail = pairs.slice(0, 3).map((pair) => `${pair?.full || '?'} / ${pair?.half || '?'}`).join('、')
+    return `本列全角与半角标点混用${detail ? `（${detail}）` : ''}，共 ${count(params?.pair_count, pairs.length)} 组`
+  },
+  required_role_field_empty: (params) => {
+    const roles = { headword: '词头', reading: '记音', meaning: '释义' }
+    const role = roles[String(params?.role || '')] || '必填'
+    return `${role}列为空`
+  },
+  pdf_page_backtrack: (params) =>
+    `条目顺序与 PDF 页码不一致：从第 ${count(params?.from_page)} 页回退到第 ${count(params?.to_page)} 页（回退 ${count(params?.backtrack)} 页），疑似页码或条目顺序错乱`,
+  page_entry_count_outlier: (params) =>
+    `该 PDF 页挂了 ${count(params?.entries_on_page)} 条条目，明显高于项目中位数 ${count(params?.median_entries)} 条（阈值 ${count(params?.ceiling)}），疑似分页或拆行异常`
 }
 
 export function findingMessageKeys() {
