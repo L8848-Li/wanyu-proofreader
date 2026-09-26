@@ -62,6 +62,15 @@ SPECS = {
         ],
         'collection_indexes': ('review_findings', 'idx_findings_page_current'),
     },
+    '1789113700_page_difficulty.js': {
+        'indexes': ['idx_pages_project_tier'],
+        # #162 的筛选谓词就是「某项目里 tier = ?」，不带排序；带排序时优化器会选
+        # 已有的 (project, page_number) 唯一索引，那是正确选择，不是本索引的失败。
+        'plans': [('pages',
+                   'SELECT id FROM pages WHERE project=? AND difficulty_tier=?',
+                   ('p', 'A'), 'idx_pages_project_tier')],
+        'collection_indexes': ('pages', 'idx_pages_project_tier'),
+    },
 }
 FIRST = '1788940000_initial_schema.js'
 

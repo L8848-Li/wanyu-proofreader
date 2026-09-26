@@ -16,6 +16,8 @@ const PRODUCER = "rule"
 // 往后的当前批次被标 superseded 却没有新批次替换，那些条目从此永久读不到疑点
 // （#208 评审阻断 2）。现在只有两种结局：整批扫完，或在**任何写入之前**抛错拒算。
 const PAGE_SCAN_CHUNK = 1000
+// 通用分块读取的块大小。
+const READ_CHUNK = 1000
 // 内存保险丝，不是正确性上限：命中它就抛错，已落库的疑点一条都不动。
 // 10k 行项目的实测耗时见 docs/plans/2026-09-25-assist-rules.md §6。
 const PROJECT_SCAN_REFUSAL = 50000
@@ -109,6 +111,27 @@ function retire(dao, collection, clauses, shouldRetire, stamp, { chunk = RETIRE_
 }
 
 // 把该范围内、同 producer 的当前批次全部下线。只写 superseded_at，其余字段一个都不碰。
+// 分块读完一个过滤条件下的全部行，读到空为止。
+//
+// 为什么全项目都用它而不是"一次读一个大 limit"：`limit N, offset 0` 的形状一旦
+// 结果集超过 N 就会**静默少读**，而少读的那些行照样参与后面的判定，报告写得像算完了。
+// #208 的评审阻断 2 与本轮在 recomputeIdentity/refreshDifficulty 里发现的两个
+// 上限（5000 条人工结论 / 500 条单页疑点）都是同一个形状，所以收敛到这里一份实现。
+// 只适用于"读期间不写"的场景（写会让结果集缩小，那种翻页见 retire）。
+//
+// `onBatch(rows)` 是给"必须边读边判上限"的调用方留的口子：在**读完每一批之后**回调，
+// 从那里抛错就是"读到一半退出"，既不返回部分结果，也不会先把整个结果集吸进内存。
+// 不需要上限的调用方（人工结论、单页疑点）不传，语义与之前完全一致。
+function readAllInChunks(dao, collection, filter, sort, { chunk = READ_CHUNK, onBatch = null } = {}) {
+  const rows = []
+  for (let offset = 0; ; offset += chunk) {
+    const batch = dao.findRecordsByFilter(collection, filter, sort, chunk, offset)
+    for (const record of batch) rows.push(record)
+    if (onBatch) onBatch(rows)
+    if (batch.length < chunk) return rows
+  }
+}
+
 // 分批下线作用域内的当前批次。见 retire 的注释：这里防的是"读满一块就停"——
 // 剩下的行会以"当前批次"的身份永远留在库里，旧疑点再也下不了线。
 function supersede(dao, collection, clauses, at) {
@@ -164,24 +187,29 @@ function recomputePage(dao, pageId, rowOverride = null) {
   const superseded = supersede(dao, collection, scope, at)
   for (const item of findings) insertFinding(dao, collection, page, item, at, RULES_VERSION)
   const settled = settleBatch(dao, collection, scope, at)
+  // 难度在收尾之后刷新：tier 由**当前批次**推导，收尾前读到的还是旧批次。
+  const difficulty = refreshDifficulty(dao, page)
   return {
     page: pageId, findings: findings.length, superseded, settled,
-    producer_version: RULES_VERSION
+    producer_version: RULES_VERSION,
+    difficulty_tier: difficulty.tier, difficulty_version: difficulty.version
   }
 }
 
 // 分批读全项目的条目；游标翻到某一批不满额为止。超限抛错，调用方因此一条都不会写。
+//
+// 保险丝必须在读取**过程中**判，不能"读全再判"：这条线要防的就是把整项目的行吸进
+// JSVM 内存，读完才判等于先付全额成本再拒算。上一版正是这个形状（#212 复审阻断）。
+// 走 readAllInChunks 的 onBatch：命中即抛，最多只会比 refusal 多吸进一批（chunk）的行。
 function loadAllPages(dao, projectId, { chunk = PAGE_SCAN_CHUNK, refusal = PROJECT_SCAN_REFUSAL } = {}) {
-  const pages = []
-  for (let offset = 0; ; offset += chunk) {
-    const batch = dao.findRecordsByFilter(
-      "pages", `project = "${projectId}"`, "page_number,created", chunk, offset)
-    for (const page of batch) pages.push(page)
-    if (batch.length < chunk) return pages
-    if (pages.length >= refusal) {
-      throw new Error(`项目条目数 ${pages.length} 已达全量重算保险丝 ${refusal}，拒绝执行（未改动任何疑点）`)
+  return readAllInChunks(dao, "pages", `project = "${projectId}"`, "page_number,created", {
+    chunk,
+    onBatch: (rows) => {
+      if (rows.length >= refusal) {
+        throw new Error(`项目条目数 ${rows.length} 已达全量重算保险丝 ${refusal}，拒绝执行（未改动任何疑点）`)
+      }
     }
-  }
+  })
 }
 
 // 项目级：列级(R3/R4) 与页级(R7) 规则要看到全量才能判，所以只在批处理里跑。
@@ -223,15 +251,104 @@ function recomputeProject(dao, projectId) {
   }
   const settled = settleBatch(dao, collection, projectScope, at)
   if (unanchored) console.warn("assist_recompute unanchored findings", projectId, unanchored)
+  // 同样放在收尾之后：全项目的 tier 要按最终留在库里的当前批次推导。
+  const stats = projectShapeStats(pages)
+  const tiers = { A: 0, B: 0, C: 0, unknown: 0 }
+  for (const page of pages) tiers[refreshDifficulty(dao, page, stats).tier] += 1
   return {
     project: projectId,
     pages: pages.length,
+    difficulty_tiers: tiers,
     findings: inserted,
     unanchored,
     superseded,
     settled,
     duration_ms: new Date() - startedAt,
     producer_version: RULES_VERSION
+  }
+}
+
+// ---------- #180 难度标签 ----------
+// 疑点算完之后顺手刷新 tier：#180 只出数据与接口，不新造触发器，
+// 复用 #177 的两条路径（单条重算 / 项目全量），tier 才不会出现"疑点是新的、难度是旧的"。
+//
+// 读的是**全部当前批次疑点，不按 gate 过滤**：信号要的是"机器认为这行有多少问题"，
+// 与"校对员被打了几个标"是两件事；blocked_reason 依赖的 merged_columns 更是只有
+// OCR(#125)/#178 才产，按 gate 过滤会永远看不到它。
+//
+// 不对称要写明：本函数取的是**库里那一行**（`rowForRules(page)`），而提交路径传给规则的
+// 是校对员刚打的那一行 `rowOverride`。于是刚提交的那一瞬间，形状信号（字段数 / 值长）
+// 量的还是旧内容。今天完全无害——单条路径 `projectStats = null`，`field_count_outlier` 与
+// `row_shape_outlier` 两条判据都读不到中位数，不会因此给出错的 tier。但将来把 stats 传进
+// 单条路径，这里就会静默拿到过期形状，届时要把它改成 (page, rowOverride) 两路取值。
+function refreshDifficulty(dao, page, stats = null) {
+  const { deriveDifficulty, blockedReasonFromFindings, BLOCKED_BUCKETS, DIFFICULTY_VERSION } =
+    require(`${__hooks}/lib/assist_difficulty.js`)
+  const findings = readAllInChunks(
+    dao, "review_findings", `page = "${page.id}" && superseded_at = ""`, "kind"
+  ).map((row) => ({
+    kind: row.getString("kind"),
+    severity: row.getString("severity"),
+    field: row.getString("field_name")
+  }))
+  const row = rowForRules(page)
+  const valueLengths = Object.values(row).map((value) => Array.from(String(value ?? "")).length)
+  // `blocked_reason` 只由人写，机器算出的桶**不 stamp 回库**（见下面为什么）。
+  // 这里读的到的值因此就是人的结论：空 = 没人说过（决策 4 的"没测过"必须与"看过但认不出"
+  // 可分，两者在库里不再是同一个字符串）。
+  const stored = page.getString("blocked_reason")
+  const manual = BLOCKED_BUCKETS.includes(stored) ? stored : ""
+  const signal = {
+    findings,
+    // #170 未落地：roles 为 null，涉及列角色的两条信号因此不产生（不是判成 A）。
+    roles: null,
+    pdfPage: Number(page.get("pdf_page")) || 0,
+    // 人说过就用人的；没人说过才按本轮疑点现算。算出来的桶只进本轮 derivation
+    // （体现为 difficulty_basis_json 里的 column_merge_blocked / glyph_table_blocked），
+    // 不写回这一列——写回就会把 #211/#212 评审挡的那条链子接上：
+    // `normalizeBlocked("")` 也返回 "unknown"，一旦机器 stamp，这一列从第一次刷新起永久非空，
+    // `stored || auto` 从此短路，#188 读到的将"每条都非空、但全是 unknown"；而机器写进去的
+    // 真实桶更糟，库里分不出它与人工选的同名值，疑点消失后无法降级，与 #180 第 59 行
+    // 「只描述为什么**现在**做不下去」直接冲突。取舍写在 docs/plans/2026-09-25-task-difficulty.md §3。
+    blockedReason: manual || blockedReasonFromFindings(findings),
+    fieldCount: Object.keys(row).length,
+    valueLengths,
+    projectStats: stats,
+    // #179 的分布今天不存在；传 null 而不是空对象，两者在 deriveDifficulty 里同义，
+    // 但写成 null 让"还没测"这件事在调用点就可见。
+    arbitrationRates: null
+  }
+  const derived = deriveDifficulty(signal)
+  if (page.getString("difficulty_tier") !== derived.tier
+    || page.getString("difficulty_version") !== derived.version
+    || page.getString("difficulty_basis_json") !== JSON.stringify(derived.basis)) {
+    page.set("difficulty_tier", derived.tier)
+    page.set("difficulty_basis_json", JSON.stringify(derived.basis))
+    page.set("difficulty_version", derived.version)
+    dao.save(page)
+  }
+  return derived
+}
+
+// 项目级统计：整行形状离群要拿全项目比，单条路径拿不到，所以只在全量重算里算一次。
+function projectShapeStats(pages) {
+  const fieldCounts = []
+  const lengths = []
+  for (const page of pages) {
+    const row = rowForRules(page)
+    fieldCounts.push(Object.keys(row).length)
+    for (const value of Object.values(row)) lengths.push(Array.from(String(value ?? "")).length)
+  }
+  const median = (list) => {
+    const sorted = list.slice().sort((a, b) => a - b)
+    return sorted.length ? sorted[Math.floor(sorted.length / 2)] : Number.NaN
+  }
+  const med = median(lengths)
+  const deviations = lengths.map((value) => Math.abs(value - med)).sort((a, b) => a - b)
+  return {
+    medianFieldCount: median(fieldCounts),
+    medianValueLength: med,
+    madValueLength: deviations.length ? deviations[Math.floor(deviations.length / 2)] : Number.NaN
   }
 }
 
@@ -253,6 +370,8 @@ module.exports = {
   safeRecomputePage,
   PRODUCER,
   RETIRE_CHUNK,
+  READ_CHUNK,
+  readAllInChunks,
   retire,
   PAGE_SCAN_CHUNK,
   PROJECT_SCAN_REFUSAL,
