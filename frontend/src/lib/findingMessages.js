@@ -95,8 +95,11 @@ const MESSAGES = {
   page_entry_count_outlier: (params) =>
     `该 PDF 页挂了 ${count(params?.entries_on_page)} 条条目，明显高于项目中位数 ${count(params?.median_entries)} 条（阈值 ${count(params?.ceiling)}），疑似分页或拆行异常`,
 
-  // #178 跨行检出的措辞键。词头与记音本身**不进措辞正文**——它们已在 evidence/params 里由
-  // 服务端下发，措辞只说"还有几处并列、差在哪些列"，避免把别人条目的内容渲染进这一条。
+  // #178 跨行检出的措辞键。词头与记音既不进措辞正文、也不进 payload：`identity-v1` 起 params
+  // 只有 differs_on / partner_count / sources，evidence 只有条目 id 与偏移（契约见
+  // review-findings.md §6 内容边界，按绝对解释连"本条目自己的原文"也不带）。措辞只说
+  // "还有几处并列、差在哪些列"——判据本来就摆在读到它的校对员眼前，措辞不需要搬内容，
+  // 也就没有可外泄的形状。
   same_identity_different_content: (params) => {
     const differs = Array.isArray(params?.differs_on) ? params.differs_on : []
     const partners = count(params?.partner_count)

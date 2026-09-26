@@ -314,9 +314,15 @@ try {
   // #175 红线 1 在数据形状上的落点（契约：review-findings.md §8.1 第 1 条，按绝对解释）。
   // identity 生产者曾经把词头与记音的字面值放进 params（全仓无人消费），删键之后由这条断言
   // 保证它们不会换个名字回来：params 里不许出现任何一条的单元格原文。
+  // 清单要同时收原始值与归一化值——生产者内部算的是 normalizeText 的结果，只比原文会放过
+  // '甲 乙'→'甲乙' 这种折叠形状；也不许按字符集过滤——本 fixture 的记音列（lang2 / nang2 /
+  // ka1 / ua5333）全是 ASCII，而那正是被删掉的 identity_reading 的来源列。
+  const stringLeaves = (value) => Array.isArray(value)
+    ? value.flatMap(stringLeaves)
+    : value && typeof value === 'object' ? Object.values(value).flatMap(stringLeaves) : [String(value)]
   const cellText = survivors.items
     .flatMap((page) => Object.values(JSON.parse(page.ocr_row_json || '{}')))
-    .map((value) => String(value)).filter((value) => value && !/^[\x20-\x7e]*$/.test(value))
+    .flatMap((value) => { const raw = String(value); return raw ? [raw, identity.normalizeText(raw)] : [] })
   assert.ok(cellText.length > 0, 'privacy 扫描的原文清单为空，下面这圈就是恒真')
   const identityFindings = findings.filter((item) => item.producer_version === identity.IDENTITY_VERSION)
   assert.ok(identityFindings.length > 0, 'identity 生产者必须真的产了疑点')
@@ -325,10 +331,12 @@ try {
     // 这条断言就是 #178 侧的落点——读取端不必先判作用域再决定这条有没有口径。
     assert.equal(JSON.parse(item.evidence_json).anchor, identity.ANCHOR_ENTRY,
       `${item.kind} 的 evidence 缺挂靠口径`)
-    const serialized = JSON.stringify(JSON.parse(item.params_json))
-    for (const value of cellText) {
-      assert.equal(serialized.includes(value), false,
-        `${item.kind} 的 params 带了原样内容片段：${serialized}`)
+    // 逐叶子比，不比整段序列化结果：键名与中文列名本来就该在 params 里，整段比才需要过滤。
+    for (const leaf of stringLeaves(JSON.parse(item.params_json))) {
+      for (const value of cellText) {
+        assert.equal(leaf === value || (value.length >= 2 && leaf.includes(value)), false,
+          `${item.kind} 的 params 带了内容片段：${leaf}`)
+      }
     }
   }
 
