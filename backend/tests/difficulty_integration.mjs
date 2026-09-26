@@ -1,9 +1,34 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const difficulty = require('../pb_hooks/lib/assist_difficulty.js')
 const writer = require('../pb_hooks/lib/assist_writer.js')
+
+// 迁移里那两份 select values 是 assist_difficulty.js 的字面量副本。漂移的后果不是"数字偏一点"
+// 而是硬失败：PocketBase 会拒绝不在 values 表里的值，于是 refreshDifficulty 的 dao.save 直接报错。
+// 而这条路径上没有任何东西守着它——check_migrations.py 对本迁移只查索引不查 select 值，
+// 本文件又不 import 迁移文件。所以照 #208 那条先例做源码对账（比集合，顺序不该被钉）。
+{
+  const migration = readFileSync(
+    new URL('../pb_migrations/1789113700_page_difficulty.js', import.meta.url), 'utf8')
+  const literal = (name) => {
+    const hit = migration.match(new RegExp(`const ${name} = \\[(.*?)\\]`, 's'))
+    // 抽不出来就必须红：扫描器失效时下面两条断言会双双变成"空集合等于空集合"的恒真。
+    assert.ok(hit, `迁移里找不到 const ${name} = [...]，对账本身失效了`)
+    return [...hit[1].matchAll(/"([^"]+)"/g)].map((item) => item[1])
+  }
+  const fromMigrationTiers = literal('TIERS')
+  const fromMigrationBuckets = literal('BLOCKED_BUCKETS')
+  // 只挡"扫描器什么都没抽到"这一种失效：再往上报数就会把真正的漂移消息盖掉。
+  assert.ok(fromMigrationTiers.length >= 1 && fromMigrationBuckets.length >= 1,
+    `从迁移抽出的枚举为空，先怀疑正则：${JSON.stringify({ tiers: fromMigrationTiers, buckets: fromMigrationBuckets })}`)
+  assert.deepEqual([...fromMigrationTiers].sort(), [...difficulty.TIERS].sort(),
+    `TIERS 漂移：迁移 ${JSON.stringify(fromMigrationTiers)} vs 判定表 ${JSON.stringify(difficulty.TIERS)}`)
+  assert.deepEqual([...fromMigrationBuckets].sort(), [...difficulty.BLOCKED_BUCKETS].sort(),
+    `BLOCKED_BUCKETS 漂移：迁移 ${JSON.stringify(fromMigrationBuckets)} vs 判定表 ${JSON.stringify(difficulty.BLOCKED_BUCKETS)}`)
+}
 
 const baseUrl = process.env.PB_URL || 'http://127.0.0.1:18091'
 const platformAuth = await request('/api/collections/users/auth-with-password', {

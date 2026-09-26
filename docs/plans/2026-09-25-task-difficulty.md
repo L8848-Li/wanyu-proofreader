@@ -103,7 +103,7 @@ basis，要「人说过卡在哪」读 `blocked_reason`**；后者为空表示�
 | `difficulty_tier` | select(1) | `A` \| `B` \| `C` \| `unknown` | 空 = 从没算过（见 §4） |
 | `difficulty_basis_json` | text(JSON 数组) | 命中的信号 id 列表 | `[]` = 算过且无命中（此时 tier 必为 `unknown`） |
 | `difficulty_version` | text | 当前为 `tier-v1` | 空 = 从没算过 |
-| `blocked_reason` | select(1) | §3 的五个桶 | 空 = 从没算过 |
+| `blocked_reason` | select(1) | §3 的五个桶 | 空 = 没人说过（自动路径不写这一列，见 §3）；非空 = 人工选定 |
 
 **筛选**：`filter="project=\"<id>\" && difficulty_tier=\"A\""`，走 `idx_pages_project_tier`。
 **排序**：本层不提供排序键；如果 #162 要"先派 A"，请显式按 `difficulty_tier` 排并自行处理
@@ -124,25 +124,12 @@ basis，要「人说过卡在哪」读 `blocked_reason`**；后者为空表示�
 要稳定结果，用项目级重算。
 
 幂等性：同一份数据连续重算，`difficulty_tier` 与 `difficulty_basis_json` 逐字节不变（已测）。
-写库前先比对四个字段，全等则不写，避免每次重算都刷一遍 `updated`。
+写库前先比对三个字段（`difficulty_tier` / `difficulty_basis_json` / `difficulty_version`），
+全等则不写，避免每次重算都刷一遍 `updated`；`blocked_reason` 既不比对也不写，理由见 §3。
+
 ## 8. 明确不做
 
 - 不改大厅 UI、不改领取逻辑（#162）；
 - 不做志愿者能力模型/绩效（#162 亦列为非目标）；
 - 不做 #191 专家升级判定（#188），本层只提供 `blocked_reason` 这个正交字段；
 - **绝不**从他人提交结果推导 tier：本层输入里没有任何 attempt 内容（#175 红线 1）。
-
-## 9. 10k 行实测分布（2026-09-25，链顶口径）
-
-`measure_identity_scale.py` 在 #178 那份合成压力 fixture（10k 行、1/4 共享身份）上量到：
-
-| tier | 行数 | 说明 |
-| --- | --- | --- |
-| C | 9592 | 该 fixture 的 IPA 列大量使用 ASCII `a`/集外字符，每行普遍 ≥2 条 strong 疑点 |
-| unknown | 408 | 零疑点且没有可判信号 —— L0 没有列角色（#170），`pure_transcription` 这条 A 档判据不会命中 |
-| A / B | 0 / 0 | 同上：A 档两条判据分别要 `glyph_table` 阻塞原因与列角色，今天都不可达 |
-
-**这组数字不代表真实语料的分布**：fixture 是刻意制造分组与字符压力的合成行，
-真实项目里 C 的占比不会是这个量级。它证明的是两件事——10k 行一次算得完（10.7 s），
-以及 tier 在没有 #170 的现在**必然集中在 C 与 unknown 两档**。
-等 #170 落地，A/B 才可能出现，届时这张表要重测一遍再谈 #162 的默认排序。

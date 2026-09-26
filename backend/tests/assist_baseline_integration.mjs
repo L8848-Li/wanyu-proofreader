@@ -63,6 +63,10 @@ assert.equal(byPair.get('A4/释义').accepted, false, '空释义必须是负例'
 assert.equal(byPair.get('A3/莆田IPA').reason_code, 'unicode_equivalent', 'NFD/NFC 差量不得当成真实分歧')
 assert.equal(byPair.get('A3/莆田IPA').accepted, true)
 assert.equal(labels.filter((item) => !item.accepted).length, 2)
+// 这条不变量是 scoreRules 里 negatives 不再判 reason_code 的依据：伪分歧在样本层就是 accepted。
+// 有人改动 buildLabels 让 unicode_equivalent 变成非 accepted，这里必须红，而不是让剔除口径悄悄搬家。
+assert.equal(labels.filter((item) => item.reason_code === 'unicode_equivalent' && !item.accepted).length, 0,
+  '伪分歧必须全部是 accepted，否则 negatives 的剔除口径要跟着改')
 
 // 脱敏（#179 验收：仓库 diff 内无未授权语料正文；工具默认输出同样不许带正文）
 const serialized = JSON.stringify(stripSecrets(labels))
@@ -99,7 +103,7 @@ for (const item of scored.scored) {
 // 与作用域外的（不算）。后者是上一版会被错记成漏检的那一类——R2 的 ipa 域碰上 `释义` 的陷阱。
 assert.ok(scored.scored.some((item) => item.fn > 0), 'fixture 里必须真有漏检，否则求和是恒真空转')
 const outOfScopeNegatives = labels.filter((item) => !item.accepted
-  && item.reason_code !== 'unicode_equivalent' && !rules.IPA_FIELDS.includes(item.field))
+  && !rules.IPA_FIELDS.includes(item.field))
 assert.ok(outOfScopeNegatives.length > 0,
   `fixture 里必须含"作用域外负例"，否则 inScope 这半边没人测：${JSON.stringify(labels.map((l) => [l.field, l.accepted]))}`)
 assert.deepEqual(stripSecrets(labels).filter((item) => !item.accepted)

@@ -185,7 +185,11 @@ const SCOPES = {
 const REQUIRED_ROLES = ["headword", "reading", "meaning"]
 
 export function scoreRules(labels, ruleList) {
-  const negatives = new Set(labels.filter((item) => !item.accepted && item.reason_code !== "unicode_equivalent")
+  // 伪分歧在样本层就已经被 `accepted` 挡掉了（`buildLabels` 给 unicode_equivalent 的一律
+  // accepted: true，assist_baseline_integration.mjs 里钉着这条不变量），所以这里不再写
+  // `&& reason_code !== "unicode_equivalent"`：那个合取项在当前实现下永不生效，还会让读者
+  // 以为剔除伪分歧有第二道保险。排除但必须报数那一条走 equivalentCount。
+  const negatives = new Set(labels.filter((item) => !item.accepted)
     .map((item) => `${item.attempt}\u0000${item.field}`))
   const inScope = (rule, field, ctx) => (SCOPES[rule.scope ?? "all"])(field, ctx)
   const equivalentCount = labels.filter((item) => item.reason_code === "unicode_equivalent").length
