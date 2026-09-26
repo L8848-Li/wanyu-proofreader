@@ -223,7 +223,8 @@ ProducerContext = {page, project, column_roles, enabled_keyboards}
    `page` 必填（§1 字段表与迁移里的 `relation("page", …)`，`required: true`）而"整列/整页"级判据客观存在，
    这个缺口早晚要被填；写在生产者侧、读取侧只认 `page`，就不会出现"解析不出来就退化成
    第一条"那种把别人的内容发给当前校对员的形状。规则生产者的具体口径见
-   [`2026-09-25-assist-rules.md`](./2026-09-25-assist-rules.md) §3.6。
+   [`2026-09-25-assist-rules.md`](./2026-09-25-assist-rules.md) §3.6 —— 那一节随 **#208** 入仓，
+   在本支单独的 head 上是断链，按 #207 → #208 顺序合入后才存在。
 
 **对本文件数据结构的唯一影响点**：`producer` 枚举要新增 `"model"`。
 那是一次 select 值变更（需要迁移），本文件此刻**不改**——它属于 L2 真正开工时的那次改动，
