@@ -103,7 +103,7 @@ basis，要「人说过卡在哪」读 `blocked_reason`**；后者为空表示�
 | `difficulty_tier` | select(1) | `A` \| `B` \| `C` \| `unknown` | 空 = 从没算过（见 §4） |
 | `difficulty_basis_json` | text(JSON 数组) | 命中的信号 id 列表 | `[]` = 算过且无命中（此时 tier 必为 `unknown`） |
 | `difficulty_version` | text | 当前为 `tier-v1` | 空 = 从没算过 |
-| `blocked_reason` | select(1) | §3 的五个桶 | 空 = 从没算过 |
+| `blocked_reason` | select(1) | §3 的五个桶 | 空 = 没人说过（自动路径不写这一列，见 §3）；非空 = 人工选定 |
 
 **筛选**：`filter="project=\"<id>\" && difficulty_tier=\"A\""`，走 `idx_pages_project_tier`。
 **排序**：本层不提供排序键；如果 #162 要"先派 A"，请显式按 `difficulty_tier` 排并自行处理
@@ -124,7 +124,8 @@ basis，要「人说过卡在哪」读 `blocked_reason`**；后者为空表示�
 要稳定结果，用项目级重算。
 
 幂等性：同一份数据连续重算，`difficulty_tier` 与 `difficulty_basis_json` 逐字节不变（已测）。
-写库前先比对四个字段，全等则不写，避免每次重算都刷一遍 `updated`。
+写库前先比对三个字段（`difficulty_tier` / `difficulty_basis_json` / `difficulty_version`），
+全等则不写，避免每次重算都刷一遍 `updated`；`blocked_reason` 既不比对也不写，理由见 §3。
 
 ## 8. 明确不做
 
