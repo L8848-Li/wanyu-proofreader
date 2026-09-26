@@ -205,10 +205,15 @@ FindingDraft = {
   // evidence_json.anchor：本条挂在 page_id 上的口径（生产者自己决定，见 §8.1）
 }
 
+// 作用域：两个已落地的生产者（#208 项目级规则、#178 跨行检出）都是整项目作用域。
+// 允许读同项目其他条目的源文本与行内容；不允许读他人的 attempt / 提交结果 / 轮次线索；
+// 读到的其他条目内容不得再出现在本条 finding 的 params / evidence 里。详见
+// model-assist-inference.md §3 的 ProducerContext 注释。
 ProducerContext = {page, project, column_roles, enabled_keyboards}
 ```
 
-三条约束由**接口形状**保证，不靠文档措辞：
+三条约束由**接口形状**保证，不靠文档措辞；另有两条是对 `FindingDraft` 字段内容与挂靠口径的要求
+（见 §8.1，不会因为签名存在而自动成立），合计五条，与 `model-assist-inference.md` §3 同一口径：
 
 1. `readsOtherPeopleSubmissions` 的类型是 `false` 字面量——上下文里根本没有他人提交字段，
    「永不含他人结果」因此是不可表示，而不是"请注意"（#175 红线 1）。
@@ -219,12 +224,15 @@ ProducerContext = {page, project, column_roles, enabled_keyboards}
 
 1. `params_json` / `evidence_json` 不得含原样内容片段——两列都会随 hint 下发给该条目的
    在手校对员（`hintView`）。#175 红线 1 在数据形状上的落点就是这里。
+   这条按**绝对**解释，不区分"本条目自己的原文"与"别人条目的原文"：生产者永远不需要携带任何
+   原样内容就能让校对员定位问题（这一行他本来就看得到），而一旦开了"本条目的可以带"这个口子，
+   "算不算本条目"就退化成每个生产者的自由判断。链上曾有一处反例——#178 的 identity params 带过
+   `identity_headword` / `identity_reading` 两个无人消费的原文键，已按这条删键收掉。
 2. 生产者必须自己决定非行级 finding 挂在哪个条目上，并把口径写进 `evidence.anchor`。
    `page` 必填（§1 字段表与迁移里的 `relation("page", …)`，`required: true`）而"整列/整页"级判据客观存在，
    这个缺口早晚要被填；写在生产者侧、读取侧只认 `page`，就不会出现"解析不出来就退化成
    第一条"那种把别人的内容发给当前校对员的形状。规则生产者的具体口径见
-   [`2026-09-25-assist-rules.md`](./2026-09-25-assist-rules.md) §3.6 —— 那一节随 **#208** 入仓，
-   在本支单独的 head 上是断链，按 #207 → #208 顺序合入后才存在。
+   [`2026-09-25-assist-rules.md`](./2026-09-25-assist-rules.md) §3.6 —— 那一节已随 **#208** 进 main。
 
 **对本文件数据结构的唯一影响点**：`producer` 枚举要新增 `"model"`。
 那是一次 select 值变更（需要迁移），本文件此刻**不改**——它属于 L2 真正开工时的那次改动，
