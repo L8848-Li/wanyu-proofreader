@@ -15,9 +15,11 @@ const styleSource = readFileSync(new URL('../src/style.css', import.meta.url), '
 
 test('every machine-hint block is gated behind a length check (no placeholder when empty)', () => {
   const gatedPatterns = [
-    /v-if="pageHintList\.length" class="field-hint-list/,
+    // 行级上限可让某桶 0 可见/折叠>0：两处 <ul> 门槛必须同时看 overflow，
+    // 否则整桶被挤掉时连「已按密度折叠 N 条」一起消失（评审 #225 阻断条）。
+    /v-if="pageHintList\.length \|\| pageHintOverflow" class="field-hint-list/,
     /v-if="findingsTruncated" class="field-hint-truncated/,
-    /v-if="fieldHintList\(header\)\.length" class="field-hint-list/,
+    /v-if="fieldHintList\(header\)\.length \|\| fieldHintOverflow\(header\)" class="field-hint-list/,
     /v-if="fieldHintOverflow\(header\)" class="field-hint-overflow/,
     /v-if="pageHintOverflow" class="field-hint-overflow/
   ]

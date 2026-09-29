@@ -84,7 +84,7 @@
 
       <RareCharacterNotice :texts="[...Object.values(originalRow), ...Object.values(editedRow)]" />
 
-          <ul v-if="pageHintList.length" class="field-hint-list field-hint-list--page" aria-label="本条整条级机器疑点">
+          <ul v-if="pageHintList.length || pageHintOverflow" class="field-hint-list field-hint-list--page" aria-label="本条整条级机器疑点">
             <li v-for="(hint, hintIndex) in pageHintList" :key="`page-hint-${hintIndex}`">
               <span class="field-hint-chip" :class="{ 'field-hint-chip--strong': hint.highlight }">
                 <b aria-hidden="true">疑</b>{{ hintLabel(hint.kind) }}
@@ -135,7 +135,7 @@
                 >{{ segment.text }}</span></p>
               </div>
 
-              <ul v-if="fieldHintList(header).length" class="field-hint-list" :aria-label="`${header} 机器疑点`">
+              <ul v-if="fieldHintList(header).length || fieldHintOverflow(header)" class="field-hint-list" :aria-label="`${header} 机器疑点`">
                 <li v-for="(hint, hintIndex) in fieldHintList(header)" :key="`${header}-hint-${hintIndex}`">
                   <button
                     type="button"
