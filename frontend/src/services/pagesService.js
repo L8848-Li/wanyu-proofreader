@@ -186,3 +186,21 @@ export async function submitTwoPassProofread(pageId, userId, { rowJson, text, le
     requestKey: null
   })
 }
+
+// #161 — 疑点只读接口（契约见 docs/plans/2026-09-25-review-findings.md §3.1）。
+// 任何失败都退化成空 hints：疑点标注是渐进增强，读不到绝不影响校对本身。
+export async function getPageFindings(pageId) {
+  if (!pageId) return { page: '', hints: [], truncated: false }
+  try {
+    const result = await pb.send(`/api/fangji/pages/${encodeURIComponent(pageId)}/findings`, {
+      requestKey: null
+    })
+    return {
+      page: String(result?.page || pageId),
+      hints: Array.isArray(result?.hints) ? result.hints : [],
+      truncated: Boolean(result?.truncated)
+    }
+  } catch {
+    return { page: String(pageId), hints: [], truncated: false }
+  }
+}

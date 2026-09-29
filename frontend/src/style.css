@@ -523,6 +523,20 @@ tr:hover td { background: var(--gray-50); }
 .source-value { display: grid; gap: .3rem; padding: .65rem .85rem; background: #f7f5ef; }
 .source-value > span { color: var(--gray-500); font-size: .68rem; font-weight: 600; }
 .source-value p { color: var(--gray-700); font-family: 'Fangji Phonetic', 'Noto Serif SC', 'Songti SC', STSong, 'Fangji Rare Han', serif; font-size: .88rem; line-height: 1.65; white-space: pre-wrap; }
+.source-value__hit { background: var(--primary-light); border-bottom: 2px solid var(--primary); }
+
+/* #161 机器疑点标注。状态不只靠颜色：标记始终带「疑」字与类别文本；
+   整套样式只挂在 .field-hint-* 新类上，hints 为空时这些节点根本不渲染。 */
+.field-hint-list { list-style: none; margin: .5rem .85rem 0; padding: 0; display: grid; gap: .3rem; }
+.field-hint-list--page { margin: 0 0 .75rem; padding: .6rem .85rem; border: 1px dashed var(--gray-300); border-radius: var(--radius); background: var(--gray-50); }
+.field-hint-list li { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+.field-hint-chip { display: inline-flex; align-items: center; gap: .3rem; padding: .1rem .5rem; border: 1px solid var(--gray-400); border-radius: 999px; background: #fff; color: var(--gray-700); font-size: .72rem; font-weight: 600; line-height: 1.5; cursor: pointer; }
+.field-hint-chip b { font-size: .68rem; }
+.field-hint-chip--strong { border-color: var(--danger); color: var(--danger); border-width: 2px; font-weight: 700; }
+button.field-hint-chip:hover { background: var(--gray-100); }
+button.field-hint-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.field-hint-reason { color: var(--gray-600); font-size: .78rem; line-height: 1.5; }
+.field-hint-overflow, .field-hint-truncated { color: var(--gray-500); font-size: .74rem; }
 .proofread-textarea.form-control {
   min-height: 104px;
   border: 0;
