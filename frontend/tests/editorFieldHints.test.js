@@ -36,6 +36,8 @@ test('findings load is a non-blocking enhancement and resets per task', () => {
   assert.match(editorSource, /fieldHints\.value = prepareFieldHints\(\[\]\)/)
   assert.match(editorSource, /findingsTruncated\.value = false/)
   assert.match(editorSource, /locatedSpan\.value = null/)
+  // 命不中已渲染列的疑点必须并入整条级（评审 #225：不允许静默消失）。
+  assert.match(editorSource, /prepareFieldHints\(result\.hints, rowHeaders\.value\)/)
 })
 
 test('blind proofreading holds: the view never reads round, producer or a confidence number', () => {

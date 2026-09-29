@@ -561,7 +561,7 @@ async function loadFindings(pageId) {
   const generation = ++findingsGeneration
   const result = await getPageFindings(pageId)
   if (generation !== findingsGeneration || page.value?.id !== pageId) return
-  fieldHints.value = prepareFieldHints(result.hints)
+  fieldHints.value = prepareFieldHints(result.hints, rowHeaders.value)
   findingsTruncated.value = result.truncated
 }
 

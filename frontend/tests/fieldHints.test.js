@@ -82,6 +82,55 @@ test('D_max keeps display density bounded and folds the rest into a count', () =
   assert.equal(prepared.total, many.length)
 })
 
+test('D_max caps the whole row, not each field (门槛文件 §8.1 每行口径)', () => {
+  // 2(莆田IPA) + 1(释义) + 2(整条级) = 5 条，无 highlight → 服务端序取前 3。
+  const prepared = prepareFieldHints([
+    makeHint(),
+    makeHint({ kind: 'punctuation_mix', message: { key: 'punctuation_width_mixed_in_column', params: {} } }),
+    makeHint({ field: '释义', message: { key: 'row_width_differs', params: { cells: 5, headers: 4 } } }),
+    makeHint({ field: '', message: { key: 'pdf_page_backtrack', params: { from_page: 9, to_page: 5, backtrack: 4 } } }),
+    makeHint({ field: '', message: { key: 'example_missing', params: {} } })
+  ])
+  const visibleTotal =
+    hintsForField(prepared, '莆田IPA').length +
+    hintsForField(prepared, '释义').length +
+    pageLevelHints(prepared).length
+  assert.equal(visibleTotal, HINT_DISPLAY_LIMIT)
+  // 被行级上限隐藏的疑点按桶记数，绝不静默消失。
+  assert.equal(hintsOverflowFor(prepared, '莆田IPA'), 0)
+  assert.equal(hintsOverflowFor(prepared, '释义'), 0)
+  assert.equal(pageLevelOverflow(prepared), 2)
+  assert.equal(prepared.total, 5)
+})
+
+test('a row-wide cap still lets highlights win across fields', () => {
+  const prepared = prepareFieldHints([
+    makeHint(),
+    makeHint({ field: '释义' }),
+    makeHint({ field: '', highlight: true, severity: 'strong' })
+  ])
+  // 3 条恰好都在上限内：整行可见 = 3，高亮在桶内排前。
+  assert.equal(pageLevelHints(prepared)[0].highlight, true)
+  assert.equal(hintsForField(prepared, '莆田IPA').length, 1)
+})
+
+test('hints for unrendered columns fall back to page level (宁可多标也不要漏标)', () => {
+  const hints = [
+    makeHint({ field: '字词' }),
+    makeHint({ field: '仙游IPA', message: { key: 'combining_marks_present', params: { marks: ['0x303'] } } })
+  ]
+  const prepared = prepareFieldHints(hints, ['字词', '莆田IPA', '释义'])
+  assert.equal(prepared.fields['仙游IPA'], undefined)
+  assert.equal(hintsForField(prepared, '仙游IPA').length, 0)
+  assert.equal(pageLevelHints(prepared).length, 1)
+  assert.match(pageLevelHints(prepared)[0].text, /组合附加符/)
+  // Set 也接受；不传第二参则维持纯按 field 分组的旧行为（视图以外调用不受影响）。
+  const asSet = prepareFieldHints(hints, new Set(['字词']))
+  assert.equal(pageLevelHints(asSet).length, 1)
+  const unbounded = prepareFieldHints(hints)
+  assert.equal(hintsForField(unbounded, '仙游IPA').length, 1)
+})
+
 // ---- kind 标签与措辞退化 ----
 
 test('all ten contract kinds get labels and an unknown kind falls back readably (#178 扩展点)', () => {

@@ -11,6 +11,7 @@ if(url.endsWith('/mine'))data=[record];
 if(url.endsWith('/keyboards'))data={items:[{keyboardId:'ipa',name:'音标键盘',definition:{sections:[{id:'vowels',label:'元音',defaultOpen:true,keys:['ɑ','ɛ','ə','ɔ'].map(value=>({value}))},{id:'tones',label:'声调',keys:[{value:'˥'}]}]}}],defaultKeyboardId:'ipa'};
 if(url.endsWith('/arbitration'))data={page:record,attempts:[{id:'a',pass_no:1,row_json:JSON.stringify(row)},{id:'b',pass_no:2,row_json:JSON.stringify({...row,读音:'ta'})}]};
 if (url.endsWith('/keyboards') && realPreset) data={items:[{keyboardId:preset.id,name:preset.name,definition:preset}],defaultKeyboardId:preset.id};
+if(url.endsWith('/findings'))data={page:'page1',hints:[{field:'读音',kind:'reading_format_invalid',severity:'strong',message:{key:'long_digit_run',params:{runs:['5333'],run_count:1}},highlight:true,evidence:{char_offsets:[[0,2]]}},{field:'声调',kind:'punctuation_mix',severity:'warn',message:{key:'punctuation_width_mixed_in_column',params:{}},highlight:false,evidence:{}},{field:'',kind:'page_outlier',severity:'warn',message:{key:'pdf_page_backtrack',params:{from_page:9,to_page:5,backtrack:4}},highlight:false,evidence:{}}],truncated:false};
 await route.fulfill({json:data});});
 for(const admin of [false,true]){
 await page.setViewportSize({width:1440,height:900});await page.goto('http://localhost:5173/tests/fixtures/review.html'+(admin?'?admin':''));await page.waitForTimeout(1000); await page.locator('.ipa-key').first().waitFor({timeout:3000});
@@ -30,6 +31,13 @@ for (const admin of [false, true]) {
   await page.evaluate(() => localStorage.clear())
   await page.goto('http://localhost:5173/tests/fixtures/review.html' + (admin ? '?admin' : ''))
   await page.locator('.ipa-key').first().waitFor()
+  if (!admin) {
+    // #161 非空 hints 的真渲染覆盖：字段级可点 chip 1 个 + 整条级 2 个
+    // （其中「声调」是列名不在本行的孤儿 hint，必须并入整条级而不是消失）。
+    if (await page.locator('.field-hint-chip').count() !== 3) throw Error('Machine hint chips not rendered')
+    await page.locator('button.field-hint-chip').first().click()
+    if (!await page.locator('.source-value__hit').first().isVisible()) throw Error('Hint click did not highlight source span')
+  }
   if (admin) await page.getByRole('button', { name: '全部字段 3', exact: true }).click()
   const fieldCards = page.locator(admin ? '.arbitration-field' : '.proofread-field')
   const inputs = fieldCards.locator('textarea')

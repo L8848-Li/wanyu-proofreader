@@ -530,7 +530,8 @@ tr:hover td { background: var(--gray-50); }
 .field-hint-list { list-style: none; margin: .5rem .85rem 0; padding: 0; display: grid; gap: .3rem; }
 .field-hint-list--page { margin: 0 0 .75rem; padding: .6rem .85rem; border: 1px dashed var(--gray-300); border-radius: var(--radius); background: var(--gray-50); }
 .field-hint-list li { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
-.field-hint-chip { display: inline-flex; align-items: center; gap: .3rem; padding: .1rem .5rem; border: 1px solid var(--gray-400); border-radius: 999px; background: #fff; color: var(--gray-700); font-size: .72rem; font-weight: 600; line-height: 1.5; cursor: pointer; }
+.field-hint-chip { display: inline-flex; align-items: center; gap: .3rem; padding: .1rem .5rem; border: 1px solid var(--gray-400); border-radius: 999px; background: #fff; color: var(--gray-700); font-size: .72rem; font-weight: 600; line-height: 1.5; }
+button.field-hint-chip { cursor: pointer; }
 .field-hint-chip b { font-size: .68rem; }
 .field-hint-chip--strong { border-color: var(--danger); color: var(--danger); border-width: 2px; font-weight: 700; }
 button.field-hint-chip:hover { background: var(--gray-100); }

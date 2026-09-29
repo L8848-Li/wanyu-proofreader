@@ -14,6 +14,8 @@ import { renderFindingMessage } from './findingMessages.js'
 // D_max 取值归本 issue（#161 评论）：门槛文件 §8.1 实测每行 warn+strong 分布
 // p99 = 1、max = 3（分母 15,022 行）。取 3 覆盖全部已观测密度，超出部分折叠成计数，
 // 不做按历史误报率的动态调节（#179 回填明确禁止）。
+// 口径与 §8.1 写定的 hint_density 一致：**整行**可见条数上限，而不是每字段各 3 条。
+// 折叠计数仍按桶（字段卡 / 整条级）归属，被行级上限隐藏的疑点不会静默消失。
 export const HINT_DISPLAY_LIMIT = 3
 
 // kind 短标签：#176 §2 的 10 值枚举是封闭集合，新增 kind 需要迁移，
@@ -52,45 +54,70 @@ function toHintView(hint) {
 
 // highlight 的排前，其余保持服务端给的顺序（kind,message_key 稳定序）。
 // 这只是展示次序，不是过滤：可见集合不因 severity/gate 有任何变化。
-function emphasisFirst(hints) {
-  return hints
-    .map((hint, index) => ({ hint, index }))
-    .sort((a, b) => (Number(b.hint.highlight) - Number(a.hint.highlight)) || (a.index - b.index))
-    .map(({ hint }) => hint)
-}
-
-function bucket(items) {
-  const visible = items.slice(0, HINT_DISPLAY_LIMIT)
-  return { items: visible, overflow: Math.max(0, items.length - visible.length) }
+function emphasisFirst(entries) {
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => (Number(Boolean(b.entry.hint.highlight)) - Number(Boolean(a.entry.hint.highlight))) || (a.index - b.index))
+    .map(({ entry }) => entry)
 }
 
 const EMPTY_PREPARED = Object.freeze({
   fields: Object.freeze({}),
-  pageLevel: bucket([]),
+  pageLevel: Object.freeze({ items: Object.freeze([]), overflow: 0 }),
   total: 0
 })
+
+// renderedColumns 是视图侧实际渲染的列名（rowHeaders）。传了它，`field` 命不中任何
+// 已渲染列的疑点会并入整条级而不是静默消失——#161 的硬要求是「宁可多标也不要漏标」，
+// 「请勿以无标记当作已核对通过」不能因为生产者与导入列名漂移而失效。
+// 不传则维持纯按 field 分组的旧行为（纯函数层不猜视图）。
+function toRenderedSet(renderedColumns) {
+  if (Array.isArray(renderedColumns) || renderedColumns instanceof Set) {
+    return new Set([...renderedColumns].map(String))
+  }
+  return null
+}
 
 // 唯一必须成立的退化保证：hints 恒为空数组时返回**引用稳定**的空结构，
 // 消费端所有 v-if 都为假 → 界面与今天像素级一致（#179 回填：这是当前唯一情况）。
 // 非数组、缺 field、未知 kind 一律按"无数据或可读退化"处理，不抛错。
-export function prepareFieldHints(rawHints) {
+export function prepareFieldHints(rawHints, renderedColumns) {
   if (!Array.isArray(rawHints) || rawHints.length === 0) return EMPTY_PREPARED
-  const fields = {}
-  const pageLevel = []
+  const rendered = toRenderedSet(renderedColumns)
+  const buckets = new Map()
   let total = 0
   for (const raw of rawHints) {
     const hint = toHintView(raw)
     total += 1
-    if (!hint.field) {
-      pageLevel.push(hint)
-      continue
-    }
-    if (!fields[hint.field]) fields[hint.field] = []
-    fields[hint.field].push(hint)
+    const orphan = hint.field !== '' && rendered !== null && !rendered.has(hint.field)
+    const key = hint.field === '' || orphan ? '' : hint.field
+    if (!buckets.has(key)) buckets.set(key, [])
+    buckets.get(key).push(hint)
   }
-  const grouped = {}
-  for (const [field, items] of Object.entries(fields)) grouped[field] = bucket(emphasisFirst(items))
-  return { fields: grouped, pageLevel: bucket(emphasisFirst(pageLevel)), total }
+  // 行级总上限：跨桶统一 emphasis-first 后取前 D_max 条，剩余按桶记折叠数。
+  const flat = []
+  for (const [key, items] of buckets) {
+    for (const hint of items) flat.push({ key, hint })
+  }
+  const visible = new Map()
+  const overflow = new Map()
+  let shown = 0
+  for (const entry of emphasisFirst(flat)) {
+    if (shown < HINT_DISPLAY_LIMIT) {
+      if (!visible.has(entry.key)) visible.set(entry.key, [])
+      visible.get(entry.key).push(entry.hint)
+      shown += 1
+    } else {
+      overflow.set(entry.key, (overflow.get(entry.key) || 0) + 1)
+    }
+  }
+  const fields = {}
+  for (const key of buckets.keys()) {
+    if (key === '') continue
+    fields[key] = { items: visible.get(key) || [], overflow: overflow.get(key) || 0 }
+  }
+  const pageLevel = { items: visible.get('') || [], overflow: overflow.get('') || 0 }
+  return { fields, pageLevel, total }
 }
 
 // 视图侧唯一入口：给 field 返回该字段卡的疑点（无则空数组——渲染端据此 v-if）。
