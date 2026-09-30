@@ -276,6 +276,43 @@ const row = (o) => ({ 词条: o.headword ?? '', 拼音: o.pinyin ?? '', 莆田IP
   assert.deepEqual(clean, [], '正常释义不该被报成列错位')
 }
 
+// 评审阻断项（!233）：一列能归因、另一列只在单一来源内部分歧时，两列都要留在 differs_on 里，
+// 且计数器必须说出"还有一列没能归因"。旧写法 `cross.length ? cross : others` 会让地区这一列
+// 从疑点、从 differs_on、从计数器上同时消失，而 unattributed_groups 仍报 0。
+{
+  const entry = (id, meaning, region, source) => ({
+    id, project: 'p', source,
+    row: row({ headword: '人', pinyin: 'lang2', meaning, extra: { 地区: region } })
+  })
+  const mixed = identity.findIdentityConflicts([
+    entry('a1', '人类', '城东', 'srcA'),
+    entry('a2', '别人', '', 'srcB'),
+    entry('a3', '人类', '城西', 'srcA')
+  ])
+  assert.equal(mixed.findings.length, 3, JSON.stringify(mixed.findings.map((f) => f.kind)))
+  assert.equal(mixed.findings[0].kind, 'cross_source_conflict', '释义能归因到两个来源，就该升级成跨来源冲突')
+  assert.deepEqual(mixed.findings[0].params.differs_on, ['释义', '地区'],
+    '归因不到的列不许被归因得到的列吞掉')
+  assert.equal(mixed.unattributed_groups, 1, '部分列没归因上也要计数，不能报 0')
+
+  // 反向：全部列都能归因时，计数器必须仍是 0（别把这条改成"永远 +1"糊过去）
+  const allAttributed = identity.findIdentityConflicts([
+    entry('b1', '人类', '城东', 'srcA'),
+    entry('b2', '别人', '城西', 'srcB')
+  ])
+  assert.deepEqual(allAttributed.findings[0].params.differs_on, ['释义', '地区'])
+  assert.equal(allAttributed.unattributed_groups, 0, JSON.stringify(allAttributed))
+
+  // 整组都没归因（同来源）时仍是 duplicate_identity，且计数照旧
+  const sameSource = identity.findIdentityConflicts([
+    entry('c1', '人类', '城东', 'srcA'),
+    entry('c2', '别人', '城西', 'srcA')
+  ])
+  assert.equal(sameSource.findings[0].kind, 'duplicate_identity')
+  assert.deepEqual(sameSource.findings[0].params.differs_on, ['释义', '地区'])
+  assert.equal(sameSource.unattributed_groups, 1)
+}
+
 // 规模：10k 行的纯分组扫描必须是线性量级（防止退化成分组内两两比较）。
 {
   const entries = []

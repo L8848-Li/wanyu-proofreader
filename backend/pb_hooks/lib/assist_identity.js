@@ -151,10 +151,16 @@ function findIdentityConflicts(entries, dismissed = new Set()) {
     compared += bucket.length
     const sources = [...new Set(bucket.map((item) => item.source).filter(Boolean))]
     const cross = crossSourceFields(bucket)
-    const differsOn = cross.length ? cross : others
-    // 有分歧、但来源不足以判成跨来源的组要留下计数：漏报最坏的样子不是"没报"，
-    // 而是"没人知道这里没报"。#178 规定来源缺失时只报 duplicate_identity，这是纪律不是遗漏。
-    if (!cross.length) unattributed += 1
+    // 两个事实分开表达，不互相覆盖：
+    // - `differs_on` 是**这一组里所有取值有分歧的列**（措辞需要的是全集）；
+    // - `kind` / `message_key` 只在"至少有一列能归因到 ≥2 个登记来源"时才升级成跨来源冲突。
+    // 早先写成 `cross.length ? cross : others`，含义变成"只要有一列能归因，其余归因不到的
+    // 列就不再被报告"——那一列的分歧会同时从疑点、从 differs_on、从计数器上消失，
+    // 而 `unattributed_groups` 仍然报 0。这就是下面那段注释要防的"没人知道这里没报"。
+    const differsOn = others
+    // 计数口径与之一致：只要**存在归因不到的分歧列**就计数，不管是整组没归因（cross 为空）
+    // 还是部分列没归因。#178 规定来源缺失时只报 duplicate_identity，这是纪律不是遗漏。
+    if (others.some((field) => !cross.includes(field))) unattributed += 1
     for (const item of bucket) {
       const partners = bucket.filter((other) => other.id !== item.id).map((other) => other.id)
       findings.push({
