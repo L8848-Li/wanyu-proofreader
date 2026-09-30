@@ -5,19 +5,27 @@
 // 只报两类：
 //   1. duplicate_identity：身份相同但其余角色字段（meaning / region）不同 —— 允许并存、
 //      但人工应当看一眼；
-//   2. merged_columns（规则生产者）：同一行内出现「两个词头挤在一列」「释义列含调号串」
+//   2. cross_source_conflict：同一身份的不同取值来自**两个以上不同的登记来源**（#169 的
+//      `sources`）—— 同一个结论比 1 更值得先看，因为分歧不是"两次录入"而是"两份材料互斥"；
+//   3. merged_columns（规则生产者）：同一行内出现「两个词头挤在一列」「释义列含调号串」
 //      这类形状异常。与 #125 的 merged_columns 同语义、不同生产者。
 //
-// cross_source_conflict 在本文件里**故意不实现**：它必须经 #169 的 sources 登记来源，
-// 而 #169 至今 OPEN、`sources` 集合还不存在。#178 正文自己写明「来源缺失时只报
-// duplicate_identity / merged_columns，不报跨来源冲突，避免虚假结论」——
-// 所以这里缺的是依赖，不是遗漏。相关代码路径写成显式的 unknownSources 计数，
-// 让"没报"这件事可见，而不是静默返回空。
+// 2 与 1 **互斥而不是并列**：一组条目里取值分歧若已能归因到不同登记来源，就报
+// cross_source_conflict，否则报 duplicate_identity。两条都打会让同一条目挂两个 strong、
+// 把 difficulty_tier 直接推上 C 两次，队列里也会出现同一件事的两个条目（#178 验收要求
+// 的是"标在条目上并列出冲突来源集合"，不是一套事实两份疑点）。
+// 来源不足（未关联 sources，或整组只有单一来源）时一律落 1，并把这组计入
+// `unattributed_groups` 返回 —— "没报跨来源"必须是个可见的计数，不是静默省略。
 //
 // 不做的事（#178 非目标）：不合并、不删除、不做模糊匹配/编辑距离/向量相似度（那是 L2 #181）、
 // 不跨项目、不裁决谁对、不写回任何值。
 
-const IDENTITY_VERSION = "identity-v1"
+const IDENTITY_VERSION = "identity-v2"
+// 从 v1 升版的原因不是加了第三个 kind，而是**同身份分歧的归类规则变了**：
+// 以前所有分歧都叫 duplicate_identity，现在能归因到不同登记来源的那批改叫
+// cross_source_conflict。同一份数据用 v1 与 v2 会产出不同 kind，而 gate 的四元组里
+// 带 producer_version，所以升版等于"新 kinds 一律从 off 重新攒证据"——这正是
+// docs/plans/2026-09-25-assist-rule-thresholds.md §2 想要的效果，不是副作用。
 // 挂靠口径的词表由 assist_rules.js 拥有（ANCHOR_ENTRY / ANCHOR_COLUMN / ANCHOR_PDF_PAGE）。
 // #178 的三条疑点都是"逐成员产条、挂在这个成员自己那一条上"，所以一律 entry；契约侧
 // anchor 是**每条**必填（docs/plans/2026-09-25-review-findings.md §8.1 第 2 条），
@@ -86,8 +94,34 @@ function identityParts(row) {
  * 按身份键分组并找冲突。
  * @param entries [{id, project, row, source?}]  row 是已解析的对象
  * @param dismissed Set<groupKey>  人工标过 not_conflict 的组，整组跳过
- * @returns {findings, groups, compared, unknownSources}
+ * @returns {findings, groups, compared, unkeyed, unattributed_groups, dismissed_groups}
  */
+// 一次身份分组里，哪些字段的分歧可以归因到**不同的登记来源**。
+// 判据：该字段有 ≥2 个不同取值，且这些取值背后的来源集合不止一种。
+// 来源为空串（未关联 sources）不参与来源集合 —— 拿"未知"去证明"两份材料互斥"
+// 就是虚假结论，这正是 #178 正文要求"来源缺失时不报跨来源冲突"的原因。
+function crossSourceFields(bucket) {
+  const fields = []
+  for (const field of COMPARABLE_FIELDS) {
+    const signatures = new Set()
+    let valueCount = 0
+    const byValue = new Map()
+    for (const item of bucket) {
+      const value = normalizeText(item.row?.[field])
+      if (!value) continue
+      if (!byValue.has(value)) { byValue.set(value, new Set()); valueCount += 1 }
+      const source = String(item.source ?? "")
+      if (source) byValue.get(value).add(source)
+    }
+    if (valueCount < 2) continue
+    for (const sources of byValue.values()) {
+      if (sources.size) signatures.add([...sources].sort().join("|"))
+    }
+    if (signatures.size >= 2) fields.push(field)
+  }
+  return fields
+}
+
 function findIdentityConflicts(entries, dismissed = new Set()) {
   const groups = new Map()
   let noKey = 0
@@ -101,6 +135,7 @@ function findIdentityConflicts(entries, dismissed = new Set()) {
 
   const findings = []
   let compared = 0
+  let unattributed = 0
   for (const [key, bucket] of [...groups].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     if (bucket.length < 2) continue
     if (dismissed.has(key)) continue
@@ -115,20 +150,25 @@ function findIdentityConflicts(entries, dismissed = new Set()) {
     // 不是靠"记得判断"。这里断言的是一次比较都发生在身份相同的前提下。
     compared += bucket.length
     const sources = [...new Set(bucket.map((item) => item.source).filter(Boolean))]
+    const cross = crossSourceFields(bucket)
+    const differsOn = cross.length ? cross : others
+    // 有分歧、但来源不足以判成跨来源的组要留下计数：漏报最坏的样子不是"没报"，
+    // 而是"没人知道这里没报"。#178 规定来源缺失时只报 duplicate_identity，这是纪律不是遗漏。
+    if (!cross.length) unattributed += 1
     for (const item of bucket) {
       const partners = bucket.filter((other) => other.id !== item.id).map((other) => other.id)
       findings.push({
-        kind: "duplicate_identity",
+        kind: cross.length ? "cross_source_conflict" : "duplicate_identity",
         severity: "strong",
-        field: others.includes("释义") ? "释义" : others[0],
-        message_key: "same_identity_different_content",
+        field: differsOn.includes("释义") ? "释义" : differsOn[0],
+        message_key: cross.length ? "same_identity_across_sources" : "same_identity_different_content",
         // params 只带结构信息（列名、计数、来源标识）。词头与记音的**字面值**曾经在这里
         // 出现过（identity_headword / identity_reading），全仓没有任何消费方读它们，而
         // review_findings.params_json 会随 hint 原样下发给该条目的在手校对员
         // （契约见 docs/plans/2026-09-25-review-findings.md §8.1 第 1 条：按绝对解释，
-        // 连"本条目自己的原文"也不带）。措辞只需要 differs_on 与 partner_count。
+        // 连"本条目自己的原文"也不带）。措辞只需要 differs_on / partner_count / sources。
         params: {
-          differs_on: others,
+          differs_on: differsOn,
           partner_count: partners.length,
           sources
         },
@@ -136,7 +176,14 @@ function findIdentityConflicts(entries, dismissed = new Set()) {
       })
     }
   }
-  return { findings, groups: groups.size, compared, unkeyed: noKey, dismissed_groups: dismissed.size }
+  return {
+    findings,
+    groups: groups.size,
+    compared,
+    unkeyed: noKey,
+    unattributed_groups: unattributed,
+    dismissed_groups: dismissed.size
+  }
 }
 
 // merged_columns（规则生产者）：同一行内的形状异常。两类判据：
@@ -223,6 +270,7 @@ module.exports = {
   foldWidths,
   entryIdentityKey,
   identityParts,
+  crossSourceFields,
   findIdentityConflicts,
   findRowShapeAnomalies
 }

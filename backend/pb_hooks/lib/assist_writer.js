@@ -427,12 +427,37 @@ function projectShapeStats(pages) {
 // 条目读取复用 #177 那个 loadAllPages：两条批处理路径的扫描语义因此不会各自漂移
 // （同名函数在这里定义第二遍会被提升覆盖，#177 那条的保险丝就会静默失效）。
 
+// #178 的跨来源判据要的是**登记来源**（#169 的 sources），不是文件。
+// 链路是 pages.import_job → import_jobs.source，回落到 projects.source；两处都没关联时
+// 返回空串（= 无从判断，绝不猜测）。按 import_job 缓存，一次项目级重算每个批次只查一遍。
+function sourceOfPage(dao, page, projectSource, cache) {
+  const jobId = page.getString("import_job")
+  if (!jobId) return projectSource
+  if (cache.has(jobId)) return cache.get(jobId)
+  let resolved = ""
+  try {
+    resolved = dao.findRecordById("import_jobs", jobId).getString("source")
+  } catch {
+    resolved = ""
+  }
+  const value = resolved || projectSource
+  cache.set(jobId, value)
+  return value
+}
+
 function recomputeIdentity(dao, projectId) {
   const startedAt = new Date()
   const { findIdentityConflicts, findRowShapeAnomalies, entryIdentityKey, IDENTITY_VERSION } =
     require(`${__hooks}/lib/assist_identity.js`)
   const collection = dao.findCollectionByNameOrId("review_findings")
   const pages = loadAllPages(dao, projectId)
+  let projectSource = ""
+  try {
+    projectSource = dao.findRecordById("projects", projectId).getString("source")
+  } catch {
+    projectSource = ""
+  }
+  const sourceCache = new Map()
 
   const entries = []
   let backfilled = 0
@@ -444,7 +469,14 @@ function recomputeIdentity(dao, projectId) {
       dao.save(page) // 可重算的回填：键由列内容推导，不是原始证据
       backfilled += 1
     }
-    entries.push({ id: page.id, project: projectId, row, page, source: page.getString("project_file") })
+    // 这里曾经把 project_file 当 source 传进去（#169 落地前的替身）。文件不是来源：
+    // 同一个来源可以分多个文件导入，不同来源也可以合成一个文件，
+    // 用它判"跨来源冲突"会同时造出漏报与误报。
+    entries.push({
+      id: page.id, project: projectId, row, page,
+      source: sourceOfPage(dao, page, projectSource, sourceCache),
+      project_file: page.getString("project_file")
+    })
   }
 
   // 人工结论必须读全：少读的那些组会被重新报成冲突，等于静默推翻人的判断——
@@ -454,7 +486,8 @@ function recomputeIdentity(dao, projectId) {
     dao, "finding_dismissals", `project = "${projectId}" && status = "not_conflict"`, "group_key"
   ).map((row) => row.getString("group_key")))
 
-  const findings = [...findIdentityConflicts(entries, dismissed).findings]
+  const identityResult = findIdentityConflicts(entries, dismissed)
+  const findings = [...identityResult.findings]
   for (const entry of entries) findings.push(...findRowShapeAnomalies(entry))
   // #178 的 merged_columns 两类区间也走同一道闸门：跨行检出的 row 来自 rowForRules，
   // 与校对端切的 ocr_row_json 不是同一份串时，宁可只给字段不给高亮。
@@ -491,6 +524,12 @@ function recomputeIdentity(dao, projectId) {
     backfilled_keys: backfilled,
     offsets_dropped: identityOffsetsDropped,
     dismissed_groups: dismissed.size,
+    // 有内容分歧、但来源不足以判成跨来源的组数。它必须出现在响应里：
+    // "这一组没报 cross_source" 要么是判据判定不该报，要么是没登记来源可依据，
+    // 两者的运维动作完全不同（前者不用管，后者要去补 sources 关联）。
+    unattributed_groups: identityResult.unattributed_groups,
+    compared_rows: identityResult.compared,
+    unkeyed_rows: identityResult.unkeyed,
     producer_version: IDENTITY_VERSION,
     // 本路径**不刷 tier**（每页刷一次的 N+1 代价见 docs §耗时那一节），而 duplicate_identity
     // 与 merged_columns 都是 strong、会进判定表。所以这一批之后每一页的 difficulty_tier 描述的是

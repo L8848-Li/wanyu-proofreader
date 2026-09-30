@@ -42,16 +42,26 @@ async function request(url, { method = 'GET', token = '', body, expected = 200 }
   // 规则库统一经 finding(kind, …) 产出；跨行库用 kind: "…" 字面量。
   const emitted = (text, pattern) => [...new Set([...text.matchAll(pattern)].map((m) => m[1]))].sort()
   const ruleKinds = emitted(source('assist_rules.js'), /finding\(\s*"([a-z_]+)"/g)
-  const identityKinds = emitted(source('assist_identity.js'), /kind:\s*"([a-z_]+)"/g)
+  // 跨行库现在用 `kind: cond ? "a" : "b"` 的三元式产出（duplicate_identity 与
+  // cross_source_conflict 互斥，由同一处选一个），所以不能再按"kind: 紧跟字面量"的形状抽。
+  // 改为：抓文件里所有引号里的 snake_case token，再与"已知 kind 全集"取交集——
+  // 这样既不怕代码形状变化，也不会把 anchor 值之类的字符串误当成 kind。
+  const knownKinds = new Set([...writer.RULE_KINDS, ...writer.IDENTITY_KINDS])
+  const identityKinds = emitted(source('assist_identity.js'), /"([a-z_]+)"/g).filter((kind) => knownKinds.has(kind))
+  assert.ok(identityKinds.includes('cross_source_conflict') && identityKinds.includes('duplicate_identity')
+    && identityKinds.includes('merged_columns'),
+    `跨行库应产出三个 kind，抽取结果 ${JSON.stringify(identityKinds)}（抽取规则失效了，不是代码变了形状就默默放过）`)
   assert.deepEqual([...writer.RULE_KINDS].sort(), ruleKinds,
     `RULE_KINDS 与 assist_rules.js 的产出不再一致：${JSON.stringify({ declared: [...writer.RULE_KINDS].sort(), emitted: ruleKinds })}`)
-  // cross_source_conflict 是**声明了但暂不产出**的那一个：等 #169 的 OCR 结果字段。
-  // 写成显式差集而不是放宽整个断言，将来它真的产出了却没进集合会红，反之也红。
+  // cross_source_conflict 自 identity-v2 起**真的产出了**：#169 的 sources 已随 #224 合入，
+  // 写入端把 pages.import_job → import_jobs.source（回落 projects.source）解析成登记来源。
+  // 这条断言原来是"声明了但不产出"的显式缺口登记（#178 验收要求缺口必须可见而不是静默），
+  // 现在它反过来钉住"两个 kind 都在 IDENTITY_KINDS 里、也都能被产出"——漏一边都会红。
   const expectedIdentity = [...new Set([...identityKinds, 'cross_source_conflict'])].sort()
   assert.deepEqual([...writer.IDENTITY_KINDS].sort(), expectedIdentity,
     `IDENTITY_KINDS 与 assist_identity.js 的产出不再一致：${JSON.stringify({ declared: [...writer.IDENTITY_KINDS].sort(), expected: expectedIdentity })}`)
-  assert.equal(writer.IDENTITY_KINDS.includes('cross_source_conflict') && !identityKinds.includes('cross_source_conflict'),
-    true, 'cross_source_conflict 的缺口应按 #169 记录，两侧注释与断言也要同步改')
+  assert.ok(identityKinds.includes('cross_source_conflict') && identityKinds.includes('duplicate_identity'),
+    '两个同身份判据都必须真的可产出，且都在 IDENTITY_KINDS 里（否则旧批次下线不掉）')
   assert.deepEqual(writer.RULE_KINDS.filter((kind) => writer.IDENTITY_KINDS.includes(kind)), [],
     '两条批处理路径的 kind 不得重叠，否则又会互清批次')
 }
@@ -139,6 +149,63 @@ const row = (o) => ({ 词条: o.headword ?? '', 拼音: o.pinyin ?? '', 莆田IP
   assert.deepEqual(x1.evidence.partners, ['X2'])
   assert.deepEqual(x2.evidence.partners, ['X1'])
   assert.deepEqual(x1.params.differs_on, ['释义'])
+}
+
+// ---------- #178 跨来源冲突：同一身份、取值来自不同登记来源 ----------
+// 三个方向各自钉住，缺任何一个都会让"报不报 cross_source"变成撞运气：
+// ① 两个不同来源 → cross_source_conflict；② 同一个来源 → 仍是 duplicate_identity；
+// ③ 来源缺失/只有一侧有 → 落 duplicate_identity 并被计入 unattributed_groups（漏报要可见）。
+{
+  const entry = (id, headword, pinyin, meaning, source) => ({
+    id, project: 'p', source, row: row({ headword, pinyin, meaning })
+  })
+
+  const across = identity.findIdentityConflicts([
+    entry('S1', '人', 'lang2', '人类', 'srcA'),
+    entry('S2', '人', 'lang2', '别人', 'srcB')
+  ])
+  assert.deepEqual([...new Set(across.findings.map((f) => f.kind))], ['cross_source_conflict'],
+    `两条取值来自不同登记来源时必须都报 cross_source_conflict，实得 ${JSON.stringify(across.findings.map((f) => [f.kind, f.params]))}`)
+  assert.deepEqual(across.findings.map((f) => f.message_key).sort(),
+    ['same_identity_across_sources', 'same_identity_across_sources'])
+  for (const finding of across.findings) {
+    assert.deepEqual(finding.params.differs_on, ['释义'], '跨来源判据只说清"差在哪一列"')
+    assert.deepEqual([...finding.params.sources].sort(), ['srcA', 'srcB'], '冲突来源集合要如实列出')
+    assert.equal(finding.severity, 'strong')
+  }
+  assert.equal(across.unattributed_groups, 0, '能归因的组不该被计入"来源不足"')
+
+  const sameSource = identity.findIdentityConflicts([
+    entry('T1', '人', 'lang2', '人类', 'srcA'),
+    entry('T2', '人', 'lang2', '别人', 'srcA')
+  ])
+  assert.deepEqual([...new Set(sameSource.findings.map((f) => f.kind))], ['duplicate_identity'],
+    '同一来源内部的分歧不是"两份材料互斥"，不许升级成跨来源冲突')
+  assert.equal(sameSource.unattributed_groups, 1)
+
+  const halfKnown = identity.findIdentityConflicts([
+    entry('U1', '人', 'lang2', '人类', 'srcA'),
+    entry('U2', '人', 'lang2', '别人', '')
+  ])
+  assert.deepEqual([...new Set(halfKnown.findings.map((f) => f.kind))], ['duplicate_identity'],
+    '一侧来源未知时按 #178 只能报 duplicate_identity，避免虚假结论')
+  assert.equal(halfKnown.unattributed_groups, 1, '这种"没报跨来源"必须留下可见计数')
+
+  // 两个 kind 互斥：同一条目不许同时挂 duplicate 与 cross_source（会把 tier 推两次、
+  // 队列里也会出现同一事实的两份疑点）。
+  const mixed = identity.findIdentityConflicts([
+    entry('V1', '钱', 'cin5', '甲义', 'srcA'),
+    entry('V2', '钱', 'cin5', '乙义', 'srcB'),
+    entry('V3', '钱', 'cin5', '丙义', 'srcB')
+  ])
+  const perPage = new Map()
+  for (const finding of mixed.findings) {
+    perPage.set(finding.evidence.page, [...(perPage.get(finding.evidence.page) ?? []), finding.kind])
+  }
+  for (const [page, kinds] of perPage) {
+    assert.equal(kinds.length, 1, `${page} 挂了 ${kinds.length} 条同身份疑点：${JSON.stringify(kinds)}`)
+    assert.equal(new Set(kinds).size, 1)
+  }
 }
 
 // R-DEDUP 反向用例（验收项）：同词头不同拼音 ⇒ 一条 finding 都不许有。

@@ -30,7 +30,7 @@ const KIND_LABELS = {
   punctuation_mix: '标点混用',
   page_outlier: '分页异常',
   duplicate_identity: '疑似重复合并',
-  cross_source_conflict: '跨列不一致',
+  cross_source_conflict: '跨来源不一致',
   merged_columns: '疑似列合并'
 }
 
