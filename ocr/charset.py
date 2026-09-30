@@ -103,3 +103,12 @@ def is_abstain_char(ch):
     if ch == "" or ch.isspace():
         return True
     return in_ranges(ord(ch), ABSTAIN_RANGES)
+
+
+def is_placeholder_char(ch):
+    """是否「弃权占位符」（不含空格）：私用码位 PUA / IDS 运算符。
+
+    用于格级「低置信」判定（弃权质量指标）：正常文本里空格随处可见，
+    只有 PUA/IDS 占位才是引擎显式声明「这格我读不出」。
+    """
+    return bool(ch) and in_ranges(ord(ch), ABSTAIN_RANGES)

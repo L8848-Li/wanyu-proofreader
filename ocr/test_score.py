@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""score.py 的回归测试（覆盖 #120 审查意见的 6 个构造用例）。
+"""score.py 的回归测试（覆盖 #120 审查意见的 6 个构造用例，
+以及「合并未分离检出率」「弃权质量」两项指标的 happy/edge 用例）。
 
 只使用标准库 unittest，无需安装额外依赖。
 运行：python -m unittest ocr.test_score 或 python ocr/test_score.py
@@ -170,6 +171,91 @@ class TestIpaCharset(unittest.TestCase):
         test = [{"词头": "本本", "音读": "a", "释义": "x"}]
         r = score(gold, test, FIELDS)
         self.assertGreater(r["静默替换率"], 0.0)
+
+
+class TestMergeRecall(unittest.TestCase):
+    def test_merge_marked_by_space(self):
+        # AC-1：相邻两列并入左格、边界有空格弃权 → 计为合并且被标记
+        gold = [{"词头": "山", "音读": "san", "释义": "x"}]
+        test = [{"词头": "山 san", "音读": "", "释义": "x"}]
+        r = score(gold, test, FIELDS)
+        self.assertEqual(r["合并案例数"], 1)
+        self.assertEqual(r["合并未分离检出率"], 1.0)
+
+    def test_merge_marked_by_pua(self):
+        # PUA 占位在 A/B 边界同样算「被标记」
+        gold = [{"词头": "山", "音读": "san", "释义": "x"}]
+        test = [{"词头": "山\ue000san", "音读": "", "释义": "x"}]
+        r = score(gold, test, FIELDS)
+        self.assertEqual(r["合并案例数"], 1)
+        self.assertEqual(r["合并未分离检出率"], 1.0)
+
+    def test_silent_merge_not_marked(self):
+        # AC-2：静默合并（边界无任何标记）→ 计入分母、不计分子
+        gold = [{"词头": "山", "音读": "san", "释义": "x"}]
+        test = [{"词头": "山san", "音读": "", "释义": "x"}]
+        r = score(gold, test, FIELDS)
+        self.assertEqual(r["合并案例数"], 1)
+        self.assertEqual(r["合并未分离检出率"], 0.0)
+
+    def test_space_inside_right_field_is_not_boundary(self):
+        # 右列内部的空格不得误判为分界标记
+        gold = [{"词头": "山", "音读": "s n", "释义": "x"}]
+        test = [{"词头": "山s n", "音读": "", "释义": "x"}]
+        r = score(gold, test, FIELDS)
+        self.assertEqual(r["合并案例数"], 1)
+        self.assertEqual(r["合并未分离检出率"], 0.0)
+
+    def test_no_merge_case_is_none(self):
+        # AC-3：完全正确的输出没有合并案例 → None（无数据），不得报 1.0 冒充结论
+        gold = [{"词头": "山", "音读": "san", "释义": "x"}]
+        test = [dict(row) for row in gold]
+        r = score(gold, test, FIELDS)
+        self.assertEqual(r["合并案例数"], 0)
+        self.assertIsNone(r["合并未分离检出率"])
+
+    def test_three_column_run_on_is_out_of_scope(self):
+        # 口径限制（README 已写明）：三列连续合并不在合并检出率口径内，
+        # 由列归属准确率计错；此处锁定该行为不被悄悄改变
+        gold = [{"词头": "a", "音读": "b", "释义": "c"}]
+        test = [{"词头": "abc", "音读": "", "释义": ""}]
+        r = score(gold, test, FIELDS)
+        self.assertEqual(r["合并案例数"], 0)
+        self.assertLess(r["列归属准确率"], 1.0)
+
+
+class TestAbstainQuality(unittest.TestCase):
+    def test_pua_abstain_needs_human(self):
+        # AC-4：PUA 弃权且与 gold 不一致 → 确需人工，质量 = 1.0
+        gold = [{"词头": "㨄", "音读": "a", "释义": "x"}]
+        test = [{"词头": "\ue000", "音读": "a", "释义": "x"}]
+        r = score(gold, test, FIELDS)
+        self.assertEqual(r["弃权格数"], 1)
+        self.assertEqual(r["弃权质量"], 1.0)
+
+    def test_ids_abstain_counts(self):
+        # IDS 运算符（U+2FF0–U+2FFF）也是格级低置信标记
+        gold = [{"词头": "㨄", "音读": "a", "释义": "x"}]
+        test = [{"词头": "⿻木木", "音读": "a", "释义": "x"}]
+        r = score(gold, test, FIELDS)
+        self.assertEqual(r["弃权格数"], 1)
+        self.assertEqual(r["弃权质量"], 1.0)
+
+    def test_space_cells_not_abstained(self):
+        # AC-5：空格不构成低置信格 → 分母 0，弃权质量 = None
+        gold = [{"词头": "㨄", "音读": "a", "释义": "x"}]
+        test = [{"词头": "  ", "音读": "a", "释义": "x"}]
+        r = score(gold, test, FIELDS)
+        self.assertEqual(r["弃权格数"], 0)
+        self.assertIsNone(r["弃权质量"])
+
+    def test_abstain_on_already_correct_cell_is_wasted(self):
+        # gold 本就含 PUA 且被精确复制 → 弃权了但不需要人工，计入 wasted
+        gold = [{"词头": "\ue001", "音读": "a", "释义": "x"}]
+        test = [{"词头": "\ue001", "音读": "a", "释义": "x"}]
+        r = score(gold, test, FIELDS)
+        self.assertEqual(r["弃权格数"], 1)
+        self.assertEqual(r["弃权质量"], 0.0)
 
 
 if __name__ == "__main__":
