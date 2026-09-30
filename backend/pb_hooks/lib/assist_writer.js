@@ -62,6 +62,32 @@ function rowForRules(page) {
   return parseRow(page.get("ocr_row_json"))
 }
 
+// 命中区间的诚实性闸门。#231 的评审阻断项：
+// 前端 `locateSpan` 切的是**原文面板**那份串（`pages.ocr_row_json`，见 useStructuredRow.js
+// 与 ProofreadEditorView.vue 的 `originalRow`），而判据可能跑在 `proofread_row_json`
+// 或提交路径刚传进来的 `rowOverride` 上。两个串一旦不逐字相等，下标就切到错位的位置，
+// 最坏的症状是**高亮标在空白上**——而在界面上这看起来完全正常，只能靠断言防。
+//
+// 取值是「该字段两边完全相等才保留区间」：不做 trim 后比较，因为前端连空格都没删，
+// 差一个行首空格就已经错位了（评审给的反例正是 `" aŋ55"` vs `"aŋ55"`）。
+// 省略 `char_offsets` 不等于丢掉疑点：前端会降级为"聚焦该字段"（fieldHints.js 的定位降级分支），
+// 归因照旧、只是不画高亮。丢了几条要回给调用方（`offsets_dropped`），漏报不许静默。
+function dropUnfaithfulOffsets(findings, lookup) {
+  let dropped = 0
+  for (const item of findings) {
+    if (!item.evidence || !Array.isArray(item.evidence.char_offsets)) continue
+    const source = lookup(item)
+    // 挂靠本身都解析不出来时不在这里改东西：那种条目由 unanchored 计数负责说。
+    if (!source) continue
+    const judged = String(source.row?.[item.field] ?? "")
+    const shown = String(source.shown?.[item.field] ?? "")
+    if (judged === shown) continue
+    delete item.evidence.char_offsets
+    dropped += 1
+  }
+  return dropped
+}
+
 function contextFor(dao, page, storedRoles) {
   const { makeContext } = require(`${__hooks}/lib/assist_rules.js`)
   const { projectConfig: proofProjectConfig } = require(`${__hooks}/lib/keyboards.js`)
@@ -200,6 +226,9 @@ function recomputePage(dao, pageId, rowOverride = null) {
   const at = nowStamp()
   const row = rowOverride && Object.keys(rowOverride).length ? rowOverride : rowForRules(page)
   const findings = runEntryRules(contextFor(dao, page), row, pageId)
+  const offsetsDropped = dropUnfaithfulOffsets(findings, () => ({
+    row, shown: parseRow(page.get("ocr_row_json"))
+  }))
   const scope = pageScope(pageId, PROJECT_ONLY_MESSAGE_KEYS)
   const superseded = supersede(dao, collection, scope, at, RULE_KINDS)
   for (const item of findings) insertFinding(dao, collection, page, item, at, RULES_VERSION)
@@ -208,6 +237,7 @@ function recomputePage(dao, pageId, rowOverride = null) {
   const difficulty = refreshDifficulty(dao, page)
   return {
     page: pageId, findings: findings.length, superseded, settled,
+    offsets_dropped: offsetsDropped,
     producer_version: RULES_VERSION,
     difficulty_tier: difficulty.tier, difficulty_version: difficulty.version
   }
@@ -260,6 +290,15 @@ function recomputeProject(dao, projectId) {
   const superseded = supersede(dao, collection,
     [`project = "${projectId}"`, `producer = "${PRODUCER}"`], at, RULE_KINDS)
   const byId = new Map(pages.map((page) => [page.id, page]))
+  // 项目级路径同样要过诚实性闸门：`rowForRules` 优先返回 `proofread_row_json`（凑够票之后），
+  // 而校对端原文面板切的仍是 `ocr_row_json`。列级(R3/R4)与页级(R7)疑点的区间因此可能整体错位。
+  const rowByPage = new Map(entries.map((entry) => [entry.pageId, entry.row]))
+  const shownByPage = new Map(pages.map((page) => [page.id, parseRow(page.get("ocr_row_json"))]))
+  const offsetsDropped = dropUnfaithfulOffsets(findings, (item) => {
+    const pageId = item.page
+    if (!pageId || !rowByPage.has(pageId)) return null
+    return { row: rowByPage.get(pageId), shown: shownByPage.get(pageId) }
+  })
   const projectScope = [`project = "${projectId}"`, `producer = "${PRODUCER}"`]
   let inserted = 0
   let unanchored = 0
@@ -284,6 +323,7 @@ function recomputeProject(dao, projectId) {
     pages: pages.length,
     difficulty_tiers: tiers,
     findings: inserted,
+    offsets_dropped: offsetsDropped,
     unanchored,
     superseded,
     settled,
@@ -416,6 +456,14 @@ function recomputeIdentity(dao, projectId) {
 
   const findings = [...findIdentityConflicts(entries, dismissed).findings]
   for (const entry of entries) findings.push(...findRowShapeAnomalies(entry))
+  // #178 的 merged_columns 两类区间也走同一道闸门：跨行检出的 row 来自 rowForRules，
+  // 与校对端切的 ocr_row_json 不是同一份串时，宁可只给字段不给高亮。
+  const entryById = new Map(entries.map((entry) => [entry.id, entry]))
+  const identityOffsetsDropped = dropUnfaithfulOffsets(findings, (item) => {
+    const entry = entryById.get(item.evidence?.page)
+    if (!entry) return null
+    return { row: entry.row, shown: parseRow(entry.page.get("ocr_row_json")) }
+  })
 
   const at = nowStamp()
   const superseded = supersede(dao, collection,
@@ -441,6 +489,7 @@ function recomputeIdentity(dao, projectId) {
     unanchored,
     superseded,
     backfilled_keys: backfilled,
+    offsets_dropped: identityOffsetsDropped,
     dismissed_groups: dismissed.size,
     producer_version: IDENTITY_VERSION,
     // 本路径**不刷 tier**（每页刷一次的 N+1 代价见 docs §耗时那一节），而 duplicate_identity

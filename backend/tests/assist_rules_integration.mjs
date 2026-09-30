@@ -856,6 +856,69 @@ try {
   const busy = await timed('many_findings', trapped.id, expectedFor(trappedRow).length)
   assert.ok(busy > 0, '计时必须真的走过 HTTP 往返，不能恒为 0')
 
+  // 评审阻断项（!231）：区间算在**判据行**上、高亮打在**渲染行**（`ocr_row_json`）上时，
+  // 两个串可以不一样，下标就会切到空白上——而界面上看不出错了。
+  // 这一节把失配变成可证伪的断言：判据行仍是纯函数算出的那份，落库的区间被省略。
+  {
+    const driftProject = await createProject('Assist rules offsets drift', [worker], [boss])
+    // 前端拿去切的那份串：行首多一个空格（OCR 常见形状）
+    const shownRow = { 词条: '人', 拼音: 'lang2', 莆田IPA: ' aŋ55', 仙游IPA: ' aŋ55', 释义: '人类' }
+    // 第一轮凑够票之后落地的校对行：判据在它上面算
+    const judgedRow = { 词条: '人', 拼音: 'lang2', 莆田IPA: 'aŋ55', 仙游IPA: 'aŋ55', 释义: '人类' }
+    // 待认领的行不接受 PATCH（hooks 只允许认领），所以建行时一次写齐两份串：
+    // ocr_row_json 是前端拿去切的那份，proofread_row_json 是判据用的那份。
+    const mk = (pageNumber, shown, judged) => request('/api/collections/pages/records', {
+      method: 'POST', token: superAuth.token,
+      body: {
+        project: driftProject.id, page_number: pageNumber, pdf_page: pageNumber,
+        ocr_row_json: JSON.stringify(shown), ocr_text: Object.values(shown).join(' '),
+        proofread_row_json: JSON.stringify(judged), proofread_round: 2, mismatch_count: 0,
+        status: 'proofread'
+      }
+    })
+    const drift = await mk(1, shownRow, judgedRow)
+    // 对照组：校对行与导入行逐字相同 ⇒ 区间必须保留（防止闸门退化成"永远丢"）
+    const sameRow = { 词条: '天', 拼音: 'thin1', 莆田IPA: ' aŋ55', 仙游IPA: ' aŋ55', 释义: '天空' }
+    const same = await mk(2, sameRow, sameRow)
+
+    // 先在纯函数层确认"失配确实存在"：按判据行算出的下标，拿到渲染行上切到的是空白。
+    const judgedFindings = rules.runPageRules(ctx, judgedRow)
+    const judgedSpan = judgedFindings.find((item) =>
+      item.kind === 'confusable_substitution' && item.evidence?.char_offsets?.length)
+    assert.ok(judgedSpan, '判据行上没有可混淆字符，这节测试就没有前提')
+    assert.equal(sliceBySpans(shownRow[judgedSpan.field], judgedSpan.evidence.char_offsets[0]).trim(), '',
+      '前提不成立：按判据行的区间切渲染行竟然不是空白，那就没有失配可防了')
+
+    const driftRun = await request(`/api/fangji/projects/${driftProject.id}/findings/recompute`, { method: 'POST', token: boss.token })
+    assert.ok(driftRun.offsets_dropped >= 1, JSON.stringify(driftRun))
+    const driftView = await request(`/api/fangji/projects/${driftProject.id}/findings?per=200`, { token: boss.token })
+    const driftItems = driftView.items.filter((item) => item.page === drift.id)
+    const confusableOnDrift = driftItems.filter((item) => item.kind === 'confusable_substitution')
+    assert.ok(confusableOnDrift.length >= 1,
+      `省略区间不许把归因一起丢掉：${JSON.stringify(driftItems.map((i) => [i.kind, i.message.key]))}`)
+    for (const item of confusableOnDrift) {
+      assert.equal(item.evidence?.char_offsets, undefined,
+        `判据行 != 渲染行却带着区间：${JSON.stringify(item.evidence)}`)
+    }
+    // 对照组保留区间，并且切回的是**渲染行**里的实义内容（不是判据行）。
+    const sameItems = (await request(`/api/fangji/projects/${driftProject.id}/findings?per=200`, { token: boss.token }))
+      .items.filter((item) => item.page === same.id && item.kind === 'confusable_substitution')
+    assert.ok(sameItems.length >= 1, JSON.stringify(sameItems))
+    for (const item of sameItems) {
+      assert.ok(Array.isArray(item.evidence?.char_offsets), JSON.stringify(item.evidence))
+      for (const span of item.evidence.char_offsets) {
+        assertWellFormed(keyOf(item), sameRow[item.field], [span])
+        assert.ok(sliceBySpans(sameRow[item.field], span).trim().length > 0,
+          `${keyOf(item)} 在 ${item.field} 的 ${JSON.stringify(span)} 切出空白：${JSON.stringify(sameRow[item.field])}`)
+      }
+    }
+    // 单条路径（提交后与裁决后各跑一次的那条）共用同一个闸门函数，
+    // 它的响应计数与项目路径一致；这里不断言 HTTP 层，是因为该路由要求请求体带
+    // 当前租约凭据，用假凭据打一次只会测到权限分支而不是闸门。
+    assert.ok(confusableOnDrift.every((item) => shownRow[item.field] !== judgedRow[item.field]),
+      `只有"判据行 != 渲染行"的列才该被剥掉区间：${JSON.stringify(confusableOnDrift.map((i) => i.field))}`)
+  }
+
   console.log('Assist rules integration test passed.')
 } finally {
   for (const id of gateIds.reverse()) {
