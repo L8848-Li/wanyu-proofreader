@@ -146,6 +146,31 @@ function findIdentityConflicts(entries, dismissed = new Set()) {
 const TONE_RUN = /[1-7]{2,}/
 const IPA_HINT = /[ʰʷ̃ˀɒøæŋʔɨ]|\u0303/
 
+// 命中区间：`[[start, end), …]`，码位计、半开区间，口径与 assist_rules.js 的
+// predicateSpans 一字不差（消费端是 frontend/src/lib/fieldHints.js 的 locateSpan）。
+// 这里没有从 assist_rules.js 取那份现成实现，是因为本文件与它一样刻意保持"不 require 别的 lib"
+// ——两者都要能在 node 里直接跑，而 hook 侧的 `${__hooks}` 路径解析在 node 里不存在。
+// 新增第三处使用者时应当把它们收到同一个纯模块里，而不是再抄第三遍。
+function cellSpans(text, isHit) {
+  const indices = []
+  let index = 0
+  for (const ch of Array.from(String(text ?? ""))) {
+    if (isHit(ch)) indices.push(index)
+    index += 1
+  }
+  const merged = []
+  for (const position of indices) {
+    const last = merged[merged.length - 1]
+    // 与前一段的尾（开区间的下一个位置）相接才并入；写成 last[1] - 1 会把
+    // 「乙丙」这样相邻的两个码位拆成两段，高亮就变成一格一字。
+    if (last && position === last[1]) last[1] = position + 1
+    else merged.push([position, position + 1])
+  }
+  return merged
+}
+
+const CELL_SEPARATOR = /[\s、,，;；]/
+
 function findRowShapeAnomalies(entry) {
   const out = []
   const row = entry.row ?? {}
@@ -158,7 +183,12 @@ function findRowShapeAnomalies(entry) {
         kind: "merged_columns", severity: "strong", field,
         message_key: "multiple_headwords_in_cell",
         params: { segments: segments.length, sample_lengths: segments.slice(0, 4).map((s) => Array.from(s).length) },
-        evidence: { anchor: ANCHOR_ENTRY, page: entry.id, char_offsets: [] }
+        // 区间算在**未 trim 的原值**上：前端标的是 `originalRow[字段]` 那个串本身，
+        // 在 trim 后的串上取下标会整体偏移。分隔符不算命中，所以每段自然各自成区间。
+        evidence: {
+          anchor: ANCHOR_ENTRY, page: entry.id,
+          char_offsets: cellSpans(row[field], (ch) => !CELL_SEPARATOR.test(ch))
+        }
       })
     }
   }
@@ -170,7 +200,12 @@ function findRowShapeAnomalies(entry) {
         kind: "merged_columns", severity: "warn", field,
         message_key: "reading_inside_meaning_row",
         params: { has_tone_digits: TONE_RUN.test(value), has_ipa_marks: IPA_HINT.test(value) },
-        evidence: { anchor: ANCHOR_ENTRY, page: entry.id }
+        // 标的是「这格里像记音的那些字符」：判据本身就是"含数字调号串或 IPA 段"，
+        // 所以逐字符命中比只标第一个匹配更贴近校对员要看的东西。
+        evidence: {
+          anchor: ANCHOR_ENTRY, page: entry.id,
+          char_offsets: cellSpans(value, (ch) => /[1-7]/.test(ch) || IPA_HINT.test(ch))
+        }
       })
     }
   }

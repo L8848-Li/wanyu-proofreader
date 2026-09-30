@@ -10,6 +10,106 @@ const rules = require('../pb_hooks/lib/assist_rules.js')
 const writer = require('../pb_hooks/lib/assist_writer.js')
 const keyboardDefinition = require('../keyboards/hinghwa-dialect.json')
 
+// ---- 命中区间（evidence.char_offsets）的表驱动断言：不需要起服务 ----
+//
+// 口径必须与消费端一字不差：码位计、半开区间（frontend/src/lib/fieldHints.js 的
+// locateSpan 再把它换算成 UTF-16 选区）。这里钉三件事：
+// ① 区间能原样切回被标记的内容（切出来不是那串字符就是偏移了）；
+// ② 数码位而不是数 UTF-16（补充平面字符是唯一能把这两者分开的探针）；
+// ③ 判据侧已经算出来的位置（R2 的 1-based positions）与新区间互相印证，
+//    否则"新字段永远为空"这种退化会一路绿到线上。
+const identity = require('../pb_hooks/lib/assist_identity.js')
+const spanContext = rules.makeContext({ keyboards: [{ definition: keyboardDefinition }] })
+
+function sliceBySpans(text, [start, end]) {
+  return Array.from(String(text)).slice(start, end).join('')
+}
+
+function assertWellFormed(label, text, spans) {
+  const total = Array.from(String(text)).length
+  for (const [start, end] of spans) {
+    assert.ok(Number.isInteger(start) && Number.isInteger(end), `${label}: 区间端点必须是整数`)
+    assert.ok(start >= 0 && end > start && end <= total,
+      `${label}: 区间 [${start},${end}) 越界（共 ${total} 个码位）`)
+  }
+  for (let i = 0; i + 1 < spans.length; i++) {
+    assert.ok(spans[i][1] <= spans[i + 1][0], `${label}: 区间必须互不重叠且按序`)
+  }
+}
+
+function findOne(row, kind, messageKey) {
+  return rules.runPageRules(spanContext, row)
+    .find((item) => item.kind === kind && item.message_key === messageKey)
+}
+
+// ① + ②：占位符剔除会让下标偏移，补充平面会让码位与 UTF-16 分家。
+// 占位符与数字串之间必须留一个分隔符：PLACEHOLDER 是 `@[0-9a-fA-F]{4,6}` 且贪心，
+// '@DEAD1234' 会连数字一起吃掉六位十六进制，那样根本不存在长数字串，用例就空了。
+const placeholderRow = { 莆田IPA: 'a@DEAD 1234' }
+const placeholderHit = findOne(placeholderRow, 'reading_format_invalid', 'long_digit_run')
+assert.ok(placeholderHit, `占位符用例应命中 long_digit_run，实得 ${JSON.stringify(placeholderHit)}`)
+assert.deepEqual(placeholderHit.evidence.char_offsets, [[7, 11]],
+  '区间要回到未剔除占位符的原值上：按剔除后的串算会得出 [[2,6]]，那会把高亮打在 "@DEAD" 上')
+assert.equal(sliceBySpans(placeholderRow['莆田IPA'], placeholderHit.evidence.char_offsets[0]), '1234')
+
+const planeRow = { 莆田IPA: '𰻞x9876' }
+const planeHit = findOne(planeRow, 'reading_format_invalid', 'long_digit_run')
+assert.equal(planeHit.evidence.char_offsets[0][0], 2,
+  '𰻞 占 1 个码位但 2 个 UTF-16 单元；这里必须是码位下标 2 而不是 3')
+assert.equal(sliceBySpans(planeRow['莆田IPA'], planeHit.evidence.char_offsets[0]), '9876')
+
+const combiningRow = { 拼音: 'a\u0301b' }
+const combiningHit = findOne(combiningRow, 'encoding_form_anomaly', 'combining_marks_present')
+assert.equal(sliceBySpans(combiningRow['拼音'], combiningHit.evidence.char_offsets[0]), '\u0301')
+
+const repertoireRow = { 释义: '合格\uEE00不合格' }
+const repertoireHit = findOne(repertoireRow, 'char_out_of_repertoire', 'non_ipa_range_codepoints')
+assert.ok(repertoireHit, '私用区字符应命中 R1')
+assert.equal(sliceBySpans(repertoireRow['释义'], repertoireHit.evidence.char_offsets[0]), '\uEE00',
+  '区间必须正对着越界字符本身，而不是整格')
+
+// ③：R2 的 1-based positions 与新区间互相印证。
+const confusableRow = { 莆田IPA: 'a\u0251a' }
+const confusableHit = findOne(confusableRow, 'confusable_substitution', 'confusable_ascii_in_reading')
+assert.ok(confusableHit, `键盘里有 ${spanContext.confusables.size} 个可混淆映射，'a' 必须命中 R2`)
+const confusableSpans = confusableHit.evidence.char_offsets
+assert.ok(confusableSpans.length, '命中了就必须给出区间')
+for (const position of confusableHit.params.positions) {
+  assert.ok(confusableSpans.some(([start, end]) => position - 1 >= start && position - 1 < end),
+    `positions 里的第 ${position} 个字符没有被任何区间覆盖：${JSON.stringify(confusableSpans)}`)
+}
+assert.deepEqual(confusableSpans, [[0, 1], [2, 3]], '两个 a 各自成一段，\u0251 本身不该被标')
+
+// 空格子没有区间可标：这是刻意为之，必须钉住，否则以后有人误以为漏了实现。
+const roleContext = rules.makeContext({ keyboards: [{ definition: keyboardDefinition }], roles: { 词头: 'headword', 释义: 'meaning' } })
+const missingHit = rules.runPageRules(roleContext, { 词头: '甲' })
+  .find((item) => item.kind === 'missing_field')
+assert.ok(missingHit, '标注了 meaning 角色而该列为空，R5 必须命中')
+assert.equal(missingHit.evidence.char_offsets, undefined, '空格里没有可标的字符区间')
+
+for (const [label, text, item] of [
+  ['long_digit_run', placeholderRow['莆田IPA'], placeholderHit],
+  ['combining_marks_present', combiningRow['拼音'], combiningHit]
+]) {
+  assertWellFormed(label, text, item.evidence.char_offsets)
+}
+
+// 身份侧（#178 生产者）：merged_columns 的两类判据都要给区间。
+const mergedHeadword = identity.findRowShapeAnomalies({ id: 'p1', row: { 词条: ' 甲、乙丙 ', 释义: 'x' } })
+  .find((item) => item.message_key === 'multiple_headwords_in_cell')
+assert.ok(mergedHeadword, '两个词头挤在一格应命中 merged_columns')
+assert.deepEqual(
+  mergedHeadword.evidence.char_offsets.map((span) => sliceBySpans(' 甲、乙丙 ', span)),
+  ['甲', '乙丙'], '区间算在未 trim 的原值上，且分隔符不进区间')
+
+const mergedMeaning = identity.findRowShapeAnomalies({ id: 'p2', row: { 词条: '甲', 释义: '解释ŋ32' } })
+  .find((item) => item.message_key === 'reading_inside_meaning_row')
+assert.ok(mergedMeaning, '释义里混进记音应命中 merged_columns')
+assertWellFormed('reading_inside_meaning_row', '解释ŋ32', mergedMeaning.evidence.char_offsets)
+assert.equal(mergedMeaning.evidence.char_offsets.map((span) => sliceBySpans('解释ŋ32', span)).join(''), 'ŋ32')
+
+console.log('PASS: 命中区间按码位半开区间产出，占位符与补充平面两种偏移场景都切得回原文')
+
 const baseUrl = process.env.PB_URL || 'http://127.0.0.1:18091'
 const platformEmail = process.env.APP_ADMIN_EMAIL
 const platformPassword = process.env.APP_ADMIN_PASSWORD
@@ -543,6 +643,28 @@ try {
   assert.ok(trappedKeys.includes('reading_format_invalid/long_digit_run'), JSON.stringify(trappedKeys))
   assert.ok(trappedKeys.includes('confusable_substitution/confusable_ascii_in_reading'), JSON.stringify(trappedKeys))
   assert.ok(trappedKeys.includes('char_out_of_repertoire/non_ipa_range_codepoints'), JSON.stringify(trappedKeys))
+  // 区间必须真的穿过 重算 → 入库 → 接口 这条路径，而不只是纯函数的返回值：
+  // 上面那些深断言即便全跑在 node 里也证明不了 evidence_json 落库时没被丢掉或改写。
+  const spannedItems = managerView.items.filter((item) =>
+    item.page === trapped.id && anchorOf(item) === rules.ANCHOR_ENTRY && Array.isArray(item.evidence?.char_offsets))
+  assert.deepEqual([...new Set(spannedItems.map(keyOf))].sort(), [
+    'char_out_of_repertoire/non_ipa_range_codepoints',
+    'confusable_substitution/confusable_ascii_in_reading',
+    'reading_format_invalid/long_digit_run',
+  ], `三条格级疑点都该带着区间回到接口上：${JSON.stringify(spannedItems.map((i) => [keyOf(i), i.evidence]))}`)
+  // 两类判据各产两条（莆田IPA 与 仙游IPA 都含可混淆的 a），条数也要钉住：
+  // 只比去重后的种类会让"某一条丢了区间"这件事静默通过。
+  assert.equal(spannedItems.length, 4, JSON.stringify(spannedItems.map(keyOf)))
+  for (const item of spannedItems) {
+    const text = trappedRow[item.field]
+    assert.equal(typeof text, 'string', `${keyOf(item)} 的字段 ${item.field} 不在原行里`)
+    for (const span of item.evidence.char_offsets) {
+      assertWellFormed(keyOf(item), text, [span])
+      // 切出来必须是非空实义内容：标到空白上说明下标错位，而这在高亮里看不出来。
+      assert.ok(sliceBySpans(text, span).trim().length > 0,
+        `${keyOf(item)} 在 ${item.field} 的 ${JSON.stringify(span)} 切出空白：${JSON.stringify(text)}`)
+    }
+  }
   // 干净条目一条都不该有——包括 info 级与列级挂靠，否则"零信号条目"这个前提就不成立了。
   assert.deepEqual(managerView.items.filter((item) => item.page === clean.id), [],
     `clean entry flagged: ${JSON.stringify(managerView.items.filter((item) => item.page === clean.id))}`)
