@@ -112,6 +112,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .import-error-table table { min-width: 680px; }
 .import-error-table td { vertical-align: top; }
 .alert-error { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
+.alert-warning { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
 .alert-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; }
 .alert-info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; }
 
@@ -523,6 +524,21 @@ tr:hover td { background: var(--gray-50); }
 .source-value { display: grid; gap: .3rem; padding: .65rem .85rem; background: #f7f5ef; }
 .source-value > span { color: var(--gray-500); font-size: .68rem; font-weight: 600; }
 .source-value p { color: var(--gray-700); font-family: 'Fangji Phonetic', 'Noto Serif SC', 'Songti SC', STSong, 'Fangji Rare Han', serif; font-size: .88rem; line-height: 1.65; white-space: pre-wrap; }
+.source-value__hit { background: var(--primary-light); border-bottom: 2px solid var(--primary); }
+
+/* #161 机器疑点标注。状态不只靠颜色：标记始终带「疑」字与类别文本；
+   整套样式只挂在 .field-hint-* 新类上，hints 为空时这些节点根本不渲染。 */
+.field-hint-list { list-style: none; margin: .5rem .85rem 0; padding: 0; display: grid; gap: .3rem; }
+.field-hint-list--page { margin: 0 0 .75rem; padding: .6rem .85rem; border: 1px dashed var(--gray-300); border-radius: var(--radius); background: var(--gray-50); }
+.field-hint-list li { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+.field-hint-chip { display: inline-flex; align-items: center; gap: .3rem; padding: .1rem .5rem; border: 1px solid var(--gray-400); border-radius: 999px; background: #fff; color: var(--gray-700); font-size: .72rem; font-weight: 600; line-height: 1.5; }
+button.field-hint-chip { cursor: pointer; }
+.field-hint-chip b { font-size: .68rem; }
+.field-hint-chip--strong { border-color: var(--danger); color: var(--danger); border-width: 2px; font-weight: 700; }
+button.field-hint-chip:hover { background: var(--gray-100); }
+button.field-hint-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.field-hint-reason { color: var(--gray-600); font-size: .78rem; line-height: 1.5; }
+.field-hint-overflow, .field-hint-truncated { color: var(--gray-500); font-size: .74rem; }
 .proofread-textarea.form-control {
   min-height: 104px;
   border: 0;
@@ -567,6 +583,12 @@ tr:hover td { background: var(--gray-50); }
 .confirmation-dialog h2 { margin: .25rem 0 .7rem; font-size: 1.25rem; }
 .confirmation-dialog p { margin-top: .45rem; color: var(--gray-700); line-height: 1.65; }
 .confirmation-dialog__actions { display: flex; grid-column: 1 / -1; justify-content: flex-end; gap: .5rem; padding-top: .5rem; }
+.confirmation-dialog .confirmation-dialog__irreversible { margin-top: .75rem; color: #b91c1c; }
+.claim-next-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .65rem; }
+.keyboard-discovery {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  margin: 0; padding: .45rem .7rem; background: #eff6ff; color: #1e3a8a; font-size: .82rem; line-height: 1.45;
+}
 .confirmation-dialog__actions .onboarding-skip { margin-right: auto; }
 
 @keyframes skeleton-pulse { to { background-position: -200% 0; } }

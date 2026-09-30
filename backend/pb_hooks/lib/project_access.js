@@ -159,6 +159,7 @@ function projectJson(dao, projectRecord, authRecord) {
   }
   if (permissions.canManage) {
     result.required_proofreads = Math.max(2, projectRecord.getInt("required_proofreads") || 2)
+    result.source = projectRecord.getString("source") || ""
   }
   return result
 }

@@ -57,6 +57,15 @@
         </div>
         <template v-else>
           <div v-if="saved" class="alert alert-success" role="status">{{ saved }}</div>
+          <div v-if="claimNextFailure" class="alert alert-error" role="alert">
+            <p>{{ claimNextFailureNotice }}</p>
+            <div class="claim-next-actions">
+              <RouterLink to="/tasks" class="btn btn-secondary btn-sm">返回大厅</RouterLink>
+              <button type="button" class="btn btn-primary btn-sm" :disabled="retryingClaim" @click="retryClaimNext">
+                {{ retryingClaim ? '正在领取…' : '重试领取' }}
+              </button>
+            </div>
+          </div>
           <div v-if="leaseLost" class="alert alert-error lease-lost-alert" role="alert">
             <span>{{ saveError || '任务租约已失效，本地草稿仍然保留。' }}</span>
             <button class="btn btn-secondary btn-sm" :disabled="reclaiming" @click="reclaimTask">
@@ -83,6 +92,19 @@
           </div>
 
       <RareCharacterNotice :texts="[...Object.values(originalRow), ...Object.values(editedRow)]" />
+
+          <ul v-if="pageHintList.length || pageHintOverflow" class="field-hint-list field-hint-list--page" aria-label="本条整条级机器疑点">
+            <li v-for="(hint, hintIndex) in pageHintList" :key="`page-hint-${hintIndex}`">
+              <span class="field-hint-chip" :class="{ 'field-hint-chip--strong': hint.highlight }">
+                <b aria-hidden="true">疑</b>{{ hintLabel(hint.kind) }}
+              </span>
+              <span class="field-hint-reason">{{ hint.text }}</span>
+            </li>
+            <li v-if="pageHintOverflow" class="field-hint-overflow">本条疑点较多，已按密度折叠 {{ pageHintOverflow }} 条</li>
+          </ul>
+          <p v-if="findingsTruncated" class="field-hint-truncated text-sm text-muted" role="status">
+            本条疑点数量超出单次读取上限，以上标注不完整，请勿以“无标记”当作已核对通过。
+          </p>
 
           <div class="proofread-fields">
             <article
@@ -114,8 +136,26 @@
 
               <div class="source-value">
                 <span>待校对原文</span>
-                <p>{{ originalRow[header] || '（空白）' }}</p>
+                <p v-if="!sourceSegments(header)">{{ originalRow[header] || '（空白）' }}</p>
+                <p v-else><span
+                  v-for="(segment, segmentIndex) in sourceSegments(header)"
+                  :key="`${header}-span-${segmentIndex}`"
+                  :class="{ 'source-value__hit': segment.hit }"
+                >{{ segment.text }}</span></p>
               </div>
+
+              <ul v-if="fieldHintList(header).length || fieldHintOverflow(header)" class="field-hint-list" :aria-label="`${header} 机器疑点`">
+                <li v-for="(hint, hintIndex) in fieldHintList(header)" :key="`${header}-hint-${hintIndex}`">
+                  <button
+                    type="button"
+                    class="field-hint-chip"
+                    :class="{ 'field-hint-chip--strong': hint.highlight }"
+                    @click="locateHint(header, hint)"
+                  ><b aria-hidden="true">疑</b>{{ hintLabel(hint.kind) }}</button>
+                  <span class="field-hint-reason">{{ hint.text }}</span>
+                </li>
+                <li v-if="fieldHintOverflow(header)" class="field-hint-overflow">本字段疑点较多，已按密度折叠 {{ fieldHintOverflow(header) }} 条</li>
+              </ul>
 
               <label class="sr-only" :for="`proofread-field-${index}`">{{ header }} 校对结果</label>
               <textarea
@@ -158,9 +198,12 @@
         <p v-else>
           本条没有修改字段，提交表示你确认导入内容全部正确。
         </p>
-        <p class="text-sm text-muted">
-          提交后不能自行撤回；系统会自动流转并尝试领取本项目下一条。
-        </p>
+          <p class="alert alert-error confirmation-dialog__irreversible" role="alert">
+            {{ irreversibleSubmitNotice }}
+          </p>
+          <p class="text-sm text-muted">
+            确认后，系统会自动流转并尝试领取本项目下一条。
+          </p>
         <template #actions>
           <button type="button" class="btn btn-secondary" @click="closeSubmitReview">继续检查</button>
           <button
@@ -190,6 +233,15 @@ import { PAGE_STATUS } from '@/constants/pageStatus'
 import { shouldIgnoreEditorShortcut } from '@/lib/onboarding'
 import { getChangedFields } from '@/lib/workspaceInsights'
 import {
+  hintKindLabel,
+  locateSpan,
+  pageLevelHints,
+  pageLevelOverflow,
+  prepareFieldHints,
+  hintsForField,
+  hintsOverflowFor
+} from '@/lib/fieldHints'
+import {
   clearTaskDraft,
   loadTaskDraft,
   saveTaskDraft,
@@ -200,12 +252,14 @@ import { clearTaskLease, loadTaskLease, saveTaskLease } from '@/lib/taskLease'
 import { currentUserId as getCurrentUserId } from '@/services/authService'
 import {
   claimNextProjectPage,
+  getPageFindings,
   getProofreaderTask,
   listProofreaderNeighborTasks,
   releaseTaskLease,
   renewTaskLease,
   submitTwoPassProofread
 } from '@/services/pagesService'
+import { CLAIM_NEXT_FAILURE_NOTICE, IRREVERSIBLE_SUBMIT_NOTICE } from '@/lib/proofreadNotices'
 import { formatClaimConflict, getPbMessage } from '@/utils/pbErrors'
 
 const route = useRoute()
@@ -231,7 +285,17 @@ const leaseLost = ref(false)
 const renewingLease = ref(false)
 const leaseNavigationAllowed = ref(false)
 const submittedHere = ref(false)
+const claimNextFailure = ref(false)
+const retryingClaim = ref(false)
+const irreversibleSubmitNotice = IRREVERSIBLE_SUBMIT_NOTICE
+const claimNextFailureNotice = CLAIM_NEXT_FAILURE_NOTICE
 const textareaRefs = new Map()
+// 机器疑点（#161 渲染侧）。hints 恒为空时 fieldHints 就是 prepareFieldHints([]) 的
+// 冻结空结构：列表与高亮分支全部走 v-if=false，界面与今天像素级一致。
+const fieldHints = ref(prepareFieldHints([]))
+const findingsTruncated = ref(false)
+const locatedSpan = ref(null)
+let findingsGeneration = 0
 let draftTimer = null
 let leaseRenewTimer = null
 
@@ -369,7 +433,13 @@ async function loadPage() {
   leaseLost.value = false
   leaseNavigationAllowed.value = false
   submittedHere.value = false
+  claimNextFailure.value = false
+  retryingClaim.value = false
   textareaRefs.clear()
+  fieldHints.value = prepareFieldHints([])
+  findingsTruncated.value = false
+  locatedSpan.value = null
+  findingsGeneration += 1
 
   try {
     page.value = await getProofreaderTask(route.params.id)
@@ -378,6 +448,8 @@ async function loadPage() {
     restoreDraft()
     await restoreOrAcquireLease()
     await loadNeighbors()
+    // 疑点读取是渐进增强：不 await，失败或空数组都保持界面原样（getPageFindings 内部已兜错）。
+    void loadFindings(page.value.id)
     const flash = takeTaskFlash(window.sessionStorage)
     if (flash) saved.value = flash
     await nextTick()
@@ -460,6 +532,56 @@ function rememberSelection(header, event) {
 
 function isFieldChanged(header) {
   return changedFields.value.includes(header)
+}
+
+const pageHintList = computed(() => pageLevelHints(fieldHints.value))
+const pageHintOverflow = computed(() => pageLevelOverflow(fieldHints.value))
+
+function fieldHintList(header) {
+  return hintsForField(fieldHints.value, header)
+}
+
+function fieldHintOverflow(header) {
+  return hintsOverflowFor(fieldHints.value, header)
+}
+
+function hintLabel(kind) {
+  return hintKindLabel(kind)
+}
+
+// 疑点点击联动（#161 期望结果 3 的第一级）：先定位到字段卡，
+// 再用 evidence.char_offsets（SourceSpan，码位计）把命中区间标进「待校对原文」。
+// 页图内的坐标高亮等 #107-A3 页面图子项落地后再接，本次不动 PDF 侧。
+function locateHint(header, hint) {
+  const index = rowHeaders.value.indexOf(header)
+  if (index >= 0) selectField(index)
+  activeField.value = header
+  const source = String(originalRow.value?.[header] ?? '')
+  const span = locateSpan(source, hint?.evidence?.char_offsets)
+  locatedSpan.value = span ? { field: header, span } : null
+  const textarea = textareaRefs.get(header)
+  if (textarea && mobile.value) textarea.scrollIntoView({ block: 'nearest' })
+}
+
+// 无定位结果时返回 null——模板走与今天完全一致的单一文本分支。
+function sourceSegments(header) {
+  if (locatedSpan.value?.field !== header) return null
+  const source = String(originalRow.value?.[header] ?? '')
+  const { start, end } = locatedSpan.value.span
+  if (start >= end || end > source.length) return null
+  const segments = []
+  if (start > 0) segments.push({ text: source.slice(0, start), hit: false })
+  segments.push({ text: source.slice(start, end), hit: true })
+  if (end < source.length) segments.push({ text: source.slice(end), hit: false })
+  return segments
+}
+
+async function loadFindings(pageId) {
+  const generation = ++findingsGeneration
+  const result = await getPageFindings(pageId)
+  if (generation !== findingsGeneration || page.value?.id !== pageId) return
+  fieldHints.value = prepareFieldHints(result.hints, rowHeaders.value)
+  findingsTruncated.value = result.truncated
 }
 
 async function restoreField(header) {
@@ -593,6 +715,7 @@ async function submitProofread() {
   saving.value = true
   saved.value = ''
   saveError.value = ''
+  claimNextFailure.value = false
   const projectId = page.value?.project
   const userId = currentUserId.value
   const rowJson = stringifyEditedRow()
@@ -632,7 +755,7 @@ async function submitProofread() {
       }
       saved.value += ' 当前项目暂无下一条可由你处理的任务。'
     } catch (claimError) {
-      saved.value += ' 自动接取下一条失败，请返回项目大厅刷新后重试。'
+      claimNextFailure.value = true
       console.warn('Failed to claim next page after successful proofread submit:', claimError)
     }
 
@@ -642,6 +765,29 @@ async function submitProofread() {
     else saveError.value = message
   } finally {
     saving.value = false
+  }
+}
+
+async function retryClaimNext() {
+  if (retryingClaim.value || !page.value || !currentUserId.value) return
+  retryingClaim.value = true
+  try {
+    const nextPage = await claimNextProjectPage(page.value.project, currentUserId.value, page.value.id)
+    if (nextPage?.id) {
+      saveClaimedLease(nextPage)
+      setTaskFlash(window.sessionStorage, saved.value)
+      claimNextFailure.value = false
+      await router.push(`/tasks/${nextPage.id}/edit`)
+      return
+    }
+    claimNextFailure.value = false
+    if (!saved.value.includes('暂无下一条')) {
+      saved.value += ' 当前项目暂无下一条可由你处理的任务。'
+    }
+  } catch (claimError) {
+    console.warn('Failed to retry claim after proofread submit:', claimError)
+  } finally {
+    retryingClaim.value = false
   }
 }
 

@@ -9,6 +9,7 @@ RUN go mod download
 # Keep the build context future-proof as backend services are split into
 # focused files; tests still run inside the image build before compilation.
 COPY *.go ./
+COPY reviewbundle/ ./reviewbundle/
 COPY pb_migrations/ ./pb_migrations/
 COPY keyboards/ ./keyboards/
 RUN go test ./...

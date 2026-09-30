@@ -25,6 +25,40 @@
         </form>
       </section>
 
+      <section id="column-roles" class="card project-settings-section mb-6" aria-labelledby="column-roles-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="column-roles-title">列角色</h2>
+            <p>给已经导入的列起一个角色。这只是标注，不会改列名，也不会改校对页的排版。没标过的列都是未标注。</p>
+          </div>
+        </div>
+        <p v-if="rolesError" class="alert alert-error" role="alert">{{ rolesError }}</p>
+        <p v-if="rolesSuccess" class="alert alert-success" role="status">{{ rolesSuccess }}</p>
+        <p v-if="!columnRoles.length" class="text-muted">还没有导入列。导入 CSV 之后可以在这里标注。</p>
+        <div v-else class="table-wrapper">
+          <table>
+            <thead><tr><th>列名</th><th>角色</th><th>状态</th></tr></thead>
+            <tbody>
+              <tr v-for="column in columnRoles" :key="column.name">
+                <td><code>{{ column.name }}</code></td>
+                <td>
+                  <select v-model="column.role" class="form-control">
+                    <option v-for="role in FIELD_ROLES" :key="role" :value="role">{{ FIELD_ROLE_LABELS[role] }}</option>
+                  </select>
+                </td>
+                <td class="text-sm text-muted">{{ column.present ? '当前导入里有这一列' : '这一列已经不在当前导入结果里，标注仍保留，但不会生效' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-if="columnRolesNote" class="text-sm text-muted mt-3">{{ columnRolesNote }}</p>
+        <div class="section-heading mt-3">
+          <button type="button" class="btn btn-secondary" :disabled="!columnRoles.length" @click="applyRoleSuggestions">按列名填入建议</button>
+          <button type="button" class="btn btn-primary" :disabled="savingRoles || !columnRoles.length" @click="saveRoles">{{ savingRoles ? '正在保存…' : '保存列角色' }}</button>
+        </div>
+        <p class="text-sm text-muted mt-3">建议只是按列名猜的默认值，可以不采用。保存之后，条目里的原文和校对结果不会被改写。</p>
+      </section>
+
       <section id="project-access" class="card project-settings-section mb-6">
         <div class="section-heading"><div><h2>加入方式与校对规则</h2><p>指定成员是默认且最严格的模式。</p></div></div>
         <form class="settings-form" @submit.prevent="saveSettings">
@@ -181,14 +215,18 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   deleteProject,
   generateProjectVolunteers,
+  getColumnRoles,
   getProject,
   listMemberCandidates,
   listProjectMembers,
   removeProjectMember,
   setProjectMember,
+  saveColumnRoles,
   transferProjectOwnership,
   updateProject
 } from '@/services/projectsService'
+import { FIELD_ROLE_LABELS, FIELD_ROLES } from '@/constants/fieldRoles'
+import { suggestColumnRoles } from '@/lib/columnRoleSuggestion'
 import { configureProjectKeyboards, getProjectKeyboards, listKeyboardLibrary } from '@/services/keyboardsService'
 import { useAuthStore } from '@/stores/auth'
 import { getPbMessage } from '@/utils/pbErrors'
@@ -219,6 +257,11 @@ const savingDetails = ref(false)
 const detailsError = ref('')
 const detailsSuccess = ref('')
 const detailsDirty = computed(() => details.name.trim() !== project.value?.name || details.description.trim() !== (project.value?.description || ''))
+const columnRoles = ref([])
+const columnRolesNote = ref('')
+const savingRoles = ref(false)
+const rolesError = ref('')
+const rolesSuccess = ref('')
 const settings = reactive({ accessMode: 'members_only', password: '', requiredProofreads: 2 })
 const newMember = reactive({ userId: '', role: 'proofreader' })
 const candidateTerm = ref('')
@@ -246,12 +289,15 @@ async function load() {
     details.description = project.value.description || ''
     settings.accessMode = project.value.access_mode
     settings.requiredProofreads = Number(project.value.required_proofreads || 2)
-    const [nextMembers, nextCandidates, nextKeyboardLibrary, keyboardConfig] = await Promise.all([
+    const [nextMembers, nextCandidates, nextKeyboardLibrary, keyboardConfig, roleView] = await Promise.all([
       listProjectMembers(projectId),
       listMemberCandidates(projectId),
       listKeyboardLibrary(),
-      getProjectKeyboards(projectId)
+      getProjectKeyboards(projectId),
+      getColumnRoles(projectId)
     ])
+    columnRoles.value = (roleView.columns || []).map((column) => ({ ...column }))
+    columnRolesNote.value = roleView.headers_truncated ? '列名较多，这里只展示前 1000 条里出现过的列。' : ''
     members.value = nextMembers
     candidates.value = nextCandidates
     keyboardLibrary.value = nextKeyboardLibrary
@@ -269,6 +315,32 @@ async function searchCandidates() {
     newMember.userId = ''
   } catch (e) { error.value = getPbMessage(e, e.message || '查找用户失败。') }
   finally { searchingCandidates.value = false }
+}
+
+function applyRoleSuggestions() {
+  const headers = columnRoles.value.filter((column) => column.present).map((column) => column.name)
+  const suggested = suggestColumnRoles(headers)
+  for (const column of columnRoles.value) {
+    if (column.present && column.role === 'unspecified') column.role = suggested[column.name] || 'unspecified'
+  }
+}
+
+async function saveRoles() {
+  if (savingRoles.value) return
+  savingRoles.value = true
+  rolesError.value = ''
+  rolesSuccess.value = ''
+  try {
+    const roles = {}
+    for (const column of columnRoles.value) roles[column.name] = column.role
+    const roleView = await saveColumnRoles(projectId, roles)
+    columnRoles.value = (roleView.columns || []).map((column) => ({ ...column }))
+    rolesSuccess.value = '列角色已保存。条目内容没有改动。'
+  } catch (e) {
+    rolesError.value = getPbMessage(e, '列角色保存失败。')
+  } finally {
+    savingRoles.value = false
+  }
 }
 
 async function saveDetails() {

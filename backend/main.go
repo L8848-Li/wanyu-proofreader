@@ -50,6 +50,7 @@ func main() {
 	})
 	registerTrustedClientIP(app)
 	registerProfile(app)
+	registerBundleValidation(app)
 	registerJoinAttemptCleanup(app)
 
 	if err := registerKeyboardPresets(app); err != nil {

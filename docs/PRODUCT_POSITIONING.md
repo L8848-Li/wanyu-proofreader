@@ -62,7 +62,7 @@
 
 ## 4. 数据交换
 
-近期实行 Review Bundle v0 的人工可控批次交换，而不是实时双向同步。
+近期实行 Review Bundle v0 的人工可控批次交换，而不是实时双向同步。字段契约见 [`plans/2026-09-29-review-bundle-v0.md`](plans/2026-09-29-review-bundle-v0.md)。
 
 下图中 X = 乡声集盒，W = 万语校坊：
 

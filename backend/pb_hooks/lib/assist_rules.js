@@ -395,7 +395,12 @@ function runProjectRules(ctx, entries) {
   const columns = columnsOf(list)
   const out = []
   for (const entry of list) {
-    for (const item of runPageRules(ctx, entry.row)) {
+    // 项目级只算一次共享上下文，但「这一列在不在当前行里」必须按条判断。
+    // 不传 roles 的旧调用仍用共享 ctx，避免把未出现的列并进每一行。
+    const entryCtx = Object.prototype.hasOwnProperty.call(entry, "roles")
+      ? { ...ctx, roles: entry.roles }
+      : ctx
+    for (const item of runPageRules(entryCtx, entry.row)) {
       if (!CELL_MESSAGE_KEYS.includes(item.message_key)) {
         // 新增格级规则却没登记进 CELL_MESSAGE_KEYS：不挡就会静默漏掉，而且症状出现在
         // 别处（项目级疑点被单条重算吃掉），所以在这里直接抛错。

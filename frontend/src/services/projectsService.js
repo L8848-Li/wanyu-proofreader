@@ -21,6 +21,20 @@ export async function createProject(data) {
   })
 }
 
+export async function getColumnRoles(projectId) {
+  return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/column-roles`, {
+    requestKey: null
+  })
+}
+
+export async function saveColumnRoles(projectId, roles) {
+  return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/column-roles`, {
+    method: 'PUT',
+    body: { roles },
+    requestKey: null
+  })
+}
+
 export async function updateProject(projectId, data) {
   return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}`, {
     method: 'PATCH',

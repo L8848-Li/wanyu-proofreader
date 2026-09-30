@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +43,8 @@ const (
 	artifactCleanupBatch = 500
 	pdfValidator         = "pdfcpu v0.8.1"
 )
+
+var importSourceLogicalID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$`)
 
 type importWork struct {
 	kind       string
@@ -175,6 +178,24 @@ func (s *importService) findProject(projectID string) (*core.Record, error) {
 	return project, nil
 }
 
+func (s *importService) importSourceLink(raw string) (string, string, error) {
+	ref := strings.TrimSpace(raw)
+	if ref == "" {
+		return "", "unknown", nil
+	}
+	if record, err := s.app.FindRecordById("sources", ref); err == nil && record != nil {
+		return record.Id, "linked", nil
+	}
+	if !importSourceLogicalID.MatchString(ref) {
+		return "", "", apis.NewBadRequestError("来源标识无效。请填写已登记的 logical_id，或留空以标记为 source:unknown。", nil)
+	}
+	records, err := s.app.FindRecordsByFilter("sources", fmt.Sprintf("logical_id = %q", ref), "", 1, 0)
+	if err != nil || len(records) == 0 {
+		return "", "", apis.NewBadRequestError("找不到要关联的来源。请核对 logical_id，或留空以标记为 source:unknown。", err)
+	}
+	return records[0].Id, "linked", nil
+}
+
 func (s *importService) uploadCSV(c *core.RequestEvent) error {
 	requestID := ensureRequestID(c)
 	inspectOnly := strings.EqualFold(strings.TrimSpace(c.Request.FormValue("inspect_only")), "true")
@@ -253,7 +274,12 @@ func (s *importService) uploadCSV(c *core.RequestEvent) error {
 		initialStatus = "inspecting"
 		workKind = "csv_inspect"
 	}
-	form.Load(map[string]any{
+	sourceID, sourceLink, err := s.importSourceLink(c.Request.FormValue("source_id"))
+	if err != nil {
+		logUploadRejected(requestID, "csv", projectID, "source", "CSV source link was rejected", err)
+		return err
+	}
+	payload := map[string]any{
 		"project":               projectID,
 		"created_by":            auth.Id,
 		"original_filename":     header.Filename,
@@ -268,7 +294,12 @@ func (s *importService) uploadCSV(c *core.RequestEvent) error {
 		"project_file":          projectFileID,
 		"pdf_page_limit":        pdfPageLimit,
 		"pdf_snapshot_captured": true,
-	})
+		"source_link":           sourceLink,
+	}
+	if sourceID != "" {
+		payload["source"] = sourceID
+	}
+	form.Load(payload)
 	file, err := filesystem.NewFileFromMultipart(header)
 	if err != nil {
 		return apis.NewBadRequestError("无法读取上传的 CSV 文件。", err)

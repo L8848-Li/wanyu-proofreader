@@ -76,6 +76,11 @@ const routes = [
         component: () => import('@/views/admin/CreatorGrantsView.vue')
       },
       {
+        path: 'sources',
+        name: 'SourceRegistry',
+        component: () => import('@/views/admin/SourcesView.vue')
+      },
+      {
         path: 'projects/:projectId/arbitration/:pageId',
         name: 'Arbitration',
         component: () => import('@/views/admin/ArbitrationView.vue')

@@ -1,0 +1,27 @@
+{
+  "bundle": {
+    "bundle_id": "rrb-synthetic-0001",
+    "schema_version": "ReviewResultBundle/v0",
+    "created_at": "2026-09-29T01:00:00Z"
+  },
+  "source_system": "wanyu-proofreader",
+  "result_of": {
+    "bundle_id": "rb-synthetic-0001"
+  },
+  "source_id": "synthetic-lexicon",
+  "source_version": "2026-09-29",
+  "requested_fields": [
+    "headword",
+    "reading"
+  ],
+  "rights_ref": "src-synthetic-0001",
+  "operator": "synthetic-operator",
+  "files": [
+    {
+      "path": "results.jsonl",
+      "sha256": "febaecfced23a6a3058639af0d69d03914dea930f56867a7c6e92eb8a224cf93",
+      "lines": 2,
+      "bytes": 286
+    }
+  ]
+}
