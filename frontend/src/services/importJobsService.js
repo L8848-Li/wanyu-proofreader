@@ -1,8 +1,9 @@
 import pb from '@/lib/pocketbase'
 
-export async function createCsvImport({ projectId, file }) {
+export async function createCsvImport({ projectId, file, sourceId = '' }) {
   const formData = new FormData()
   formData.append('file', file)
+  if (sourceId) formData.append('source_id', sourceId)
   return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/imports/csv`, {
     method: 'POST',
     body: formData,
@@ -10,10 +11,11 @@ export async function createCsvImport({ projectId, file }) {
   })
 }
 
-export async function createCsvInspection({ projectId, file }) {
+export async function createCsvInspection({ projectId, file, sourceId = '' }) {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('inspect_only', 'true')
+  if (sourceId) formData.append('source_id', sourceId)
   return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/imports/csv`, {
     method: 'POST',
     body: formData,

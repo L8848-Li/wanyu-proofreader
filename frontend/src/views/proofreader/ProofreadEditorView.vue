@@ -57,6 +57,15 @@
         </div>
         <template v-else>
           <div v-if="saved" class="alert alert-success" role="status">{{ saved }}</div>
+          <div v-if="claimNextFailure" class="alert alert-error" role="alert">
+            <p>{{ claimNextFailureNotice }}</p>
+            <div class="claim-next-actions">
+              <RouterLink to="/tasks" class="btn btn-secondary btn-sm">返回大厅</RouterLink>
+              <button type="button" class="btn btn-primary btn-sm" :disabled="retryingClaim" @click="retryClaimNext">
+                {{ retryingClaim ? '正在领取…' : '重试领取' }}
+              </button>
+            </div>
+          </div>
           <div v-if="leaseLost" class="alert alert-error lease-lost-alert" role="alert">
             <span>{{ saveError || '任务租约已失效，本地草稿仍然保留。' }}</span>
             <button class="btn btn-secondary btn-sm" :disabled="reclaiming" @click="reclaimTask">
@@ -189,9 +198,12 @@
         <p v-else>
           本条没有修改字段，提交表示你确认导入内容全部正确。
         </p>
-        <p class="text-sm text-muted">
-          提交后不能自行撤回；系统会自动流转并尝试领取本项目下一条。
-        </p>
+          <p class="alert alert-error confirmation-dialog__irreversible" role="alert">
+            {{ irreversibleSubmitNotice }}
+          </p>
+          <p class="text-sm text-muted">
+            确认后，系统会自动流转并尝试领取本项目下一条。
+          </p>
         <template #actions>
           <button type="button" class="btn btn-secondary" @click="closeSubmitReview">继续检查</button>
           <button
@@ -247,6 +259,7 @@ import {
   renewTaskLease,
   submitTwoPassProofread
 } from '@/services/pagesService'
+import { CLAIM_NEXT_FAILURE_NOTICE, IRREVERSIBLE_SUBMIT_NOTICE } from '@/lib/proofreadNotices'
 import { formatClaimConflict, getPbMessage } from '@/utils/pbErrors'
 
 const route = useRoute()
@@ -272,6 +285,10 @@ const leaseLost = ref(false)
 const renewingLease = ref(false)
 const leaseNavigationAllowed = ref(false)
 const submittedHere = ref(false)
+const claimNextFailure = ref(false)
+const retryingClaim = ref(false)
+const irreversibleSubmitNotice = IRREVERSIBLE_SUBMIT_NOTICE
+const claimNextFailureNotice = CLAIM_NEXT_FAILURE_NOTICE
 const textareaRefs = new Map()
 // 机器疑点（#161 渲染侧）。hints 恒为空时 fieldHints 就是 prepareFieldHints([]) 的
 // 冻结空结构：列表与高亮分支全部走 v-if=false，界面与今天像素级一致。
@@ -416,6 +433,8 @@ async function loadPage() {
   leaseLost.value = false
   leaseNavigationAllowed.value = false
   submittedHere.value = false
+  claimNextFailure.value = false
+  retryingClaim.value = false
   textareaRefs.clear()
   fieldHints.value = prepareFieldHints([])
   findingsTruncated.value = false
@@ -696,6 +715,7 @@ async function submitProofread() {
   saving.value = true
   saved.value = ''
   saveError.value = ''
+  claimNextFailure.value = false
   const projectId = page.value?.project
   const userId = currentUserId.value
   const rowJson = stringifyEditedRow()
@@ -735,7 +755,7 @@ async function submitProofread() {
       }
       saved.value += ' 当前项目暂无下一条可由你处理的任务。'
     } catch (claimError) {
-      saved.value += ' 自动接取下一条失败，请返回项目大厅刷新后重试。'
+      claimNextFailure.value = true
       console.warn('Failed to claim next page after successful proofread submit:', claimError)
     }
 
@@ -745,6 +765,29 @@ async function submitProofread() {
     else saveError.value = message
   } finally {
     saving.value = false
+  }
+}
+
+async function retryClaimNext() {
+  if (retryingClaim.value || !page.value || !currentUserId.value) return
+  retryingClaim.value = true
+  try {
+    const nextPage = await claimNextProjectPage(page.value.project, currentUserId.value, page.value.id)
+    if (nextPage?.id) {
+      saveClaimedLease(nextPage)
+      setTaskFlash(window.sessionStorage, saved.value)
+      claimNextFailure.value = false
+      await router.push(`/tasks/${nextPage.id}/edit`)
+      return
+    }
+    claimNextFailure.value = false
+    if (!saved.value.includes('暂无下一条')) {
+      saved.value += ' 当前项目暂无下一条可由你处理的任务。'
+    }
+  } catch (claimError) {
+    console.warn('Failed to retry claim after proofread submit:', claimError)
+  } finally {
+    retryingClaim.value = false
   }
 }
 

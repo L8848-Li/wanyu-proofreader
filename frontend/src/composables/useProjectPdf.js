@@ -1,5 +1,6 @@
 import { computed, ref, onBeforeUnmount } from 'vue'
 import { createPdfPreviewCache } from '@/lib/pdfPreviewCache'
+import { missingPdfPageNotice } from '@/lib/proofreadNotices'
 import pb from '@/lib/pocketbase'
 
 export function useProjectPdf(page) {
@@ -20,7 +21,7 @@ export function useProjectPdf(page) {
   let generation = 0
   let controller = null
   const basePdfPage = computed(() => Number(page.value?.pdf_page) || Number(page.value?.page_number) || 1)
-  const pdfPageWarning = computed(() => page.value?.pdf_page ? '' : '此条目缺少 PDF 页码，暂按任务序号定位。')
+  const pdfPageWarning = computed(() => missingPdfPageNotice(page.value))
   const allowedPdfPages = computed(() => [firstPage.value, lastPage.value])
   const localPdfPage = computed(() => currentPdfPage.value - firstPage.value + 1)
 

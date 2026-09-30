@@ -100,6 +100,10 @@
               CSV 需包含 <code>PDF页码</code>、<code>page</code>、<code>pdf_page</code> 或 <code>页码</code> 中的一个字段。<br>
               系统会在后端预检，并将每行去掉页码字段后的内容导入为新条目。
             </p>
+            <label class="form-group mt-3">
+              <span class="form-label">本批来源（可留空）</span>
+              <input v-model.trim="sourceId" class="form-control" placeholder="来源 logical_id，留空则标为 source:unknown" />
+            </label>
             <input type="file" accept=".csv" @change="onCsvSelected" ref="csvInput" style="display:none" />
             <button class="btn btn-secondary" @click="$refs.csvInput.click()">选择 CSV 文件</button>
             <span v-if="csvFile" class="text-sm ml-2">{{ csvFile.name }}</span>
@@ -120,6 +124,9 @@
                 已处理 {{ csvJob.processed_count || 0 }} 条；
                 成功 {{ csvJob.success_count || 0 }} 条；
                 跳过 {{ csvJob.failed_count || 0 }} 条
+              </div>
+              <div class="text-sm text-muted mt-1">
+                {{ csvJob.source_link === 'linked' ? '本批已关联来源。' : '本批未关联来源，已标为 source:unknown。' }}
               </div>
               <div v-if="csvJob.error_message && csvJob.status !== 'failed'" class="text-sm text-muted mt-1">{{ csvJob.error_message }}</div>
             </div>
@@ -469,6 +476,7 @@ const pdfUploadProgress = ref(0)
 let pdfUploadController = null
 const pdfResume = ref(null)
 const csvFile = ref(null)
+const sourceId = ref('')
 const uploadingPdf = ref(false)
 const uploadingCsv = ref(false)
 const mutatingRows = ref(false)
@@ -803,7 +811,7 @@ async function uploadCsv() {
   csvImportErrors.value = []
   const generation = ++csvPollGeneration
   try {
-    let job = await createCsvInspection({ projectId, file: csvFile.value })
+    let job = await createCsvInspection({ projectId, file: csvFile.value, sourceId: sourceId.value })
     csvJob.value = job
     csvFile.value = null
     if (csvInput.value) csvInput.value.value = ''

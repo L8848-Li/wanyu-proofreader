@@ -44,7 +44,7 @@
         <div v-else-if="!pdfEnabled" class="alert alert-error">任务租约已失效，请重新领取。</div>
         <div v-else-if="!page" class="alert alert-error">页面不存在</div>
         <div v-else-if="pdfError" class="alert alert-error editor-inline-alert">{{ pdfError }}</div>
-        <div v-if="pdfPageWarning && !loading && !pdfLoading" class="alert alert-error editor-inline-alert">{{ pdfPageWarning }}</div>
+        <div v-if="pdfPageWarning && !loading && !pdfLoading" class="alert alert-warning editor-inline-alert" role="status">{{ pdfPageWarning }}</div>
         <PdfSinglePageViewer
           v-if="pdfUrl"
           :style="{ visibility: loading || pdfLoading ? 'hidden' : 'visible' }"
@@ -68,6 +68,10 @@
     </section>
     <div class="workspace-navigation"><slot name="navigation"></slot></div>
     <aside v-show="keyboardAvailable" class="keyboard-panel" aria-label="项目字符键盘">
+      <p v-if="showKeyboardHint" class="keyboard-discovery" role="note">
+        <span>{{ keyboardDiscoveryNotice }}</span>
+        <button type="button" class="btn btn-quiet btn-sm" @click="dismissHint">知道了</button>
+      </p>
       <div class="keyboard-dock-controls">
         <button class="btn btn-secondary" :aria-expanded="keyboardOpen && !suspended" @click="openKeyboard">字符键盘</button>
         <template v-if="keyboardOpen && !suspended">
@@ -85,6 +89,11 @@ import { computed, onMounted, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import PdfSinglePageViewer from '@/components/editor/PdfSinglePageViewer.vue'
 import { useProjectPdf } from '@/composables/useProjectPdf'
+import {
+  KEYBOARD_DISCOVERY_NOTICE,
+  dismissKeyboardHint,
+  isKeyboardHintDismissed
+} from '@/lib/proofreadNotices'
 
 const props = defineProps({
   keyboardAvailable: { type: Boolean, default: false },
@@ -104,6 +113,9 @@ const props = defineProps({
 
 const workspace = ref(null)
 const keyboardOpen = ref(false)
+const keyboardHintDismissed = ref(false)
+const keyboardDiscoveryNotice = KEYBOARD_DISCOVERY_NOTICE
+const showKeyboardHint = computed(() => props.keyboardAvailable && !keyboardHintDismissed.value && !props.suspended)
 const pinned = ref(false)
 const pdfCollapsed = ref(false)
 const compact = ref(false)
@@ -123,16 +135,22 @@ function updateViewport() {
   systemKeyboardOpen.value = Boolean(viewport && window.innerHeight - viewport.height > 150)
   viewportHeight.value = Math.max(160, (viewport?.height || window.innerHeight) - Math.max(0, workspace.value?.getBoundingClientRect().top || 0))
 }
+function dismissHint() {
+  keyboardHintDismissed.value = true
+  dismissKeyboardHint(window.localStorage)
+}
 function openKeyboard() {
   if (props.suspended) return
   if (document.activeElement?.tagName === 'TEXTAREA') document.activeElement.blur()
   keyboardOpen.value = true
+  dismissHint()
 }
 function closeKeyboard() { keyboardOpen.value = false; pinned.value = false }
 function onOutsidePointer(event) {
   if (compact.value && !pinned.value && !event.target.closest('.keyboard-panel')) keyboardOpen.value = false
 }
 onMounted(() => {
+  keyboardHintDismissed.value = isKeyboardHintDismissed(window.localStorage)
   updateViewport()
   window.addEventListener('resize', updateViewport)
   window.visualViewport?.addEventListener('resize', updateViewport)

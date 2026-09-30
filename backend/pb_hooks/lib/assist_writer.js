@@ -62,14 +62,18 @@ function rowForRules(page) {
   return parseRow(page.get("ocr_row_json"))
 }
 
-function contextFor(dao, page) {
+function contextFor(dao, page, storedRoles) {
   const { makeContext } = require(`${__hooks}/lib/assist_rules.js`)
   const { projectConfig: proofProjectConfig } = require(`${__hooks}/lib/keyboards.js`)
+  const { loadProjectRoles, rolesForRules } = require(`${__hooks}/lib/column_roles.js`)
   const projectId = page.getString("project")
+  const stored = storedRoles !== undefined
+    ? storedRoles
+    : (projectId ? loadProjectRoles(dao, projectId) : {})
   return makeContext({
     projectId,
-    // 列角色(#170) 未落地前一律传 null：R5 会安全跳过，不会拿列名猜角色。
-    roles: null,
+    // 没有任何有效角色时保持 null。R5 和难度信号因此与未标注时相同，不会按列名猜。
+    roles: rolesForRules(stored, rowForRules(page)),
     keyboards: projectId ? proofProjectConfig(dao, projectId).items : []
   })
 }
@@ -229,19 +233,26 @@ function loadAllPages(dao, projectId, { chunk = PAGE_SCAN_CHUNK, refusal = PROJE
 // 返回耗时供 #177 的规模验收引用（10k 行项目的实测值写进 docs/plans/2026-09-25-assist-rules.md）。
 function recomputeProject(dao, projectId) {
   const { runProjectRules, makeContext, RULES_VERSION } = require(`${__hooks}/lib/assist_rules.js`)
+  const { loadProjectRoles, rolesForRules } = require(`${__hooks}/lib/column_roles.js`)
   const startedAt = new Date()
   const collection = dao.findCollectionByNameOrId("review_findings")
   const pages = loadAllPages(dao, projectId)
-  // 条目与行内容一起传给规则：挂靠由规则侧决定（见 assist_rules.js 的挂靠口径注释）。
-  const entries = pages.map((page, index) => ({
-    pageId: page.id,
-    order: index + 1,
-    pdfPage: Number(page.get("pdf_page")) || 0,
-    row: rowForRules(page)
-  }))
-  const ctx = pages.length
-    ? contextFor(dao, pages[0])
+  // 角色在全批内是常量，只读一次。每一行再按自己的列过滤，不能拿第一条的列集合代表整批。
+  const storedRoles = loadProjectRoles(dao, projectId)
+  const entries = pages.map((page, index) => {
+    const row = rowForRules(page)
+    return {
+      pageId: page.id,
+      order: index + 1,
+      pdfPage: Number(page.get("pdf_page")) || 0,
+      row,
+      roles: rolesForRules(storedRoles, row)
+    }
+  })
+  const shared = pages.length
+    ? contextFor(dao, pages[0], storedRoles)
     : makeContext({ projectId, keyboards: [], roles: null })
+  const ctx = { ...shared, roles: null }
   const findings = runProjectRules(ctx, entries)
   const at = nowStamp()
   // 下线仍然按 project 收口：游标已经保证「要么整批扫完、要么写入前抛错」，
@@ -267,7 +278,7 @@ function recomputeProject(dao, projectId) {
   // 同样放在收尾之后：全项目的 tier 要按最终留在库里的当前批次推导。
   const stats = projectShapeStats(pages)
   const tiers = { A: 0, B: 0, C: 0, unknown: 0 }
-  for (const page of pages) tiers[refreshDifficulty(dao, page, stats).tier] += 1
+  for (const page of pages) tiers[refreshDifficulty(dao, page, stats, storedRoles).tier] += 1
   return {
     project: projectId,
     pages: pages.length,
@@ -296,9 +307,10 @@ function recomputeProject(dao, projectId) {
 // 量的还是旧内容。今天完全无害——单条路径 `projectStats = null`，`field_count_outlier` 与
 // `row_shape_outlier` 两条判据都读不到中位数，不会因此给出错的 tier。但将来把 stats 传进
 // 单条路径，这里就会静默拿到过期形状，届时要把它改成 (page, rowOverride) 两路取值。
-function refreshDifficulty(dao, page, stats = null) {
+function refreshDifficulty(dao, page, stats = null, storedRoles) {
   const { deriveDifficulty, blockedReasonFromFindings, BLOCKED_BUCKETS, DIFFICULTY_VERSION } =
     require(`${__hooks}/lib/assist_difficulty.js`)
+  const { loadProjectRoles, rolesForRules } = require(`${__hooks}/lib/column_roles.js`)
   const findings = readAllInChunks(
     dao, "review_findings", `page = "${page.id}" && superseded_at = ""`, "kind"
   ).map((row) => ({
@@ -315,8 +327,11 @@ function refreshDifficulty(dao, page, stats = null) {
   const manual = BLOCKED_BUCKETS.includes(stored) ? stored : ""
   const signal = {
     findings,
-    // #170 未落地：roles 为 null，涉及列角色的两条信号因此不产生（不是判成 A）。
-    roles: null,
+    // 未标注时 rolesForRules 返回 null，列角色两条信号不产生（不是判成 A）。
+    roles: rolesForRules(
+      storedRoles !== undefined ? storedRoles : loadProjectRoles(dao, page.getString("project")),
+      row
+    ),
     pdfPage: Number(page.get("pdf_page")) || 0,
     // 人说过就用人的；没人说过才按本轮疑点现算。算出来的桶只进本轮 derivation
     // （体现为 difficulty_basis_json 里的 column_merge_blocked / glyph_table_blocked），

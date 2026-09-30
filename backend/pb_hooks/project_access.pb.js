@@ -102,7 +102,7 @@ routerAdd("PATCH", "/api/fangji/projects/{projectId}", (c) => {
   // PATCH must distinguish an omitted field from an explicitly empty value.
   const body = c.requestInfo().body
   const has = (key) => Object.prototype.hasOwnProperty.call(body, key)
-  const allowed = ["name", "description", "accessMode", "password", "requiredProofreads"]
+  const allowed = ["name", "description", "accessMode", "password", "requiredProofreads", "sourceId"]
   if (Object.keys(body).some((key) => !allowed.includes(key))) throw new BadRequestError("包含不支持的项目设置字段")
   for (const key of ["name", "description", "accessMode", "password"]) {
     if (has(key) && typeof body[key] !== "string") throw new BadRequestError(`字段“${key}”必须是文本`)
@@ -137,6 +137,12 @@ routerAdd("PATCH", "/api/fangji/projects/{projectId}", (c) => {
         throw new BadRequestError("只有口令加入项目可以设置口令")
       }
       fangjiSetProjectPassword(txDao, projectId, body.password)
+    }
+    if (has("sourceId")) {
+      const { findSource: findRegistrySource } = require(`${__hooks}/lib/source_registry.js`)
+      const sourceId = String(body.sourceId || "").trim()
+      if (!sourceId) project.set("source", "")
+      else project.set("source", findRegistrySource(txDao, sourceId).id)
     }
     if (has("requiredProofreads")) {
       if (typeof body.requiredProofreads !== "number" || !Number.isInteger(requiredProofreads) || requiredProofreads < 2 || requiredProofreads > 1000) {

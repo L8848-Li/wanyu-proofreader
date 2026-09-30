@@ -112,6 +112,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .import-error-table table { min-width: 680px; }
 .import-error-table td { vertical-align: top; }
 .alert-error { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
+.alert-warning { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
 .alert-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; }
 .alert-info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; }
 
@@ -582,6 +583,12 @@ button.field-hint-chip:focus-visible { outline: 2px solid var(--primary); outlin
 .confirmation-dialog h2 { margin: .25rem 0 .7rem; font-size: 1.25rem; }
 .confirmation-dialog p { margin-top: .45rem; color: var(--gray-700); line-height: 1.65; }
 .confirmation-dialog__actions { display: flex; grid-column: 1 / -1; justify-content: flex-end; gap: .5rem; padding-top: .5rem; }
+.confirmation-dialog .confirmation-dialog__irreversible { margin-top: .75rem; color: #b91c1c; }
+.claim-next-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .65rem; }
+.keyboard-discovery {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  margin: 0; padding: .45rem .7rem; background: #eff6ff; color: #1e3a8a; font-size: .82rem; line-height: 1.45;
+}
 .confirmation-dialog__actions .onboarding-skip { margin-right: auto; }
 
 @keyframes skeleton-pulse { to { background-position: -200% 0; } }
