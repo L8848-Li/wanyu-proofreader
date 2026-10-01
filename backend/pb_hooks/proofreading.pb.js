@@ -104,10 +104,16 @@ routerAdd("POST", `${FANGJI_API}/projects/{projectId}/claim`, (c) => {
     // 也不能悄悄给一条别的层级——那会让大厅上的筛选控件说谎。
     const passes = tier ? [tier] : ["A", ""]
     const seen = new Set()
-    for (const passTier of passes) {
-      for (const filter of filters) {
+    // filters 在外、passes 在内。filters[0] 是 #86 的「同 PDF 页优先」，它必须排在层级之前：
+    // 层级在外层时第一遍会扫遍**全项目**找 A，只要还剩一条 A，同页的兄弟条目就永远轮不到
+    // ——那等于把 #86 这条特性在下一次算出 tier 的项目里直接下线（#232 的评审阻断项）。
+    // 每个 filter 只取一次候选、两层 pass 复用同一份数组：领取是校对员最热的一条路由，
+    // 为"优先 A"再把十万条读一遍不换来任何信息（评审的非阻断性能项）。
+    for (const filter of filters) {
+      if (response) break
+      const candidates = txDao.findRecordsByFilter("pages", filter, "page_number,id", 100000, 0)
+      for (const passTier of passes) {
         if (response) break
-        const candidates = txDao.findRecordsByFilter("pages", filter, "page_number,id", 100000, 0)
         for (const page of candidates) {
           // 层级筛选必须在 seen 之前：先记 seen 会让第二层把整批跳过，
           // 结果"优先 A"变成"只看 A，别的层级一条都领不到"。
@@ -136,7 +142,6 @@ routerAdd("POST", `${FANGJI_API}/projects/{projectId}/claim`, (c) => {
           response = summarize(page, issued)
           break
         }
-        if (response) break
       }
     }
     if (!response && tier) throw new NotFoundError(`${tier} 级暂时没有可领取的条目`)
