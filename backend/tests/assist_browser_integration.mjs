@@ -101,6 +101,8 @@ const projectClean = await makeProject('浏览器验收·干净', CLEAN, {}, [[m
 // 大厅那份单独用「词头 + 记音」两列：`kʰin9876` 那条被 R6 判 strong 落 B，
 // 另两条零疑点走 pure_transcription 落 A（与 tier_dispatch 的已验证形状一致）。
 // 一份 CSV 只落一档的话，这张图证明的就只是"层级条渲染了"，而不是"分层并存"（#162 第 4 条）。
+// 三行由生产者算出 B/A/A；unknown 与 unlabeled 那两条另建（见下方注释），
+// 于是层级条同时出现四枚芯片：两档可领 + 两种"没有档"各说各话（#247）。
 const HALL_CSV = '词头,莆田IPA,PDF页码\n甲,kʰin9876,1\n乙,kʰin1,2\n丙,kʰin1,3\n'
 const hallProject = await makeProject('浏览器验收·大厅层级', HALL_CSV,
   { roles: { 词头: 'headword', 莆田IPA: 'reading' } }, [[hallReader.id, 'proofreader']])
@@ -116,6 +118,24 @@ assert.equal(cleanView.items.length, 0, `干净项目不该产出疑点：${JSON
 const hallPages = await api(`/api/collections/pages/records?filter=${encodeURIComponent(`project="${hallProject.id}"`)}`, { token: superAuth.token })
 const hallTiers = hallPages.items.map((p) => p.difficulty_tier).sort()
 assert.deepEqual(hallTiers, ['A', 'A', 'B'], `大厅项目必须分层并存：${JSON.stringify(hallTiers)}`)
+// unknown（算过但信号不足）与 unlabeled（从没算过）是两种"没有档"，界面必须分开说。
+// 档位本身的生产由 tier_dispatch 套件钉，这里只要存储形状对就行——大厅读的是这一列。
+// 只能**新建**而不能 PATCH 已有条目：待认领的页被 `pages` 的写入钩子挡着
+// （"待认领任务只允许执行认领操作"），这条限制本身由 task_leases 套件守。
+for (const [number, tier] of [[4, 'unknown'], [5, '']]) {
+  await api('/api/collections/pages/records', {
+    method: 'POST', token: superAuth.token,
+    body: {
+      project: hallProject.id, page_number: number, pdf_page: number,
+      ocr_row_json: JSON.stringify({ 词头: `条${number}` }), ocr_text: `条${number}`,
+      difficulty_tier: tier, proofread_round: 1, mismatch_count: 0, status: 'pending'
+    }
+  })
+}
+const hallQueue = await api('/api/fangji/proofreading-queues?page=1&perPage=50', { token: hallReader.token })
+const hallRow = hallQueue.items.find((item) => JSON.stringify(item).includes(hallProject.id))
+assert.deepEqual(hallRow.tiers, { A: 2, B: 1, C: 0, other: 1, unlabeled: 1 }, JSON.stringify(hallRow.tiers))
+assert.equal(hallRow.claimable, 5, JSON.stringify(hallRow))
 // 校对员触发项目级重算必须是 403（截图里"看不到按钮"的前提是接口真的拒）
 await api(`/api/fangji/projects/${projectWithFindings.id}/findings/recompute`, {
   method: 'POST', token: reader.token, status: 403

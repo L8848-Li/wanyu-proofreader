@@ -190,6 +190,17 @@ async function dismissOnboarding (page) {
     assert.match(hallText, /A 类 · 照抄型 · \d+/, `层级条里没有 A 档：${hallText}`)
     assert.match(hallText, /B 类 · 需判断 · \d+/, `层级条里没有 B 档：${hallText}`)
     await shoot(hall, 'hall-tiers')
+    // ---------- 层级条上的两种"没有档"（#247） ----------
+    // unknown（算过但信号不足）与 unlabeled（从没算过）必须各说各的；账对得上时不许
+    // 出现差额告警，中性计数也不许是可点的领取入口（unknown 领不了）。
+    const stripText = await hall.locator('.queue-tiers').first().innerText()
+    assert.match(stripText, /A 类 · 照抄型 · 2/, `A 档计数不对：${stripText}`)
+    assert.match(stripText, /信号不足 1/, `unknown 没按新文案呈现：${stripText}`)
+    assert.match(stripText, /未评估 1/, `unlabeled 没按新文案呈现：${stripText}`)
+    assert.equal(await hall.locator('.queue-tier--warn').count(), 0, `账对得上却出现差额告警：${stripText}`)
+    assert.equal(await hall.locator('button.queue-tier--muted').count(), 0, '中性计数被渲染成了可点按钮')
+    // 不再单独截一张：这一屏与上面那张逐像素相同（中间没有任何交互），
+    // 多一个文件只会让人以为它是另一种状态。四种计数都在 `hall-tiers.png` 里。
     // 层级条不是装饰：点某个层级按钮会真去服务端按该层领一条并跳进编辑页（#162）。
     // 前一张只证明"数出来了"，这张证明"按了有用"。
     const tierButton = hall.locator('.queue-tiers .queue-tier:not([disabled])').first()
