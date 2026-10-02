@@ -23,6 +23,7 @@
   { "suite": "column_roles_integration.mjs", "ci_matrix": true },
   { "suite": "gate_release_integration.mjs", "ci_matrix": true },
   { "suite": "cross_source_integration.mjs", "ci_matrix": true },
+  { "suite": "assist_chain_integration.mjs", "ci_matrix": true },
   { "suite": "assist_browser_integration.mjs", "ci_matrix": false, "note": "需要 playwright 与已构建的 frontend/dist；截图由 assist-browser 作业产出" },
   { "suite": "tier_dispatch_integration.mjs", "ci_matrix": true },
   { "suite": "assist_admin_integration.mjs", "ci_matrix": true },
