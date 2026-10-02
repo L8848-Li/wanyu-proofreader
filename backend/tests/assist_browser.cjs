@@ -90,6 +90,14 @@ async function session (browser, auth, tolerated = []) {
   return page
 }
 
+async function assistBlockText (page, projectId) {
+  await page.goto(`http://localhost/admin/projects/${projectId}`)
+  const block = page.locator('section', { has: page.locator('h2', { hasText: '机器疑点' }) }).first()
+  await block.waitFor({ timeout: 60000 })
+  await block.scrollIntoViewIfNeeded()
+  return block.innerText()
+}
+
 async function dismissOnboarding (page) {
   // 首次进编辑页会弹新手引导，模态层会挡住一切点击。这里是**替校对员点掉它**，
   // 不是把 DOM 删掉：证据要的是引导关掉之后真实的工作台界面。
@@ -212,7 +220,23 @@ async function dismissOnboarding (page) {
     assert.match(tierLabel, /·\s*\d+/, `层级按钮没带数量：${tierLabel}`)
     await shoot(hall, 'hall-claim-by-tier')
 
-    // ---------- 6. 校对端：门控挡住 vs 放行后疑点进编辑页 ----------
+    // ---------- 6. 管理端两种 off 措辞（#254） ----------
+    //
+    // 数据层已经钉过"这两个项目的 off 疑点各只落在一类里"，所以这里可以要求
+    // 界面上**只出现一句**：两类共用一句话正是 #254 报的那个误导。
+    const noChannel = await session(browser, fixture.manager)
+    const noChannelText = await assistBlockText(noChannel, fixture.projectNoChannel.id)
+    assert.match(noChannelText, /没有弱标注打分通道/, `无通道那一句没出现：${noChannelText.slice(0, 400)}`)
+    assert.equal(/证据未达档/.test(noChannelText), false, `无通道被说成等证据：${noChannelText.slice(0, 400)}`)
+    await shoot(noChannel, 'findings-no-channel')
+
+    const waiting = await session(browser, fixture.manager)
+    const waitingText = await assistBlockText(waiting, fixture.projectWaiting.id)
+    assert.match(waitingText, /证据未达档/, `等证据那一句没出现：${waitingText.slice(0, 400)}`)
+    assert.equal(/没有弱标注打分通道/.test(waitingText), false, `等证据被说成没有通道：${waitingText.slice(0, 400)}`)
+    await shoot(waiting, 'findings-waiting-evidence')
+
+    // ---------- 7. 校对端：门控挡住 vs 放行后疑点进编辑页 ----------
     //
     // 这两张图是整条链路唯一"校对员真的看见了东西"的证据，所以中间那次放行
     // 必须走 #228 的变更集接口（平台管理员 token），不能在这里直接改库：
@@ -257,7 +281,7 @@ async function dismissOnboarding (page) {
     assert.ok(/[一-龥]/.test(hitText), `命中标记里没有正文：${JSON.stringify(hitText)}`)
     await shoot(editor, 'proofreader-hints')
 
-    const all = [manager, never, clean, reader, hall, editor]
+    const all = [manager, never, clean, reader, hall, noChannel, waiting, editor]
     for (const p of all) assert.deepEqual(p.__errors, [], `页面脚本报错：${p.__errors.join(' | ')}`)
     console.log('ASSIST BROWSER OK', JSON.stringify(shots))
   } finally {

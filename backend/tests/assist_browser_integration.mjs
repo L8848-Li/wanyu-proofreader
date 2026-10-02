@@ -63,6 +63,14 @@ const CLEAN = `${H}\n天,thin1,tʰĩ1,tʰĩ1,天空,1\n`
 // 校对端证据用的两份词头：每一行都会撞上 `multiple_headwords_in_cell`（strong 级、
 // 带 char_offsets），所以认领到哪一页都能看到同一种疑点——截图不依赖认领顺序。
 const EDIT = `${H}\n甲 乙,ka1,ka32,ka32,两种东西,1\n丙 丁,pe1,pe32,pe32,两类东西,2\n`
+// 管理端两种 off 措辞各要一份**只落在一类里**的夹具：混在一起时界面会把两句话都念出来
+// （那是正确行为），但那张图就分不出钉的是哪一种。两行两列、标了列角色之后
+// `meaningField` 为空，`reading_inside_meaning_row` 那条根本不会判，
+// 于是无通道那一份只剩 `multiple_headwords_in_cell`，等证据那一份只剩 R6 的 l0-v1 判据。
+const TWO_COL = '词头,莆田IPA,PDF页码'
+const TWO_ROLES = { 词头: 'headword', 莆田IPA: 'reading' }
+const NO_CHANNEL = `${TWO_COL}\n甲 乙,kʰin1,1\n丙 丁,kʰin1,2\n`
+const WAITING = `${TWO_COL}\n甲,kʰin9876,1\n乙,kʰin98765,2\n`
 
 async function makeProject (name, csv, { recompute = true, roles = null } = {}, members = []) {
   const project = await api('/api/fangji/projects', {
@@ -107,6 +115,8 @@ const HALL_CSV = '词头,莆田IPA,PDF页码\n甲,kʰin9876,1\n乙,kʰin1,2\n丙
 const hallProject = await makeProject('浏览器验收·大厅层级', HALL_CSV,
   { roles: { 词头: 'headword', 莆田IPA: 'reading' } }, [[hallReader.id, 'proofreader']])
 const editorProject = await makeProject('浏览器验收·校对端', EDIT, {}, [[editorReader.id, 'proofreader']])
+const projectNoChannel = await makeProject('浏览器验收·无打分通道', NO_CHANNEL, { roles: TWO_ROLES }, [[manager.id, 'manager']])
+const projectWaiting = await makeProject('浏览器验收·等证据', WAITING, { roles: TWO_ROLES }, [[manager.id, 'manager']])
 
 // 截图前先把服务端事实钉住：三态在数据层必须真的不同，否则截图毫无意义。
 const dirtyView = await api(`/api/fangji/projects/${projectWithFindings.id}/findings?per=200`, { token: admin.token })
@@ -140,6 +150,17 @@ assert.equal(hallRow.claimable, 5, JSON.stringify(hallRow))
 await api(`/api/fangji/projects/${projectWithFindings.id}/findings/recompute`, {
   method: 'POST', token: reader.token, status: 403
 })
+
+// 两类措辞在数据层必须真的分得开：截图里那句话的前提是"这个项目当前批次的
+// off 疑点全部落在同一类"，否则界面上同时出现两句话，图证就说不清钉的是哪一条。
+const noChannelView = await api(`/api/fangji/projects/${projectNoChannel.id}/findings?per=200`, { token: admin.token })
+assert.ok(noChannelView.items.length >= 2, JSON.stringify(noChannelView.items.map((i) => i.kind)))
+assert.deepEqual([...new Set(noChannelView.items.map((i) => i.scoring_channel))], ['unscored'],
+  JSON.stringify(noChannelView.items.map((i) => [i.kind, i.message.key, i.severity, i.scoring_channel])))
+const waitingView = await api(`/api/fangji/projects/${projectWaiting.id}/findings?per=200`, { token: admin.token })
+assert.ok(waitingView.items.length >= 1, JSON.stringify(waitingView.items.map((i) => [i.kind, i.message.key])))
+assert.deepEqual([...new Set(waitingView.items.map((i) => i.scoring_channel))], ['scored'],
+  JSON.stringify(waitingView.items.map((i) => [i.kind, i.message.key, i.severity, i.scoring_channel])))
 
 // ---------- 校对端证据：先钉住"门控挡着"，再把放行动作交给截图脚本 ----------
 //
@@ -188,6 +209,7 @@ writeFileSync(fixture, JSON.stringify({
   base, manager, reader, hallReader, editorReader,
   admin: { token: admin.token, record: admin.record },
   projectWithFindings, projectNeverRun, projectClean, hallProject, editorProject,
+  projectNoChannel, projectWaiting,
   editorPage, editorIdentities: entries
 }))
 const outDir = process.env.ASSIST_BROWSER_OUTPUT || path.resolve('.', 'output/playwright/assist-admin')
@@ -199,7 +221,8 @@ const result = spawnSync('node', [script], {
 assert.equal(result.status, 0, `assist_browser.cjs 退出码 ${result.status}`)
 
 for (const name of ['findings-normal', 'findings-empty-never-run', 'findings-empty-clean', 'findings-forbidden',
-  'hall-tiers', 'hall-claim-by-tier', 'proofreader-gated', 'proofreader-hints']) {
+  'findings-no-channel', 'findings-waiting-evidence', 'hall-tiers', 'hall-claim-by-tier',
+  'proofreader-gated', 'proofreader-hints']) {
   const file = path.join(outDir, `${name}.png`)
   assert.ok(existsSync(file), `缺截图：${file}`)
   assert.ok(statSync(file).size > 4096, `截图过小，疑似空白页：${file} ${statSync(file).size}`)
@@ -208,7 +231,8 @@ for (const name of ['findings-normal', 'findings-empty-never-run', 'findings-emp
 }
 console.log('Assist browser integration test passed.')
 
-for (const id of [projectWithFindings.id, projectNeverRun.id, projectClean.id, hallProject.id, editorProject.id]) {
+for (const id of [projectWithFindings.id, projectNeverRun.id, projectClean.id, hallProject.id, editorProject.id,
+  projectNoChannel.id, projectWaiting.id]) {
   await api(`/api/collections/projects/records/${id}`, { method: 'DELETE', token: superAuth.token, status: 204 })
 }
 for (const id of [manager.id, reader.id, hallReader.id, editorReader.id]) {
