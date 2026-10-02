@@ -283,8 +283,8 @@ jobs:
           # 留这一层不是为了再看一次图，而是防"套件被静默 SKIP"：没设
           # ASSIST_BROWSER_SCRIPT 时套件会退出 0，只有这里能发现产物根本不存在。
           for state in findings-normal findings-empty-never-run findings-empty-clean \
-                   findings-forbidden hall-tiers hall-claim-by-tier \
-                   proofreader-gated proofreader-hints; do
+                   findings-forbidden findings-no-channel findings-waiting-evidence \
+                   hall-tiers hall-claim-by-tier proofreader-gated proofreader-hints; do
             test -s "output/playwright/assist-admin/${state}.png" || {
               echo "Missing or empty assist screenshot: ${state}.png" >&2
               exit 1
