@@ -150,20 +150,63 @@ assert.ok(source.split(/[\s、,，;；]+/).includes(fragment),
   `命中文本不是该格里的一个词头段：${JSON.stringify({ source, fragment, spans })}`)
 assert.equal(/^\s+$/.test(fragment), false, '命中区间切成了空白')
 
+// ---------- F：第二遍校对看到的疑点不受第一遍提交结果影响 ----------
+//
+// 盲校纪律在辅助层的那一格：`assist_writer.js` 的 `rowFor()` 是
+// "有 canonical 就用 canonical，否则用 OCR 原文"。今天 canonical 只在
+// **两轮一致（approved）或仲裁之后**才非空（`proofreading_workflow.js:134/157/167`），
+// 所以第二位校对员读到的疑点必然还是按 OCR 原文算的。这个性质此前只写在代码注释里，
+// 没有测试——而它的失效形态恰好是"上一位改过的地方不再报疑点"，一种间接泄露。
+const second = await api('/api/collections/users/records', {
+  method: 'POST', token: superAuth.token,
+  body: { email: `chain-second-${suffix}@example.com`, name: `chain-second-${suffix}`, role: 'user', password, passwordConfirm: password }
+})
+await api(`/api/fangji/projects/${project.id}/members/${second.id}`, {
+  method: 'PUT', token: platform.token, body: { role: 'proofreader' }
+})
+const secondAuth = await api('/api/collections/users/auth-with-password', {
+  method: 'POST', body: { identity: `chain-second-${suffix}@example.com`, password }
+})
+// 第一位校对员把挤在一起的两个词头"修好"成一个，再提交。
+await api(`/api/fangji/pages/${claimed.id}/submit`, {
+  method: 'POST', token: readerAuth.token,
+  body: {
+    rowJson: JSON.stringify({ 词条: '甲', 拼音: 'ka1', 莆田IPA: 'ka32', 仙游IPA: 'ka32', 释义: '两种东西' }),
+    text: '甲', leaseToken: claimed.leaseToken
+  }
+})
+const afterSubmit = await api(`/api/collections/pages/records/${claimed.id}`, { token: superAuth.token })
+assert.equal(afterSubmit.proofread_row_json, '', '还没到法定人数就把提交结果写成了 canonical')
+await api(`/api/fangji/projects/${project.id}/findings/recompute`, { method: 'POST', token: platform.token })
+const stillThere = await api(`/api/fangji/projects/${project.id}/findings?per=200`, { token: platform.token })
+assert.ok(stillThere.items.some((item) => item.page === claimed.id && item.kind === 'merged_columns'),
+  '第一遍提交把格修好后，疑点跟着消失了：疑点集合被他人结果带跑了')
+const secondClaim = await api(`/api/fangji/projects/${project.id}/claim`, { method: 'POST', token: secondAuth.token })
+assert.equal(secondClaim.id, claimed.id, `第二位校对员应接到同一条：${JSON.stringify(secondClaim)}`)
+const secondHints = await api(`/api/fangji/pages/${claimed.id}/findings`, { token: secondAuth.token })
+// 门控此刻是开着的（D 段才关），所以第二遍校对员必须看到同一条按 OCR 原文算出的疑点：
+// 第一遍那位把格子修好，不该让这条疑点在他眼里消失。
+assert.ok(secondHints.hints.some((hint) => hint.kind === 'merged_columns' && hint.highlight === true),
+  `第二遍校对员看不到按 OCR 原文算出的疑点：${JSON.stringify(secondHints.hints)}`)
+await api(`/api/fangji/pages/${claimed.id}/release`, {
+  method: 'POST', token: secondAuth.token, body: { lease_token: secondClaim.leaseToken }, status: 204
+})
+await api(`/api/collections/users/records/${second.id}`, { method: 'DELETE', token: superAuth.token, status: 204 })
+
+
 // ---------- D：kill switch 之后回到看不见（放行不是单向棘轮） ----------
 const revoked = await api('/api/fangji/gates/revoke', {
   method: 'POST', token: platform.token,
   body: { ...entry, note: '端到端验收：验证降档真的降得回去' }
 })
 assert.equal(revoked.gate, 'off', JSON.stringify(revoked))
+// 此时第一位校对员已提交过这条，路由按"有自己的 attempt"放行——读的还是他本人的视角。
 const afterRevoke = await api(`/api/fangji/pages/${claimed.id}/findings`, { token: readerAuth.token })
 assert.deepEqual(afterRevoke.hints, [], `降档后仍在下发：${JSON.stringify(afterRevoke.hints)}`)
 assert.ok(afterRevoke.suppressed_by_gate >= 1, JSON.stringify(afterRevoke))
 
 // ---------- E：大厅计数对得上账，且 tier 不外泄 ----------
-await api(`/api/fangji/pages/${claimed.id}/release`, {
-  method: 'POST', token: readerAuth.token, body: { lease_token: claimed.leaseToken }, status: 204
-})
+// 注意：这里**不**释放租约——F 段要用它提交，提前释放会让 submit 报"该条目当前不属于你"。
 const hall = await api('/api/fangji/proofreading-queues?page=1&perPage=50', { token: readerAuth.token })
 const row = hall.items.find((item) => JSON.stringify(item).includes(project.id))
 assert.ok(row, `大厅里没有本项目：${JSON.stringify(hall.items.map((i) => i.project?.id))}`)
@@ -175,6 +218,7 @@ const hallText = JSON.stringify(hall)
 for (const forbidden of ['difficulty_tier', 'difficulty_basis_json', 'blocked_reason']) {
   assert.equal(hallText.includes(`"${forbidden}"`), false, `大厅响应里出现了 ${forbidden}`)
 }
+
 
 const gateRows = await api('/api/collections/assist_rule_gates/records?filter=' +
   encodeURIComponent(`approved_by = "${entry.approved_by}"`), { token: superAuth.token })
