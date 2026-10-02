@@ -336,3 +336,32 @@ diff -u /path/to/traefik.json /tmp/traefik-upload.json
 `GET /api/fangji/gates?limit=N` 的 `truncated`、以及两个 findings 接口的
 `gate_rows_truncated` 是这一情况的唯一可观测出口；巡检时确认表行数远离上限，
 接近时要么清理，要么把上限连同这条纪律一起改。
+
+
+## AI 辅助校对的验收怎么跑
+
+链路是否"在校对流程里真的起作用"，看两支东西，不必靠人眼看截图：
+
+```bash
+# 端到端：导入 → 重算 → 门控挡住 → 人工放行 → 命中区间切回原文 → 降档 → 大厅对账
+python3 backend/tests/run_integration.py assist_chain_integration.mjs
+```
+
+它跑在一次性的真 PocketBase 上（`run_integration.py` 负责建库、起服务、清理），
+断言顺序就是链路顺序，所以任何一段断掉都会指出是哪一段。
+
+```bash
+# 界面证据：管理端各态 + 大厅层级条 + 校对端放行前后
+VITE_PB_URL=http://localhost npm --prefix frontend run build
+ASSIST_BROWSER_SCRIPT="$PWD/backend/tests/assist_browser.cjs" \
+  python3 backend/tests/run_integration.py assist_browser_integration.mjs
+```
+
+**这一支有个容易骗过人的地方**：没设 `ASSIST_BROWSER_SCRIPT` 时它会打印 SKIP 并以 0 退出。
+于是"全套件绿"里可能根本没跑过浏览器（`run_all.py` 现在会把这种情况显式报成 skip，
+但看汇总的人仍要知道这个区别）。CI 里由 `assist-browser` 作业负责设变量、
+校验每张 PNG 非空并上传构件，所以**要贴证据就去那次构建的构件里取**，
+不要从本地某次"其实跳过了"的运行里取。
+
+正本规模的复现命令见上面「规则门控放行与降档」的打分/变更集两步；它的产物是报告，
+不是界面，两者不要混为一份证据。
