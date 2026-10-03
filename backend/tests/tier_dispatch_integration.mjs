@@ -102,8 +102,8 @@ const preferred = await api(`/api/fangji/projects/${labeled.id}/claim`, { method
 assert.equal(preferred.id, byNumber.get(2).id, `默认应优先 A 类（第 2 页），实得 ${JSON.stringify(preferred)}`)
 assert.equal(preferred.page_number, 2)
 // 红线（task-difficulty.md §6）：tier 不出现在校对端任何响应里。分层由服务端完成，
-// 校对员拿到的是"哪一条"，不是"这条被机器标成几等"——后者的输入含历史仲裁进入率，
-// 那已经是关于别人反复在这条上出事的线索了。
+// 校对员拿到的是"哪一条"，不是"这条被机器标成几等"——后者是别人对这条的判断，
+// 输入里含 `blocked_reason` 这种人工结论（#239 结论 A 之后已不含任何来自他人 attempt 的东西）。
 for (const forbidden of ['difficulty_tier', 'difficulty_basis_json', 'difficulty_version', 'blocked_reason', 'round', 'pass_no']) {
   assert.equal(preferred[forbidden], undefined, `领取响应里出现了 ${forbidden}：${JSON.stringify(preferred)}`)
 }
