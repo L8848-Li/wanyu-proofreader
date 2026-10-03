@@ -64,7 +64,7 @@ await api(`/api/fangji/projects/${project.id}/members/${reader.id}`, {
 // textarea/DOM，用普通汉字这一区分不出来；á 是 `a` + U+0301 两个码位一个字形，
 // 逐字符切分会把声调符甩在高亮外面。
 const csv = '词条,拼音,莆田IPA,仙游IPA,释义,PDF页码\n'
-  + '𠀋 á 乙,ka1,ka32,ka32,两种东西,1\n'
+  + '𠀋 a\u0301 乙,ka1,ka32,ka32,两种东西,1\n'
   + '人,lang2,kʰan2,taŋ2,人类,2\n'
   + '丙,pe1,pe32,pe32,单一个,3\n'
 const upload = new FormData()
