@@ -384,9 +384,6 @@ function refreshDifficulty(dao, page, stats = null, storedRoles) {
     fieldCount: Object.keys(row).length,
     valueLengths,
     projectStats: stats,
-    // #179 的分布今天不存在；传 null 而不是空对象，两者在 deriveDifficulty 里同义，
-    // 但写成 null 让"还没测"这件事在调用点就可见。
-    arbitrationRates: null
   }
   const derived = deriveDifficulty(signal)
   if (page.getString("difficulty_tier") !== derived.tier
