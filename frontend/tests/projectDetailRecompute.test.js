@@ -58,8 +58,10 @@ for (const name of ['runFindingsRecompute', 'runIdentityRecompute']) {
     await Promise.resolve()
     assert.equal(refs.assistBusy.value, true, `${name} 没有在请求期间置 busy`)
     const second = run(name)
-    await second
+    // 计数必须在 await 之前读：服务调用发生在处理函数第一个 await 之前，此刻 calls 已是终值。
+    // 反过来先 await 第二次调用，守卫一旦被删掉，这条测试不会红，而是挂在那个永不 resolve 的 gate 上。
     assert.equal(calls, 1, `busy 期间又发了一次请求（calls=${calls}）`)
+    await second
     gate.release({ pages: 2 })
     await first
     assert.equal(refs.assistBusy.value, false, `${name} 跑完之后没有解锁，按钮会永久灰着`)
@@ -82,8 +84,8 @@ test('两个重算按钮共用同一个 busy，跨行与列级不许并行打满
   const findings = run('runFindingsRecompute')
   await Promise.resolve()
   const identity = run('runIdentityRecompute')
-  await identity
   assert.equal(calls, 1, '跨行重算没被同一个 busy 挡住')
+  await identity
   gate.release({ pages: 2 })
   await findings
   assert.equal(refs.assistBusy.value, false)
