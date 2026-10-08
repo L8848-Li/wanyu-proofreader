@@ -24,7 +24,7 @@
 | `severity` | select `info \| warn \| strong` | 是 | finding 自身属性，**不是规则档位** |
 | `message_key` | text | 是 | 措辞键，前端按 key 渲染中文（§4）。**它是规则身份的组成部分** |
 | `params_json` | text（JSON 字符串） | 是 | 措辞参数，只允许结构信息（码位、计数、列名），见 §6 |
-| `evidence_json` | text（JSON 字符串） | 否 | `{bbox?, char_offsets?, excerpt?, page?, anchor?, partners?}`。`char_offsets` 是 `[[start, end), …]` 的**码位**半开区间，与消费端 `frontend/src/lib/fieldHints.js` 的 `locateSpan` 同口径（它再换算成 UTF-16 选区）。有格内命中位置的生产者必须带：R1 越界字符、R2 可混淆字符、R3 格级组合符、R6 长数字串，以及 `merged_columns` 两类；不带的是「空格里没有字符可标」的 R5，以及判据本身看不到单格的列级 R3/R4 与页级 R7 |
+| `evidence_json` | text（JSON 字符串） | 否 | `{bbox?, char_offsets?, offsets_basis?, excerpt?, page?, anchor?, partners?}`。`char_offsets` 是 `[[start, end), …]` 的**码位**半开区间，与消费端 `frontend/src/lib/fieldHints.js` 的 `locateSpan` 同口径（它再换算成 UTF-16 选区）。有格内命中位置的生产者必须带：R1 越界字符、R2 可混淆字符、R3 格级组合符、R6 长数字串，以及 `merged_columns` 两类；不带的是「空格里没有字符可标」的 R5，以及判据本身看不到单格的列级 R3/R4 与页级 R7 |
 | `producer` | select `rule \| ocr \| bundle_import` | 是 | 谁产的 |
 | `producer_version` | text | 是 | 规则/模型版本，升版即新批次 |
 | `produced_at` | date | 是 | 批次时间 |
@@ -36,6 +36,30 @@
 索引：`(page, superseded_at)`、`(project, kind)`、`(producer, producer_version, kind, message_key)`。
 三条都被 `backend/tests/check_migrations.py` 的 `EXPLAIN QUERY PLAN` 断言覆盖——
 即它们不是装饰，读取路径真的走得到。
+
+#### `offsets_basis`：区间的基准（#304）
+
+`char_offsets` 是「判据当时跑的那份串」上的下标，而那份串此后**可以变**：#293 的管理侧写回路
+（`POST /api/fangji/projects/{projectId}/pages/{pageId}/content`）允许项目管理员随时改写
+`ocr_row_json`，且按 2026-10-06 的裁定不做版本化、不触发重算。旧下标切到新串上不报错、不越界，
+只是标在别的字上——所以写入侧的诚实性闸门（`backend/pb_hooks/lib/assist_writer.js`
+`dropUnfaithfulOffsets`）在「判据串与渲染串逐字相等、因此保留区间」的同一支路里，
+把渲染串的**码位数**记进 `evidence_json.offsets_basis`；读侧（`lib/findings.js`
+`dropStaleOffsets`）下发前用它复核一次，对不上就删掉 `char_offsets`。
+
+三条口径要记住：
+
+- **删区间不等于删疑点**。前端 `locateSpan` 拿不到区间时降级为「聚焦该字段」，归因不变。
+  被删的条数经 `offsets_stale` 回给两个路由（与 `suppressed_by_gate` 同一个立场：
+  「没下发」与「没东西可下发」必须分开说）。
+- **长度判据分不清改动发生在区间前还是区间后**，区间之后的追加也会剥。方向是保守的
+  （少一次高亮，任何一次重算都能恢复），不是把它当成完备判据。等长原地改写看不出来——
+  那种情形位置本身没错。要收紧成内容级判据，先给 `review_findings` 的数据形状定案（未拍板）。
+- **`offsets_basis` 缺失 = 不判**。写回面出现之前 `ocr_row_json` 是 create-only
+  （`import_service.go` 的 `savePage` 用 `core.NewRecord`），无从失配；把历史批次一律剥掉
+  只会凭空削平现成的定位帮助。
+
+`offsets_basis` 是一个整数计数，按 §6 属结构信息，不含任何字形序列。
 
 ### 1.2 `assist_rule_gates`（门控登记表）
 
@@ -85,11 +109,12 @@ manager/平台管理员直通；否则要求「该条目正被你认领」或「
       "severity": "strong",
       "message": { "key": "long_digit_run", "params": { "runs": ["5333"], "run_count": 1 } },
       "highlight": true,
-      "evidence": { "char_offsets": [[4, 8]] }
+      "evidence": { "char_offsets": [[4, 8]], "offsets_basis": 11 }
     }
   ],
   "truncated": false,
   "suppressed_by_gate": 0,
+  "offsets_stale": 0,
   "gate_rows_truncated": false
 }
 ```
@@ -101,6 +126,11 @@ manager/平台管理员直通；否则要求「该条目正被你认领」或「
   gate 全 off 与这批资料真的干净长得一模一样，而后者会被读成「这批可以放心」。
   它只是一个计数：不含规则身份、不含内容、不含档位，因此不触碰盲校纪律。
   `info` 级永不进校对端（§2），不计入这个数字。
+- `offsets_stale` 是本条目上「疑点仍然下发、但**区间**因原文已改写而对不上基准、
+  因此不画高亮」的条数（#304，见 §1.1）。它与 `suppressed_by_gate` 分开的正是两件事：
+  后者是「有疑点但规则没放行」，前者是「疑点给了、定位给不了」。
+  管理端 `listForProject` 同样回这个字段，但两端数字可以不同——管理端不做门控过滤（§3.2），
+  所以 `off` 档规则被剥掉的区间只在这里计数。
 - `gate_rows_truncated` 为真表示 `assist_rule_gates` 读到了 `MAX_GATE_ROWS` 上限，
   落不进内存映射的规则一律按 `off` 处理——这条必须有可判定出口，否则「某条规则突然不显示」
   是查不出来的幽灵。

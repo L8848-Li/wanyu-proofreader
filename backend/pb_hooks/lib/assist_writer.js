@@ -72,7 +72,13 @@ function rowForRules(page) {
 // 差一个行首空格就已经错位了（评审给的反例正是 `" aŋ55"` vs `"aŋ55"`）。
 // 省略 `char_offsets` 不等于丢掉疑点：前端会降级为"聚焦该字段"（fieldHints.js 的定位降级分支），
 // 归因照旧、只是不画高亮。丢了几条要回给调用方（`offsets_dropped`），漏报不许静默。
+//
+// 逐字相等而保留区间时，顺手把**被切那份串的码位数**记进 `offsets_basis`：#293 之后
+// `ocr_row_json` 可以被管理员随时改写，而改写不触发重算，库里留下的下标就成了旧串的下标。
+// 读侧（`findings.js` 的 `dropStaleOffsets`）拿这个基准再核一次。基准只能在这里盖章——
+// 它是「闸门判定通过」这一事实的副产品，写在规则文件里会让每条规则各自抄一遍。
 function dropUnfaithfulOffsets(findings, lookup) {
+  const { offsetsBasis } = require(`${__hooks}/lib/findings.js`)
   let dropped = 0
   for (const item of findings) {
     if (!item.evidence || !Array.isArray(item.evidence.char_offsets)) continue
@@ -81,7 +87,10 @@ function dropUnfaithfulOffsets(findings, lookup) {
     if (!source) continue
     const judged = String(source.row?.[item.field] ?? "")
     const shown = String(source.shown?.[item.field] ?? "")
-    if (judged === shown) continue
+    if (judged === shown) {
+      item.evidence.offsets_basis = offsetsBasis(shown)
+      continue
+    }
     delete item.evidence.char_offsets
     dropped += 1
   }

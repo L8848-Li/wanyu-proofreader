@@ -93,6 +93,57 @@ function parseJson(value, fallback) {
   }
 }
 
+// ---- 命中区间的读侧复核（#304）----
+//
+// `evidence.char_offsets` 是「判据当时跑的那份串」上的码位下标。写入侧的诚实性闸门
+// （`assist_writer.js` 的 `dropUnfaithfulOffsets`）只在**落库那一刻**确认它和校对端要切的
+// `ocr_row_json` 逐字相等，并把那份串的码位数记进 `offsets_basis`。
+// #293 的管理侧写回路让 `ocr_row_json` 此后可以随时被改写（2026-10-06 裁定不做版本化、
+// 不触发重算），旧下标于是会切到新串的错位处——最坏症状是那段注释自己写的
+// 「高亮标在空白上，而在界面上看起来完全正常」：不报错、不 500、无日志。
+//
+// 这里用同一个基准再核一次，对不上就把区间摘掉。摘区间**不等于**丢疑点：
+// `locateSpan`（`frontend/src/lib/fieldHints.js:163`）见不到区间就降级为「聚焦该字段」，
+// 归因照旧——这是 `assist_writer.js:73-74` 已经写明的既有降级语义，不新造契约。
+// 被剥掉的条数经 `offsets_stale` 回给调用方，漏标不许静默。
+function offsetsBasis(text) {
+  return Array.from(String(text ?? "")).length
+}
+
+// 基准长度是**可判定的下界**：等长的原地改写（换掉一个字）看不出来，区间仍指向同一位置，
+// 而那不会把高亮画到空白上——位置没错，只是被标的内容可能已被修正。这类残留由显式重算
+// （提交后、裁决后、管理端两个口）纠正，不在读侧猜内容：读侧一旦开始猜，就会造出
+// 「看起来标对了但标的不是判据命中的那一处」这种比不标更难查的错。
+function dropStaleOffsets(view, shownRow) {
+  const evidence = view.evidence
+  if (!Array.isArray(evidence?.char_offsets)) return false
+  const basis = evidence.offsets_basis
+  // 没有基准的历史批次不判：写回面出现之前 `ocr_row_json` 是 create-only（#304 正文核过），
+  // 不存在能让区间失配的后置改写路径，把它们的区间一律剥掉只会凭空削弱现成的定位帮助。
+  if (typeof basis !== "number") return false
+  // 读不到那份串时无法证明区间仍然忠实，按不忠实处理；字段本身缺失同理（长度 0 对不上）。
+  if (shownRow === null || shownRow === undefined) return stripOffsets(evidence)
+  return offsetsBasis(String(shownRow[view.field] ?? "")) === basis
+    ? false
+    : stripOffsets(evidence)
+}
+
+function stripOffsets(evidence) {
+  delete evidence.char_offsets
+  return true
+}
+
+// 校对端一次请求只看一条条目，所以这里单取一次 pages；管理端复用 locatorOf 的缓存。
+function shownRowOf(dao, pageId) {
+  const id = String(pageId ?? "")
+  if (!id) return null
+  try {
+    return parseJson(dao.findRecordById("pages", id).get("ocr_row_json"), null)
+  } catch {
+    return null
+  }
+}
+
 // 当前批次：未被 superseded 的那一批。重算只写新批次并标旧批次，
 // 所以「未 superseded」本身就定义了当前批次（#176 期望结果 5）。
 function currentRecords(dao, filter, sort, limit, offset) {
@@ -123,8 +174,11 @@ function hintView(record, gate) {
 // cascadeDelete=true，条目删除会连带删掉疑点，所以库里不存在悬挂引用，
 // null 只可能是"该条没有 pdf_page（CSV 直接导入）"或读取异常，两者都由前端说成未知。
 // 同一次请求里一批疑点常挂在同几条上，所以带 cache，不做 N 次重复查库。
+//
+// 返回对象里额外挂一个 `shown`（该条导入原文的行对象），只给读侧复核区间用（#304），
+// **绝不下发**：statisticsView 逐字段挑选输出，不做展开，所以它不会漏进响应。
 function locatorOf(app, pageId, cache) {
-  const unknown = { page_number: null, pdf_page: null }
+  const unknown = { page_number: null, pdf_page: null, shown: null }
   const id = String(pageId ?? "")
   if (!id) return unknown
   if (cache && cache.has(id)) return cache.get(id)
@@ -138,7 +192,8 @@ function locatorOf(app, pageId, cache) {
     }
     value = {
       page_number: asOrdinal(entry.get("page_number")),
-      pdf_page: asOrdinal(entry.get("pdf_page"))
+      pdf_page: asOrdinal(entry.get("pdf_page")),
+      shown: parseJson(entry.get("ocr_row_json"), null)
     }
   } catch {
     value = unknown
@@ -188,11 +243,16 @@ function statisticsView(record, gate, row, locator) {
 // 只有 hints 数组时，gate 全 off 与这批资料真的干净，在响应里长得一模一样，
 // 而后者会被读成「这批可以放心」。它只是一个计数，不含规则身份、不含内容，
 // 因此不触碰盲校纪律（校对端仍看不到别人的结果、轮次与档位）。
+//
+// `offsets_stale` 同理，说的是另一件事：疑点仍然下发，只是**区间**因为原文已被改写
+// 而不再可信，前端因此只聚焦字段、不画高亮（#304）。
 function hintsForPage(dao, pageId) {
   const { map: gates, truncated: gateTruncated } = gateMap(dao)
+  const shownRow = shownRowOf(dao, pageId)
   const records = currentRecords(dao, `page = "${pageId}"`, "kind,message_key", MAX_PAGE_SIZE + 1, 0)
   const hints = []
   let suppressed = 0
+  let stale = 0
   for (const record of records) {
     const { gate } = gateOf(gates, record)
     const severity = record.getString("severity")
@@ -201,12 +261,15 @@ function hintsForPage(dao, pageId) {
       if (gate === "off" && GATE_RELEASES.warn.includes(severity)) suppressed += 1
       continue
     }
-    hints.push(hintView(record, gate))
+    const view = hintView(record, gate)
+    if (dropStaleOffsets(view, shownRow)) stale += 1
+    hints.push(view)
   }
   return {
     hints,
     truncated: records.length > MAX_PAGE_SIZE,
     suppressed_by_gate: suppressed,
+    offsets_stale: stale,
     gate_rows_truncated: gateTruncated
   }
 }
@@ -225,11 +288,24 @@ function listForProject(dao, projectId, { page = 1, per = 50, kind = "", produce
   // 多取一条用来判断是否还有下一页，不依赖 count 查询。
   const records = currentRecords(dao, clauses.join(" && "), "-produced_at,kind,message_key", size + 1, (index - 1) * size)
   const locatorCache = new Map()
+  let stale = 0
   const items = records.slice(0, size).map((record) => {
     const { gate, row } = gateOf(gates, record)
-    return statisticsView(record, gate, row, locatorOf(dao, record.getString("page"), locatorCache))
+    const locator = locatorOf(dao, record.getString("page"), locatorCache)
+    const item = statisticsView(record, gate, row, locator)
+    // 管理端展示「命中区间」用的是同一份下标，所以也要过同一道复核（#304）：
+    // 两端各写一套判据的话，早晚只有一端在防这件事。
+    if (dropStaleOffsets(item, locator.shown)) stale += 1
+    return item
   })
-  return { items, hasMore: records.length > size, page: index, per: size, gate_rows_truncated: gateTruncated }
+  return {
+    items,
+    hasMore: records.length > size,
+    page: index,
+    per: size,
+    offsets_stale: stale,
+    gate_rows_truncated: gateTruncated
+  }
 }
 
 module.exports = {
@@ -244,6 +320,9 @@ module.exports = {
   gateOf,
   gateMap,
   locatorOf,
+  offsetsBasis,
+  dropStaleOffsets,
+  shownRowOf,
   hintsForPage,
   listForProject
 }
