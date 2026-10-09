@@ -142,8 +142,8 @@ blob 里存了 CR（`i/crlf`、`i/mixed`）就失败。`make verify-static` 与 
 的定义上，并各有一行白名单注释。字体栈按声明次数计，而非只抽取某一种字体栈。
 同一次令牌层把 `hardcoded_colors`、`border_radius_literals`、`z_index_literals`、
 `font_family_stacks`、`undefined_variables`、`custom_modals` 的上限降到当时的 `now`。
-`inline_styles` 与 `alerts_without_role` 的上限未改。上表的「初始上限」保留 #264 落地时的数字，
-现行上限以 `scripts/ui_debt_baseline.json` 为准。
+随后的可及性补丁把 `alerts_without_role` 降到 0。`inline_styles` 的上限未改。
+上表的「初始上限」保留 #264 落地时的数字，现行上限以 `scripts/ui_debt_baseline.json` 为准。
 解析跨行标签并识别绑定类表达式里的字符串、绑定样式对象里的常量值；不执行 JavaScript，
 运行时拼接的样式/类、外部 CSS 不在覆盖范围。变量定义按整个源码目录判断，不证明运行时作用域可用。
 

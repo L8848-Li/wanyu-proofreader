@@ -24,8 +24,8 @@
           <input v-model="passwordConfirm" type="password" class="form-control" placeholder="再次输入密码" required />
         </div>
 
-        <div v-if="error" class="alert alert-error">{{ error }}</div>
-        <div v-if="success" class="alert alert-success">注册成功！正在跳转到登录页...</div>
+        <div v-if="error" class="alert alert-error" role="alert">{{ error }}</div>
+        <div v-if="success" class="alert alert-success" role="status">注册成功！正在跳转到登录页...</div>
 
         <button type="submit" class="btn btn-primary btn-block btn-lg" :disabled="loading">
           {{ loading ? '注册中...' : '注册' }}

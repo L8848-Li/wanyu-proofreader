@@ -15,7 +15,7 @@
         </div>
         <button class="btn btn-secondary" :disabled="loading" @click="loadProjects">刷新</button>
       </header>
-      <div v-if="error" class="alert alert-error">{{ error }}</div>
+      <div v-if="error" class="alert alert-error" role="alert">{{ error }}</div>
       <div v-if="loading" class="card text-muted">正在加载项目…</div>
       <div v-else-if="projects.length === 0" class="empty-state card">
         <div class="empty-state-mark" aria-hidden="true">项</div>
@@ -28,7 +28,7 @@
             <div><span class="work-state">{{ accessLabel(project) }}</span><h3>{{ project.name }}</h3></div>
           </header>
           <p class="project-description">{{ project.description || '该项目暂未填写简介。' }}</p>
-          <div v-if="project.capabilities.isMember || project.capabilities.isPlatformAdmin" class="alert alert-success">
+          <div v-if="project.capabilities.isMember || project.capabilities.isPlatformAdmin" class="alert alert-success" role="status">
             已拥有{{ roleLabel(project.capabilities.projectRole) }}权限
           </div>
           <label v-else-if="project.access_mode === 'password'" class="form-group">

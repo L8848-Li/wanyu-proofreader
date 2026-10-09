@@ -22,7 +22,7 @@
 每条都能用一条命令或一个文件位置判定。打破它的 PR 应该先改契约或先改基线，而不是先改界面。
 
 1. **疑点不靠颜色单独表意。** 标记样式只挂在 `.field-hint-*` 上，并且芯片带文字。位置：`frontend/src/style.css:657-662`。
-2. **动态 `alert` 必须有角色。** `python3 scripts/check_ui_debt.py --only alerts_without_role` 的 `now` 不得超过基线。清零归 #265。
+2. **动态 `alert` 必须有角色。** `python3 scripts/check_ui_debt.py --only alerts_without_role` 的 `now` 不得超过基线。这一支把上限收到 0。
 3. **键盘焦点必须看得见。** 表单控件不得用 `outline: none` 盖掉焦点环；环与相邻背景的对比度 ≥ 3:1。现环是 `var(--focus-ring)`，计算见 DESIGN.md「语义、刻度与焦点」。键盘走查归 #265。
 4. **对话框只有一个实现。** `grep -rn "class=\"modal-backdrop" frontend/src --include="*.vue"` 只允许命中 `components/AppModal.vue`。不带 `class=` 的全目录 `grep` 还会命中 `style.css` 里的规则本体，那一次不算第二个对话框。焦点算法的测试是 `frontend/tests/modalFocus.test.js`。
 5. **字面界面值不得高于棘轮。** `python3 scripts/check_ui_debt.py` 对九类债务与 `scripts/ui_debt_baseline.json` 比较。减少债务时在同一支 PR 下调对应 `limit`（`CONTRIBUTING.md`「UI 债务棘轮」）。把某一类从 `warn` 改成 `fail` 要先在 #264 的后续记录里确认，不在本计划里改 `mode`。在 `937eb3d` 上这条还不是全绿：`hardcoded_colors` 是 146/145，`inline_styles` 是 28/27，两类都是 `warn`，脚本退出 0。令牌合入后颜色、圆角、层级和字体栈降到 0；`inline_styles` 仍是 28/27 的 warn，这支没有上调它的上限。红线禁止的是再往上加；warn 退出 0 不能读成通过。
@@ -34,7 +34,7 @@
 | #263 | 本计划与 DESIGN.md | L0 | 任何 `.vue` / `style.css` 改动 |
 | #264 | 已合入 | L5 棘轮 | 不清理存量，只禁止涨过当前上限 |
 | #266 | 令牌已放进 `:root` | L1：语义色、字体别名、间距/字号/圆角/层级刻度、`--focus-ring` | 不重做配色，不做暗色，不拆视图。间距和字号刻度已定义，旧的 `padding`/`font-size` 字面值留到触及那一行时再换 |
-| #265 | 未做 | L5 的人工核销 + 焦点环与缺 `role` 的 `alert` | 不引入扫描依赖；`lang` 只登记、不实现 |
+| #265 | 焦点环与 `alert` 角色已补 | L5 的核销 + 焦点环与缺 `role` 的 `alert` | 不引入扫描依赖；`lang` 只登记、不实现。全路径键盘走查受本地是否有可登录实例限制，结论写在该 PR |
 | #129 | 未做 | 按 DESIGN.md 替换存量字面值 | 在 #266 的令牌还不存在时，不把「全部回到令牌」当作可验收 |
 | #267 | 未做 | L3：`useAsyncResource` + `AppStatusPanel` | 不在各视图里再手写一套空态文案体系 |
 | #268 | 未做 | L2：字段、表格、分页、确认框 | 不在第一次出现时就抽组件 |

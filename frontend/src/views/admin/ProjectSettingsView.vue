@@ -8,8 +8,8 @@
         <p>编辑项目名称与简介，管理加入方式、成员、校对人数和键盘。</p>
       </div>
     </header>
-    <div v-if="error" class="alert alert-error">{{ error }}</div>
-    <div v-if="success" class="alert alert-success">{{ success }}</div>
+    <div v-if="error" class="alert alert-error" role="alert">{{ error }}</div>
+    <div v-if="success" class="alert alert-success" role="status">{{ success }}</div>
     <div v-if="loading" class="card text-muted">正在加载项目配置…</div>
     <template v-else-if="project?.capabilities?.canManage">
       <section id="project-details" class="card project-settings-section mb-6" aria-labelledby="project-details-title">

@@ -110,7 +110,7 @@
                   @click="bindProvider(provider)"
                 >{{ bindingProvider === provider.id ? '验证中...' : '验证并绑定' }}</button>
               </div>
-              <div v-if="bindingError[provider.id]" class="alert alert-error mt-3">{{ bindingError[provider.id] }}</div>
+              <div v-if="bindingError[provider.id]" class="alert alert-error mt-3" role="alert">{{ bindingError[provider.id] }}</div>
             </template>
           </div>
         </div>

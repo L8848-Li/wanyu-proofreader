@@ -21,7 +21,7 @@
           <span class="form-label">确认新密码</span>
           <input v-model="form.newPasswordConfirm" type="password" class="form-control" autocomplete="new-password" minlength="10" maxlength="200" required />
         </label>
-        <div v-if="error" class="alert alert-error">{{ error }}</div>
+        <div v-if="error" class="alert alert-error" role="alert">{{ error }}</div>
         <button class="btn btn-primary btn-block btn-lg" :disabled="saving || !canSubmit">
           {{ saving ? '正在更新…' : '更新密码并重新登录' }}
         </button>

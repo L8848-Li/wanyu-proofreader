@@ -16,7 +16,7 @@
       </div>
     </div>
 
-    <div v-if="error" class="alert alert-error" style="margin:1rem">{{ error }}</div>
+    <div v-if="error" class="alert alert-error" role="alert" style="margin:1rem">{{ error }}</div>
     <div v-else ref="wrapRef" class="pdf-scroll">
       <div
         class="pdf-canvas-stage"

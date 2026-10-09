@@ -41,9 +41,9 @@
       </header>
       <div class="editor-panel-body editor-panel-body--pdf">
         <div v-if="loading || pdfLoading" class="panel-loading pdf-transition-mask" aria-live="polite">正在加载原文…</div>
-        <div v-else-if="!pdfEnabled" class="alert alert-error">任务租约已失效，请重新领取。</div>
-        <div v-else-if="!page" class="alert alert-error">页面不存在</div>
-        <div v-else-if="pdfError" class="alert alert-error editor-inline-alert">{{ pdfError }}</div>
+        <div v-else-if="!pdfEnabled" class="alert alert-error" role="alert">任务租约已失效，请重新领取。</div>
+        <div v-else-if="!page" class="alert alert-error" role="alert">页面不存在</div>
+        <div v-else-if="pdfError" class="alert alert-error editor-inline-alert" role="alert">{{ pdfError }}</div>
         <div v-if="pdfPageWarning && !loading && !pdfLoading" class="alert alert-warning editor-inline-alert" role="status">{{ pdfPageWarning }}</div>
         <PdfSinglePageViewer
           v-if="pdfUrl"

@@ -101,10 +101,10 @@
 | --- | --- | --- | --- |
 | pending | 骨架：`skeleton-card` 且 `aria-hidden="true"`，容器 `aria-label="正在加载项目"` | 按钮文案用「正在…」 | `TaskHallView.vue:47-48`；字段区 `panel-loading` + `aria-live="polite"`（`ProofreadEditorView.vue:53`，样式 `style.css:602`） |
 | empty | `empty-state` + `empty-state-text`，标记 `aria-hidden="true"` | 「当前没有需要你处理的项目」；来源页「还没有登记来源」 | `TaskHallView.vue:55-58`；`SourcesView.vue:23`；样式 `style.css:435-437` |
-| error | `alert alert-error`。读屏要靠 `role="alert"` | 视图各自的失败句 | 类在 `style.css:235`。带 `role` 与不带 `role` 的清单由 `python3 scripts/check_ui_debt.py --only alerts_without_role` 列出，基线上限 30 |
+| error | `alert alert-error` 且 `role="alert"` | 视图各自的失败句 | 类在 `style.css:235`。`python3 scripts/check_ui_debt.py --only alerts_without_role` 的 `now` 为 0，基线上限 0 |
 | danger | `btn-danger`（`style.css:201`）；设置里的 `.danger-zone`（`:309`）；提交确认里的不可逆句用 `role="alert"` | 「提交后将完成条目…」一类永久保留的说明 | `ArbitrationView.vue:163`；校对确认框 `ProofreadEditorView.vue:204` |
 
-成功与进行中的提示用 `alert alert-success` 或无修饰 `alert`，角色应为 `role="status"`。这条还没有执行完：同一类标签有的写了 `role`，有的没写。缺角色的补齐归 #265，长期收口归 #267 的 `AppStatusPanel`。
+成功与进行中的提示用 `alert alert-success` 或无修饰 `alert`，角色是 `role="status"`。一直显示、文案不随操作改写的说明用 `role="note"`（`NewProjectView.vue:8`）。错误是 `role="alert"`。长期收口仍归 #267 的 `AppStatusPanel`，避免以后靠 grep 维持。
 
 状态不单独靠颜色。机器疑点芯片始终带文字，规则写在 `style.css:657-658`，芯片结构在 `:662`。
 
@@ -146,7 +146,7 @@
 | 项 | 通过条件 | 当前 |
 | --- | --- | --- |
 | 键盘焦点可见 | 焦点环相对相邻背景对比度 ≥ 3:1。PR 里写出前后色值与计算式 | 通过。`--focus-ring` 对白底 7.08:1、对纸色 6.39:1，见上文「语义、刻度与焦点」。键盘走查仍归 #265 |
-| 动态消息有角色 | `grep -rn "class=\"alert" frontend/src` 的每一行都含 `role=` | 不通过。棘轮 `alerts_without_role` 上限 30 |
+| 动态消息有角色 | `grep -rn "class=\"alert" frontend/src` 的每一行都含 `role=` | 通过。错误用 `role="alert"`，成功与进度用 `role="status"`。棘轮 `alerts_without_role` 上限 0 |
 | 状态不只靠颜色 | 疑点标记带「疑」或等价文字 | 通过。`style.css:657-658` |
 | 动效可关 | `prefers-reduced-motion` 规则仍在 | 通过。`style.css:761-762` |
 | 模态不丢焦点 | Tab 留在对话框内，Esc 关闭，关闭后焦点回到触发控件 | 算法在 `lib/modalFocus.js`，测试在 `frontend/tests/modalFocus.test.js`。调用点都走 `AppModal` |

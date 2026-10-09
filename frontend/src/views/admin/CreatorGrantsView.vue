@@ -8,7 +8,7 @@
         <p>默认只有平台管理员能创建项目；授权可随时调整或撤销，不影响现有项目。</p>
       </div>
     </header>
-    <div v-if="error" class="alert alert-error">{{ error }}</div>
+    <div v-if="error" class="alert alert-error" role="alert">{{ error }}</div>
     <section class="card">
       <div class="section-heading">
         <label class="admin-filter-field">

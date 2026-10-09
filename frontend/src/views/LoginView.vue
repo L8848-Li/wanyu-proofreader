@@ -52,8 +52,8 @@
           />
         </div>
 
-        <div v-if="success" class="alert alert-success">{{ success }}</div>
-        <div v-if="error" class="alert alert-error">{{ error }}</div>
+        <div v-if="success" class="alert alert-success" role="status">{{ success }}</div>
+        <div v-if="error" class="alert alert-error" role="alert">{{ error }}</div>
 
         <button
           type="submit"

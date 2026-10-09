@@ -18,11 +18,11 @@
 
     <div class="card">
       <div v-if="checkingPermission" class="text-muted">正在检查创建权限…</div>
-      <div v-else-if="!auth.canCreateProjects" class="alert alert-error">
+      <div v-else-if="!auth.canCreateProjects" class="alert alert-error" role="alert">
         你当前没有可用的项目创建额度。请联系平台管理员授权或调整额度。
       </div>
       <form v-else @submit.prevent="handleSubmit">
-        <div v-if="auth.accessContext?.projectLimit != null" class="alert mb-4">
+        <div v-if="auth.accessContext?.projectLimit != null" class="alert mb-4" role="status">
           当前拥有 {{ auth.accessContext.ownedProjectCount }} 个项目，还可创建 {{ auth.accessContext.remainingProjects }} 个。
         </div>
         <div class="form-group">
@@ -45,8 +45,8 @@
           <textarea v-model="form.description" class="form-control" placeholder="简要介绍本项目的背景、目标等（可选）"></textarea>
         </div>
 
-        <div v-if="error" class="alert alert-error">{{ error }}</div>
-        <div v-if="success" class="alert alert-success">项目创建成功！即将跳转...</div>
+        <div v-if="error" class="alert alert-error" role="alert">{{ error }}</div>
+        <div v-if="success" class="alert alert-success" role="status">项目创建成功！即将跳转...</div>
 
         <div class="flex gap-3">
           <button type="submit" class="btn btn-primary" :disabled="loading">

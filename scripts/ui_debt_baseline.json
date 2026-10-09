@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "captured_from": "chore/ui-266-tokens (2026-10-05)",
-  "reason": "Token layer moved literal colors, radii, z-index and font stacks into :root. Limits drop to the measured now. inline_styles stays at 27: main was already 28 against the #264 baseline, and this change does not authorize that extra attribute. alerts_without_role stays at 30 until the role pass.",
+  "captured_from": "chore/ui-265-a11y (2026-10-05)",
+  "reason": "Token layer moved literal colors, radii, z-index and font stacks into :root. Alert tags now carry role. Limits drop to the measured now. inline_styles stays at 27: main was already 28 against the #264 baseline, and this change does not authorize that extra attribute.",
   "kinds": {
     "hardcoded_colors": {
       "limit": 0,
@@ -24,7 +24,7 @@
       "mode": "warn"
     },
     "alerts_without_role": {
-      "limit": 30,
+      "limit": 0,
       "mode": "warn"
     },
     "custom_modals": {

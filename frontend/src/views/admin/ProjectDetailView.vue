@@ -18,7 +18,7 @@
     </header>
 
     <div v-if="loadingProject" class="text-muted">加载中...</div>
-    <div v-else-if="projectError" class="alert alert-error">{{ projectError }}</div>
+    <div v-else-if="projectError" class="alert alert-error" role="alert">{{ projectError }}</div>
     <template v-else>
       <!-- Project summary -->
       <section class="card project-overview mb-6" aria-labelledby="project-overview-title">
@@ -87,11 +87,11 @@
               <span>已上传 {{ pdfUploadProgress }}%{{ pdfUploadProgress === 100 ? '，正在保存…' : '' }}</span>
               <button class="btn btn-quiet btn-sm" @click="pdfUploadController?.abort()">取消上传</button>
             </div>
-            <div v-if="pdfProcessing" class="alert mt-2">PDF 已上传，后端正在校验文件...</div>
-            <div v-if="pdfSuccess" class="alert alert-success mt-2">
+            <div v-if="pdfProcessing" class="alert mt-2" role="status">PDF 已上传，后端正在校验文件...</div>
+            <div v-if="pdfSuccess" class="alert alert-success mt-2" role="status">
               PDF 深度校验完成，共 {{ pdfMetadata?.page_count || 0 }} 页，已设为项目主 PDF，可在校对编辑器中预览。
             </div>
-            <div v-if="pdfError" class="alert alert-error mt-2">{{ pdfError }}</div>
+            <div v-if="pdfError" class="alert alert-error mt-2" role="alert">{{ pdfError }}</div>
           </div>
 
           <!-- CSV upload -->
@@ -163,8 +163,8 @@
                 {{ uploadingCsv ? '导入处理中...' : '确认导入' }}
               </button>
             </div>
-            <div v-if="csvSuccess" class="alert alert-success mt-2">{{ csvSuccess }}</div>
-            <div v-if="csvError" class="alert alert-error mt-2" style="white-space:pre-line">{{ csvError }}</div>
+            <div v-if="csvSuccess" class="alert alert-success mt-2" role="status">{{ csvSuccess }}</div>
+            <div v-if="csvError" class="alert alert-error mt-2" role="alert" style="white-space:pre-line">{{ csvError }}</div>
             <div v-if="csvImportErrors.length" class="mt-3">
               <div class="font-semibold mb-2">
                 错误明细（显示前 {{ csvImportErrors.length }} 条）
@@ -215,7 +215,7 @@
               </div>
               <div v-if="ocrJob.error_message" class="text-sm text-muted mt-2">{{ ocrJob.error_message }}</div>
             </div>
-            <div v-if="ocrError" class="alert alert-error mt-2" style="white-space:pre-line">{{ ocrError }}</div>
+            <div v-if="ocrError" class="alert alert-error mt-2" role="alert" style="white-space:pre-line">{{ ocrError }}</div>
           </div>
         </div>
       </section>
@@ -230,8 +230,8 @@
           <button class="btn btn-primary" @click="exportCsv" :disabled="exportingCsv">
             {{ exportingCsv ? '导出中...' : '导出校对结果 CSV' }}
           </button>
-          <span v-if="exportError" class="alert alert-error" style="margin:0">{{ exportError }}</span>
-          <span v-if="exportSuccess" class="alert alert-success" style="margin:0">{{ exportSuccess }}</span>
+          <span v-if="exportError" class="alert alert-error" role="alert" style="margin:0">{{ exportError }}</span>
+          <span v-if="exportSuccess" class="alert alert-success" role="status" style="margin:0">{{ exportSuccess }}</span>
         </div>
       </section>
 
@@ -313,7 +313,7 @@
           </button>
         </div>
         <div v-if="loadingPages" class="text-muted text-sm">加载中...</div>
-        <div v-else-if="pagesError" class="alert alert-error">
+        <div v-else-if="pagesError" class="alert alert-error" role="alert">
           {{ pagesError }}
           <button type="button" class="btn btn-secondary btn-sm ml-2" @click="loadPages">重新加载</button>
         </div>
