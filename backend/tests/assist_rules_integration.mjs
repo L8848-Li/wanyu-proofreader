@@ -282,12 +282,21 @@ assert.ok(ctx.repertoire.size > 120, `repertoire too small: ${ctx.repertoire.siz
   assert.deepEqual(rules.ruleReadingFormat(ctx, { 莆田IPA: 'a2' }), [])
   // 边界：缺字占位符 @20000 带五位数字串，那是登记序号不是压平声调。
   assert.deepEqual(rules.ruleReadingFormat(ctx, { 莆田IPA: 'a@20000' }), [])
-  // 55 是两位调值，不触发 long_digit_run；只该报两列调号数量不等。
-  const mismatch = rules.ruleReadingFormat(ctx, { 拼音: 'ka1', 莆田IPA: 'kʰa55' })
+  const paired = rules.makeContext({ toneCountFields: ['参照', '本地记音'] })
+  for (const row of [
+    { 参照: 'ka53', 本地记音: 'ka⁵³' },
+    { 参照: 'ka1', 本地记音: 'kʰa55' },
+    { 参照: 'ka²¹ a1', 本地记音: 'ka53\tɑ⁵⁵' },
+    { 参照: 'ka53 ɑ²¹', 本地记音: 'ka5³' },
+    { 参照: 'ka53 ɑ²¹', 本地记音: 'ka53 (见第 23 页)' },
+    { 参照: 'ka53 ɑ²¹', 本地记音: 'ka@20000' },
+    { 参照: 'ka53 ɑ²¹' }
+  ]) assert.deepEqual(rules.ruleReadingFormat(paired, row), [], JSON.stringify(row))
+  const mismatch = rules.ruleReadingFormat(paired, { 参照: 'ka53 ɑ²¹', 本地记音: 'kʰa55' })
   assert.deepEqual(keysOf(mismatch), ['tone_token_count_differs'])
-  assert.deepEqual(mismatch[0].params, { pinyin_count: 1, ipa_count: 2 })
-  // 缺列不猜：只有拼音列时不报调号数量不等。
-  assert.deepEqual(rules.ruleReadingFormat(ctx, { 拼音: 'ka1' }), [])
+  assert.equal(mismatch[0].field, '本地记音')
+  assert.deepEqual(mismatch[0].params, { left_field: '参照', right_field: '本地记音', left_count: 2, right_count: 1 })
+  assert.deepEqual(rules.ruleReadingFormat(ctx, { 拼音: 'ka1 a2', 莆田IPA: 'kʰa55' }), [])
 }
 
 // R3 格级组合符 + 列级编码形式
@@ -347,6 +356,8 @@ assert.ok(ctx.repertoire.size > 120, `repertoire too small: ${ctx.repertoire.siz
   ])
   assert.deepEqual(keysOf(back), ['pdf_page_backtrack'])
   assert.equal(back[0].params.backtrack, 28)
+  const reset = [26, 2, 2, 3, 4].map((pdfPage, order) => ({ order, pdfPage }))
+  assert.equal(rules.rulePageOrderBacktrack(reset).length, 1, '一次回退只记一次')
   // 容差内（回退 1 页）不报——这是 R7 的边界，不是实现细节。
   assert.deepEqual(rules.rulePageOrderBacktrack([{ order: 1, pdfPage: 12 }, { order: 2, pdfPage: 11 }]), [])
   // 样本不足 20 页时密度判据必须沉默，不给假数字。
@@ -657,7 +668,7 @@ async function createPage(projectId, pageNumber, row) {
   })
 }
 
-async function setGate({ version = rules.RULES_VERSION, kind, messageKey, gate }) {
+async function setGate({ kind, messageKey, gate, version = rules.producerVersionForRule(messageKey) }) {
   const row = await request('/api/collections/assist_rule_gates/records', {
     method: 'POST', token: superAuth.token,
     body: { producer: 'rule', producer_version: version, kind, message_key: messageKey, gate, sample_n: 200, precision_hat: 0.95 }
@@ -785,7 +796,7 @@ try {
   }
   for (const item of managerView.items) {
     assert.equal(item.producer, 'rule')
-    assert.equal(item.producer_version, rules.RULES_VERSION)
+    assert.equal(item.producer_version, rules.producerVersionForRule(item.message.key))
     assert.equal(item.gate, 'off', '新规则必须一入库就对校对端不可见')
   }
 
@@ -796,6 +807,9 @@ try {
   assert.deepEqual(beforeGate.hints, [])
 
   await setGate({ kind: 'reading_format_invalid', messageKey: 'long_digit_run', gate: 'strong' })
+  await setGate({ kind: 'confusable_substitution', messageKey: 'confusable_ascii_in_reading', gate: 'warn' })
+  await setGate({ kind: 'punctuation_mix', messageKey: 'punctuation_width_mixed_in_column', gate: 'warn' })
+  await setGate({ kind: 'page_outlier', messageKey: 'pdf_page_backtrack', gate: 'warn' })
   const afterGate = await request(`/api/fangji/pages/${trapped.id}/findings`, { token: worker.token })
   assert.deepEqual(afterGate.hints.map((hint) => hint.message.key), ['long_digit_run'])
   assert.equal(afterGate.hints[0].highlight, true)
@@ -809,6 +823,37 @@ try {
     `第 3 条的读者只能看到第 3 条自己的数字串：${JSON.stringify(pagedGate.hints[0].message.params)}`)
   assert.deepEqual(afterGate.hints[0].message.params.runs, ['5333'],
     '第 1 条的读者不能拿到第 3 条的内容')
+
+  // Project settings, single-entry recompute and ordinary hints use the same pair.
+  {
+    const paired = await createProject('Tone pair', [worker], [boss])
+    const settings = `/api/fangji/projects/${paired.id}/column-roles`
+    const row = await createPage(paired.id, 1, { 对照: 'ka53 lɑŋ²¹', 本地: 'ka⁵³', 异读: 'ka55 lɑŋ²¹' })
+    const roles = { 对照: 'reading', 本地: 'reading', 异读: 'reading' }
+    const hintURL = `/api/fangji/pages/${row.id}/findings`
+    for (const fields of [['对照', '对照'], ['对照', 'unknown'], ['对照']]) {
+      await request(settings, { method: 'PUT', token: boss.token, body: { roles, tone_count_fields: fields }, expected: 400 })
+    }
+    const update = await request(settings, { method: 'PUT', token: boss.token,
+      body: { roles, tone_count_fields: ['对照', '本地'] } })
+    assert.deepEqual(update.tone_count_fields, ['对照', '本地'])
+    await request(settings, { method: 'PUT', token: boss.token, body: { roles } })
+    assert.deepEqual((await request(settings, { token: boss.token })).tone_count_fields, ['对照', '本地'])
+    await request(`${hintURL}/recompute`, { method: 'POST', token: boss.token })
+    const listed = await request(`/api/fangji/projects/${paired.id}/findings`, { token: boss.token })
+    const tone = listed.items.find(item => item.message.key === 'tone_token_count_differs')
+    assert.equal(tone?.producer_version, rules.RULES_VERSION)
+    assert.equal(tone.field, '本地')
+    assert.equal(tone.scoring_channel, 'unscored')
+    assert.deepEqual(tone.message.params, { left_field: '对照', right_field: '本地', left_count: 2, right_count: 1 })
+    assert.deepEqual((await request(hintURL, { token: boss.token })).hints, [])
+    await setGate({ kind: 'reading_format_invalid', messageKey: 'tone_token_count_differs', gate: 'warn' })
+    assert.deepEqual((await request(hintURL, { token: boss.token })).hints.map(item => item.field), ['本地'])
+    await request(settings, { method: 'PUT', token: boss.token, body: { roles, tone_count_fields: ['对照', '异读'] } })
+    assert.deepEqual((await request(hintURL, { token: boss.token })).hints, [], '换列立即隐藏旧配对结果')
+    await request(`${hintURL}/recompute`, { method: 'POST', token: boss.token })
+    assert.deepEqual((await request(`/api/fangji/projects/${paired.id}/findings`, { token: boss.token })).items, [])
+  }
 
   // 重算只下线同 producer 的旧批次：OCR(#125) 与 bundle_import(#124) 的行不能被动。
   const ocrRow = await request('/api/collections/review_findings/records', {
@@ -1086,7 +1131,7 @@ try {
         page: legacyPage.id, project: wbProject.id, field_name: '莆田IPA',
         kind: 'reading_format_invalid', severity: 'strong', message_key: 'long_digit_run',
         params_json: '{}', evidence_json: JSON.stringify({ char_offsets: [[2, 6]] }),
-        producer: 'rule', producer_version: rules.RULES_VERSION,
+        producer: 'rule', producer_version: rules.producerVersionForRule('long_digit_run'),
         produced_at: new Date().toISOString().slice(0, 10)
       }
     })
@@ -1135,19 +1180,14 @@ try {
     assert.equal(staleSpan.highlight, true, '降级只该影响"画不画高亮"，不该改档位与高亮意图')
     assert.equal(after.offsets_stale, 1, JSON.stringify({ keys: hintKeys(after), stale: after.offsets_stale }))
     assert.equal(after.offsets_unbaselined, 0, '这一格是"原文变了"，不该同时记成"没有基准"')
-    // 没有区间的疑点（同页的 tone_token_count_differs）不许被计入过期数：
-    // 那会把"从没标过"说成"标不了"，正是本仓反复要求分开的那两件事。
     assert.equal(after.hints.length, before.hints.length, '写回复核不得增减疑点条数')
 
     // 管理端读的是同一份下标，所以必须过同一道复核（两端各写一套判据的话早晚只有一端在防）。
-    // 这一口不做门控过滤（门槛文件 §2「仍计算、仍写库、只在管理端统计」），所以 off 档的 R2
-    // 也在这里可见，而校对端那条被 gate 挡在 suppressed_by_gate 里。
+    // R2 留在管理端作抽样；其区间仍按来源核验。
     const adminView = await request(`/api/fangji/projects/${wbProject.id}/findings?per=200`, { token: boss.token })
     const onWbPage = adminView.items.filter((item) => item.page === wbPage.id)
-    // 项目没配键盘，R2 按莆仙词表回退（#238），所以这格同时中了 R2 与 R6；第三条
-    // tone_token_count_differs 本来就没有区间。名字列出来，下面那两个数才不是匿名数字。
     assert.deepEqual(onWbPage.map((item) => item.message.key).sort(),
-      ['confusable_ascii_in_reading', 'long_digit_run', 'tone_token_count_differs'],
+      ['confusable_ascii_in_reading', 'long_digit_run'],
       JSON.stringify(onWbPage.map((item) => [item.message.key, item.evidence])))
     const baselinedKeys = onWbPage
       .filter((item) => Array.isArray(item.evidence?.offsets_basis?.digests))
@@ -1165,8 +1205,6 @@ try {
     const staleOnAdmin = onWbPage.find((item) => item.message.key === 'long_digit_run')
     assert.equal(staleOnAdmin.evidence.char_offsets, undefined,
       `基准对不上却仍下发旧下标：${JSON.stringify(staleOnAdmin.evidence)}`)
-    assert.equal(onWbPage.find((item) => item.message.key === 'tone_token_count_differs').evidence.char_offsets,
-      undefined, '本来就没有区间的疑点不该凭空长出区间')
 
     // 重算是既有出口（提交后、裁决后、这两个管理端口都会跑）：跑一次之后区间重新锚在**新串**上。
     await request(`/api/fangji/pages/${wbPage.id}/findings/recompute`, { method: 'POST', token: boss.token })

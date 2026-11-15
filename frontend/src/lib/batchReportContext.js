@@ -1,6 +1,7 @@
 const reportAnchors = {
   adoption: '#report-adoption',
   delivery: '#report-delivery',
+  findings: '#report-findings',
   exports: '#report-exports',
   overview: '#batch-overview-heading'
 }

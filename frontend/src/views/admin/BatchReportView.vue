@@ -64,6 +64,72 @@
       </section>
       <BatchReportMetrics :metrics="report.metrics" :import-complete="importComplete" />
 
+      <section
+        v-if="importComplete"
+        id="report-findings"
+        class="card report-section"
+        aria-labelledby="report-findings-heading"
+      >
+        <div class="record-heading">
+          <h2 id="report-findings-heading">列与分页疑点</h2>
+          <RouterLink
+            :to="
+              projectWorkspaceTarget(projectId, 'work', 'checks', reportContextQuery('findings'))
+            "
+            class="report-link"
+          >
+            前往质量检查重算
+          </RouterLink>
+        </div>
+        <p v-if="batchFindingsError" class="alert alert-error" role="alert">
+          {{ batchFindingsError }}
+          <AppButton variant="secondary" size="sm" @click="loadBatchFindings(findingsPage)"
+            >重试</AppButton
+          >
+        </p>
+        <p v-else-if="findingsLoading && !batchFindings" role="status">正在读取本批疑点…</p>
+        <template v-else-if="batchFindings">
+          <p v-if="!batchFindings.items.length" class="report-empty">
+            本批暂无记录。项目质量检查重算后，刷新这里查看最新结果。
+          </p>
+          <ul v-else class="report-records">
+            <li v-for="item in batchFindings.items" :key="item.id">
+              <div class="record-heading">
+                <strong>{{
+                  item.field
+                    ? `列「${item.field}」`
+                    : item.evidence?.page
+                      ? `PDF 第 ${item.evidence.page} 页`
+                      : 'PDF 分页'
+                }}</strong>
+                <RouterLink
+                  v-if="item.evidence?.page"
+                  :to="
+                    projectWorkspaceTarget(projectId, 'work', 'entries', {
+                      ...reportContextQuery('findings'),
+                      importJob: batchId,
+                      minPage: String(item.evidence.page),
+                      maxPage: String(item.evidence.page)
+                    })
+                  "
+                  class="report-link"
+                  >查看本批该页条目</RouterLink
+                >
+              </div>
+              <p class="text-sm">{{ renderFindingMessage(item.message) }}</p>
+            </li>
+          </ul>
+          <AppPagination
+            v-if="batchFindings.hasMore || findingsPage > 1"
+            :page="findingsPage"
+            :has-next="batchFindings.hasMore"
+            :busy="findingsLoading"
+            label="批次疑点分页"
+            @change="loadBatchFindings"
+          />
+        </template>
+      </section>
+
       <section class="card report-section" aria-labelledby="report-adoption">
         <div class="record-heading">
           <div>
@@ -322,7 +388,9 @@ import {
 } from '@/lib/batchReport'
 import { receiptLabel } from '@/lib/deliveryPresentation'
 import { batchReportNavigationQuery } from '@/lib/batchReportContext'
+import { renderFindingMessage } from '@/lib/findingMessages'
 import { projectWorkspaceTarget } from '@/lib/projectWorkspace'
+import { listProjectFindings } from '@/services/assistService'
 import { getBatchReport } from '@/services/batchReportService'
 import { getPbMessage, getPbStatus } from '@/utils/pbErrors'
 
@@ -361,9 +429,14 @@ const needsProofreading = computed(() => {
 const report = ref(null)
 const loading = ref(false)
 const error = ref('')
+const batchFindings = ref(null)
+const batchFindingsError = ref('')
+const findingsPage = ref(1)
+const findingsLoading = ref(false)
 const scope = useProtectedPageScope((status) => {
   report.value = null
   loading.value = false
+  batchFindings.value = null
   exportsState.clear()
   error.value =
     status === 401 ? '登录状态已变化，请重新打开报告。' : '当前账号无法查看这个批次的报告。'
@@ -429,6 +502,7 @@ async function restoreReportSection() {
   if (
     ![
       '#batch-overview-heading',
+      '#report-findings',
       '#report-adoption',
       '#report-delivery',
       '#report-exports',
@@ -483,6 +557,7 @@ async function load() {
     )
       throw new Error('收到的报告与当前批次不一致，暂无法显示。')
     report.value = value
+    if (importComplete.value) void loadBatchFindings(1)
     if (!history.value && !historyLoading.value) void loadHistory()
     if (selectedId.value && !selected.value && !selectedError.value && !selectedLoading.value)
       void readSelected()
@@ -492,6 +567,8 @@ async function load() {
       scope.cancel()
       report.value = null
       loading.value = false
+      batchFindings.value = null
+      findingsLoading.value = false
       exportsState.clear()
       error.value = '找不到这个导入批次，请返回台账重新选择。'
     } else {
@@ -499,6 +576,29 @@ async function load() {
     }
   } finally {
     if (request.isCurrent()) loading.value = false
+    request.finish()
+  }
+}
+
+async function loadBatchFindings(page) {
+  if (findingsLoading.value || accessLost.value) return
+  findingsLoading.value = true
+  batchFindingsError.value = ''
+  findingsPage.value = page
+  const request = scope.capture()
+  try {
+    const view = await listProjectFindings(projectId, {
+      batch: batchId,
+      page,
+      per: 20,
+      signal: request.signal
+    })
+    if (request.isCurrent()) batchFindings.value = view
+  } catch (cause) {
+    if (!request.isCurrent() || scope.invalidate(cause, request)) return
+    batchFindingsError.value = getPbMessage(cause, '本批疑点暂时无法读取。')
+  } finally {
+    if (request.isCurrent()) findingsLoading.value = false
     request.finish()
   }
 }

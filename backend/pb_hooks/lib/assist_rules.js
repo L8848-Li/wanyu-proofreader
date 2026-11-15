@@ -1,6 +1,6 @@
-// #177 确定性规则引擎 v1（L0）。
+// #177 确定性规则引擎（L0）。
 //
-// 分工：本文件是**纯函数**——不碰 DAO、不 require 别的 lib、不读全局。
+// 分工：本文件只使用规则上下文和输入行，不碰 DAO。
 // 需要键盘/角色的上下文由调用方（backend/pb_hooks/assist.pb.js）构造后传进来。
 // 好处是每条规则都能在 node 里直接跑单测，不必起服务器。
 //
@@ -11,7 +11,17 @@
 // assist_rule_gates 的 gate 决定，见 docs/plans/2026-09-25-assist-rule-thresholds.md §2；
 // 两者不可互相推导，所以这里不出现 gate 字样。
 
-const RULES_VERSION = "l0-v1"
+const hooksRoot = typeof globalThis.__hooks === "string" ? globalThis.__hooks : ""
+const comparison = require(hooksRoot ? `${hooksRoot}/lib/source_comparison.js` : "./source_comparison.js")
+const RULES_VERSION = "l0-v2"
+const LEGACY_RULES_VERSION = "l0-v1"
+const TONE_COUNT_MESSAGE_KEY = "tone_token_count_differs"
+const CONFUSABLE_MESSAGE_KEY = "confusable_ascii_in_reading"
+const BATCH_MESSAGE_KEYS = [
+  "mixed_normalization_forms", "punctuation_width_mixed_in_column",
+  "pdf_page_backtrack", "page_entry_count_outlier"
+]
+const ADMINISTRATIVE_MESSAGE_KEYS = [...BATCH_MESSAGE_KEYS, CONFUSABLE_MESSAGE_KEY]
 
 // 莆仙三套方案里合法的三位以上调值只有这两个（detectors.py:28 的 shipped 行为）。
 // 原型 anomaly_probe.py 的 13 值 LEGAL 集合在 #201 移植时被刻意删除；
@@ -113,7 +123,7 @@ function confusablesOf(keyboards) {
   return byLookalike
 }
 
-function makeContext({ projectId = "", keyboards = [], roles = null, readingFields = READING_FIELDS,
+function makeContext({ projectId = "", keyboards = [], roles = null, toneCountFields = [], readingFields = READING_FIELDS,
   meaningFields = MEANING_FIELDS, ipaFields = IPA_FIELDS } = {}) {
   return {
     projectId,
@@ -123,6 +133,7 @@ function makeContext({ projectId = "", keyboards = [], roles = null, readingFiel
     readingFields: [...readingFields],
     meaningFields: [...meaningFields],
     ipaFields: [...ipaFields],
+    toneCountFields: [...toneCountFields],
     roles
   }
 }
@@ -134,9 +145,7 @@ function makeContext({ projectId = "", keyboards = [], roles = null, readingFiel
 // 两端各按各的直觉写（一端含尾、一端不含；一数码位、一端 UTF-16）时的症状是高亮整体
 // 偏移一格，或遇到补充平面字符（𰻞、PUA 缺字）时错位——那不报错，只像"标错了地方"。
 //
-// 放在规则文件里而不是独立模块：本文件的既定约束是"纯函数、不 require 别的 lib"，
-// 为的是每条规则都能在 node 里直接跑单测（`scripts/assist/lib/labeling.mjs` 就这么用它）；
-// 而 hook 侧的 `${__hooks}` 解析在 node 里不存在。别的 lib 需要时从这里的导出取。
+// 判据、离线打分和写入端共用这里的区间口径。
 function mergeSpans(indices) {
   const merged = []
   let start = null
@@ -321,13 +330,12 @@ function ruleMissingField(ctx, row) {
 }
 
 // ---- R6 reading_format_invalid ----
-function toneDigits(text) {
-  return (String(text ?? "").match(/[1-7]/g) ?? []).length
+function toneSyllableCount(value) {
+  return comparison.validToneForm(value) ? String(value).trim().split(/\s+/).length : null
 }
 
 function ruleReadingFormat(ctx, row) {
   const out = []
-  const counts = {}
   for (const [field, value] of Object.entries(row ?? {})) {
     if (!ctx.readingFields.includes(field) || isEmpty(value)) continue
     const stripped = String(value).replace(PLACEHOLDER, "")
@@ -340,14 +348,14 @@ function ruleReadingFormat(ctx, row) {
       out.push(finding("reading_format_invalid", "strong", field, "long_digit_run",
         { runs, run_count: runs.length }, spanEvidence(literalSpans(value, runs))))
     }
-    counts[field] = toneDigits(value)
   }
-  const left = counts["拼音"]
-  const right = counts["莆田IPA"]
-  // 两列都在本行出现过才比，缺列不猜（与入仓版一致，只比这两列）。
-  if (left !== undefined && right !== undefined && left !== right) {
-    out.push(finding("reading_format_invalid", "warn", "莆田IPA", "tone_token_count_differs",
-      { pinyin_count: left, ipa_count: right }))
+  if (ctx.toneCountFields.length !== 2) return out
+  const [left, right] = ctx.toneCountFields
+  const leftCount = toneSyllableCount(row?.[left])
+  const rightCount = toneSyllableCount(row?.[right])
+  if (leftCount !== null && rightCount !== null && leftCount !== rightCount) {
+    out.push(finding("reading_format_invalid", "warn", right, "tone_token_count_differs",
+      { left_field: left, right_field: right, left_count: leftCount, right_count: rightCount }))
   }
   return out
 }
@@ -355,15 +363,16 @@ function ruleReadingFormat(ctx, row) {
 // ---- R7 page_outlier（项目级）----
 function rulePageOrderBacktrack(entries) {
   const out = []
-  let highest = null
+  let previous = 0
   for (const entry of entries.slice().sort((a, b) => a.order - b.order)) {
     const page = Number(entry.pdfPage) || 0
-    if (highest !== null && page > 0 && page < highest - PAGE_ORDER_BACKTRACK_TOLERANCE) {
+    if (page <= 0) continue
+    if (page < previous - PAGE_ORDER_BACKTRACK_TOLERANCE) {
       out.push(finding("page_outlier", "warn", "", "pdf_page_backtrack", {
-        from_page: highest, to_page: page, backtrack: highest - page
+        from_page: previous, to_page: page, backtrack: previous - page
       }, { page }))
     }
-    if (page > (highest ?? 0)) highest = page
+    previous = page
   }
   return out
 }
@@ -406,7 +415,7 @@ function runEntryRules(ctx, row, pageId) {
   return runPageRules(ctx, row).map((item) => anchored(item, pageId, ANCHOR_ENTRY))
 }
 
-// 项目级批处理：列级(R3/R4) 与页级(R7) 规则加上逐条格级规则。
+// 项目级批处理：逐条格级规则，加上各导入批次的列级与 PDF 页级规则。
 //
 // entries = [{ pageId, order, pdfPage, row }]：条目归属与行内容**必须一起来**。
 // 上一版把 rows / columns / entries 分三个参数传，摊平后 finding 里没有任何条目
@@ -417,9 +426,9 @@ function runEntryRules(ctx, row, pageId) {
 //
 // 挂靠口径（#176 规定 review_findings.page 必填，所以列级疑点也必须落在某一条上）：
 // - 格级/行级(R1/R2/R3格级/R5/R6) → 它所属的条目，scope=entry；
-// - 列级(R3列级/R4) → 扫描顺序第一条，scope=column_first_entry。列级 params 只有
+// - 列级(R3列级/R4) → 批次扫描顺序第一条，scope=column_first_entry。列级 params 只有
 //   计数与码位标签、不含任何原样内容片段（assist_rules_integration.mjs 钉住了这一点），
-//   真正的消费方是管理端项目级读口；这条取舍写进 docs/plans/2026-09-25-assist-rules.md；
+//   真正的消费方是管理端批次报告；这条取舍写进 docs/plans/2026-09-25-assist-rules.md；
 // - 页级(R7) → 该 PDF 页扫描顺序里的第一个条目，scope=pdf_page_first_entry；
 //   解析不出条目就返回 page=""，由写入端跳过并计数，绝不退化成"挂到第一条"。
 const ANCHOR_ENTRY = "entry"
@@ -436,21 +445,23 @@ const CELL_MESSAGE_KEYS = [
   "non_ipa_range_codepoints", "confusable_ascii_in_reading", "combining_marks_present",
   "long_digit_run", "tone_token_count_differs", "required_role_field_empty"
 ]
-const PROJECT_ONLY_MESSAGE_KEYS = [
-  "mixed_normalization_forms", "punctuation_width_mixed_in_column",
-  "pdf_page_backtrack", "page_entry_count_outlier"
-]
+const PROJECT_ONLY_MESSAGE_KEYS = BATCH_MESSAGE_KEYS
 
-function anchored(item, pageId, scope) {
+function producerVersionForRule(messageKey) {
+  return messageKey === TONE_COUNT_MESSAGE_KEY || PROJECT_ONLY_MESSAGE_KEYS.includes(messageKey)
+    ? RULES_VERSION : LEGACY_RULES_VERSION
+}
+
+function anchored(item, pageId, scope, batchId = "") {
   return {
     ...item,
     page: pageId ?? "",
-    evidence: { ...(item.evidence ?? {}), anchor: scope }
+    evidence: { ...(item.evidence ?? {}), anchor: scope, ...(batchId ? { batch: batchId } : {}) }
   }
 }
 
 function columnsOf(entries) {
-  const columns = {}
+  const columns = Object.create(null)
   for (const entry of entries) {
     for (const [field, value] of Object.entries(entry.row ?? {})) {
       if (!columns[field]) columns[field] = []
@@ -460,9 +471,18 @@ function columnsOf(entries) {
   return columns
 }
 
+function groupBy(entries, keyFor) {
+  const groups = new Map()
+  for (const entry of entries) {
+    const key = keyFor(entry)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(entry)
+  }
+  return groups.values()
+}
+
 function runProjectRules(ctx, entries, reserveFinding = null) {
   const list = entries ?? []
-  const columns = columnsOf(list)
   const out = []
   const append = item => { if (reserveFinding) reserveFinding(item); out.push(item) }
   for (const entry of list) {
@@ -480,19 +500,35 @@ function runProjectRules(ctx, entries, reserveFinding = null) {
       append(anchored(item, entry.pageId, ANCHOR_ENTRY))
     }
   }
-  const columnAnchor = list.length ? list[0].pageId : ""
-  for (const item of [...ruleColumnForms(columns), ...rulePunctuationMix(columns)]) {
-    append(anchored(item, columnAnchor, ANCHOR_COLUMN))
-  }
-  for (const item of [...rulePageOrderBacktrack(list), ...rulePageDensityOutliers(list)]) {
-    const owner = list.find((entry) => (Number(entry.pdfPage) || 0) === item.evidence?.page)
-    append(anchored(item, owner?.pageId, ANCHOR_PDF_PAGE))
+  for (const batch of groupBy(list, entry => entry.batchId ? `batch:${entry.batchId}` : `legacy:${entry.fileId || ""}`)) {
+    const { pageId, batchId } = batch[0]
+    const columns = columnsOf(batch)
+    for (const item of [...ruleColumnForms(columns), ...rulePunctuationMix(columns)]) {
+      append(anchored(item, pageId, ANCHOR_COLUMN, batchId))
+    }
+    // A batch can contain entries bound to different PDFs. Their page numbers
+    // share no numbering scheme, even when the import job is the same.
+    for (const source of groupBy(batch, entry => entry.fileId || "")) {
+      const firstOnPage = new Map()
+      for (const entry of source) {
+        const pdfPage = Number(entry.pdfPage) || 0
+        if (!firstOnPage.has(pdfPage)) firstOnPage.set(pdfPage, entry.pageId)
+      }
+      for (const item of [...rulePageOrderBacktrack(source), ...rulePageDensityOutliers(source)]) {
+        append(anchored(item, firstOnPage.get(item.evidence.page), ANCHOR_PDF_PAGE, batchId))
+      }
+    }
   }
   return out
 }
 
 module.exports = {
   RULES_VERSION,
+  LEGACY_RULES_VERSION,
+  TONE_COUNT_MESSAGE_KEY,
+  CONFUSABLE_MESSAGE_KEY,
+  producerVersionForRule,
+  ADMINISTRATIVE_MESSAGE_KEYS,
   PLACEHOLDER,
   ANCHOR_ENTRY,
   ANCHOR_COLUMN,

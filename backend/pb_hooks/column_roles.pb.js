@@ -18,11 +18,12 @@ routerAdd("PUT", "/api/fangji/projects/{projectId}/column-roles", (c) => {
   const auth = c.auth
   if (auth.getBool("must_change_password")) throw new ForbiddenError("首次登录请先修改密码")
   const projectId = assertId(c.request.pathValue("projectId"), "项目")
-  const roles = validateRoleMap((c.requestInfo().body || {}).roles)
+  const body = c.requestInfo().body || {}
+  const roles = validateRoleMap(body.roles)
   let view = null
   $app.runInTransaction((txDao) => {
     const { project } = requireManager(txDao, projectId, auth)
-    view = saveColumnRoles(txDao, project, roles)
+    view = saveColumnRoles(txDao, project, roles, body.tone_count_fields)
   })
   return c.json(200, view)
 }, $apis.requireAuth("users"))

@@ -191,17 +191,6 @@ function tallyOffsets(reason, counts) {
   return counts
 }
 
-// 校对端一次请求只看一条条目，所以这里单取一次 pages；管理端复用 locatorOf 的缓存。
-function shownRowOf(dao, pageId) {
-  const id = String(pageId ?? "")
-  if (!id) return null
-  try {
-    return parseJson(dao.findRecordById("pages", id).get("ocr_row_json"), null)
-  } catch {
-    return null
-  }
-}
-
 // A publication becomes visible atomically. Retirements are derived tombstones;
 // superseded_at alone no longer identifies the complete current batch.
 function currentRecords(dao, where, sort, limit, offset) {
@@ -264,6 +253,14 @@ function locatorOf(app, pageId, cache) {
 function statisticsView(record, gate, row, locator) {
   const view = hintView(record, gate)
   const coverage = require(`${__hooks}/lib/rule_coverage.js`)
+  const { PROJECT_ONLY_MESSAGE_KEYS, CONFUSABLE_MESSAGE_KEY, TONE_COUNT_MESSAGE_KEY, RULES_VERSION } = require(`${__hooks}/lib/assist_rules.js`)
+  const producer = record.getString("producer")
+  const version = record.getString("producer_version")
+  const key = view.message.key
+  const audience = producer !== "rule" ? "entry"
+    : PROJECT_ONLY_MESSAGE_KEYS.includes(key) ? "batch"
+    : key === CONFUSABLE_MESSAGE_KEY || (key === TONE_COUNT_MESSAGE_KEY && version !== RULES_VERSION) ? "diagnostic"
+    : "entry"
   return {
     id: record.id,
     field: view.field,
@@ -275,8 +272,9 @@ function statisticsView(record, gate, row, locator) {
     page_number: locator.page_number,
     pdf_page: locator.pdf_page,
     project: record.getString("project"),
-    producer: record.getString("producer"),
-    producer_version: record.getString("producer_version"),
+    producer,
+    producer_version: version,
+    audience,
     produced_at: record.getString("produced_at"),
     gate,
     // #254：`off` 有两种，界面必须说得出是哪一种——"有通道、等证据"与
@@ -305,14 +303,26 @@ function statisticsView(record, gate, row, locator) {
 // 得——前者是原文已改写或对不上，后者是这批根本没有可验证基准（#304，见 §1.1）。
 function hintsForPage(dao, pageId) {
   const { map: gates, truncated: gateTruncated } = gateMap(dao)
-  const shownRow = shownRowOf(dao, pageId)
-  const records = currentRecords(dao, $dbx.exp("page = {:page}", { page: pageId }), "kind,message_key", MAX_PAGE_SIZE + 1, 0)
   const hints = []
   let suppressed = 0
   const offsets = { stale: 0, unbaselined: 0 }
   const fidelity = require(`${__hooks}/lib/source_fidelity.js`)
   const page = dao.findRecordById("pages", pageId)
-  const policy = fidelity.policyFor(dao, page.getString("project"))
+  const shownRow = parseJson(page.get("ocr_row_json"), null)
+  const projectId = page.getString("project")
+  const policy = fidelity.policyFor(dao, projectId)
+  const { parseStoredRoles, toneCountFieldsFor } = require(`${__hooks}/lib/column_roles.js`)
+  const project = dao.findRecordById("projects", projectId)
+  const [left = "", right = ""] = toneCountFieldsFor(project, parseStoredRoles(project.getString("column_roles_json")))
+  const { RULES_VERSION, TONE_COUNT_MESSAGE_KEY, ADMINISTRATIVE_MESSAGE_KEYS } = require(`${__hooks}/lib/assist_rules.js`)
+  // Filter before the cap so diagnostic rows cannot crowd out actionable hints.
+  const administrative = ADMINISTRATIVE_MESSAGE_KEYS.map(key => `'${key}'`).join(",")
+  const records = currentRecords(dao, $dbx.exp(`page = {:page} AND (producer != 'rule' OR (
+    message_key NOT IN (${administrative}) AND (message_key != {:toneKey} OR (
+      producer_version = {:version} AND {:left} != '' AND CASE WHEN json_valid(params_json) THEN
+        json_extract(params_json, '$.left_field') = {:left} AND json_extract(params_json, '$.right_field') = {:right}
+      ELSE 0 END))))`, { page: pageId, toneKey: TONE_COUNT_MESSAGE_KEY, version: RULES_VERSION, left, right }),
+  "kind,message_key", MAX_PAGE_SIZE + 1, 0)
   const inputVersion = excerptDigest(JSON.stringify(shownRow))
   for (const record of records.slice(0, MAX_PAGE_SIZE)) {
     const { gate } = gateOf(gates, record)
@@ -350,9 +360,21 @@ function hintsForPage(dao, pageId) {
 
 // 管理端：不做门控过滤，info 与 off 一律可见——门槛文件 §2 要求 off 只挡校对端，
 // 「仍计算、仍写库、只在管理端统计」依赖这个读取口。
-function listForProject(dao, projectId, { page = 1, per = 50, kind = "", producer = "" } = {}) {
+function listForProject(dao, projectId, { page = 1, per = 50, kind = "", producer = "", batch = "" } = {}) {
   const clauses = ["project = {:project}"]
   const params = { project: projectId }
+  if (batch) {
+    const { assertId } = require(`${__hooks}/lib/project_access.js`)
+    params.batch = assertId(batch, "导入批次")
+    const job = dao.findRecordsByFilter("import_jobs", "id = {:batch} && project = {:project}", "", 1, 0, params)[0]
+    if (!job) throw new NotFoundError("导入批次不存在")
+    const { PROJECT_ONLY_MESSAGE_KEYS, RULES_VERSION } = require(`${__hooks}/lib/assist_rules.js`)
+    params.batchRuleVersion = RULES_VERSION
+    clauses.push("producer = 'rule' AND producer_version = {:batchRuleVersion}",
+      `message_key IN (${PROJECT_ONLY_MESSAGE_KEYS.map(key => `'${key}'`).join(",")})`,
+      `CASE WHEN json_valid(evidence_json) THEN json_extract(evidence_json, '$.batch') = {:batch} ELSE 0 END`,
+      "EXISTS (SELECT 1 FROM pages p WHERE p.id=review_findings.page AND p.project={:project} AND p.import_job={:batch})")
+  }
   const safeKind = enumParam(kind, FINDING_KINDS)
   const safeProducer = enumParam(producer, PRODUCERS)
   if (safeKind) { clauses.push("kind = {:kind}"); params.kind = safeKind }
@@ -401,7 +423,6 @@ module.exports = {
   excerptDigest,
   dropStaleOffsets,
   tallyOffsets,
-  shownRowOf,
   hintsForPage,
   hintView,
   listForProject

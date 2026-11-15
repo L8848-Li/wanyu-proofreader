@@ -66,7 +66,8 @@ node scripts/assist/score_rules.mjs --records backend/tests/fixtures/assist_trap
 ## 4. 未覆盖，不是 0 分
 
 R3 列级（`mixed_normalization_forms`）、R4（`punctuation_mix`）、R7 的两个判据**不参与打分**：
-它们要看整列/全项目才成立，而弱标注的粒度是 `(提交, 字段)`。
+它们需要同批整列或 PDF 页分布，而弱标注的粒度是 `(提交, 字段)`。
+新版带调音节数核对也暂缺对应的打分通道。即使有字段正误，仍需知道错误出自音节／调号的漏写或多写，才能为这条判据标注命中与漏报。
 它们出现在报告里会被读成「精度 0」，所以打分器根本不列它们
 （`score_rules.mjs` 的 `defaultRuleSet` 上有注释说明）。
 跨行三类（`duplicate_identity` / `cross_source_conflict` / `merged_columns`）**同样不参与打分**，
@@ -79,6 +80,15 @@ R3 列级（`mixed_normalization_forms`）、R4（`punctuation_mix`）、R7 的�
 `duplicate_identity`、`cross_source_conflict`，#254 报的就是这一族以前两栏都不提）
 合并成一处定义 `backend/pb_hooks/lib/rule_coverage.js`，`gate_changeset.mjs` 报告的
 第三栏「无打分通道」与 `score_rules.mjs` 的 `defaultRuleSet` 都从它读，漏归类套件会红。
+
+### 4.1 易混字符的抽样复核
+
+R2 依据键盘注释枚举 `a` 与 `ɑ` 等相似字符，管理端「质量检查」仍可用于抽样。
+校对页停止显示这类提示。复核时从同一授权批次同时抽取命中和未命中的记音格，先独立读原 PDF，
+再对照每个命中位置，记录真错、合法写法、漏掉的替换和原文不可判读。另记该提示是否值得打断校对。
+按判据公布可判读的样本量、真报、误报和漏报；不可判读单记。可以用
+[独立参照流程](../research/README.md)准备盲读材料，`score_rules.mjs` 用于已有业务判断的粗筛。
+一般的字段改动或弱标签无法证明某个相似字符写错，也无法量出这条判据的真实召回。
 
 ## 5. 「先定线」的时间戳证据
 

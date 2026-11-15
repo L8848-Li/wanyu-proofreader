@@ -13,33 +13,50 @@ function query(extra = {}) {
   return parts.join('&')
 }
 
-export async function listProjectFindings(projectId, { kind = '', producer = '', page = 1, per = 50 } = {}) {
-  const search = query({ kind, producer, page, per })
-  return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/findings${search ? `?${search}` : ''}`, {
-    requestKey: null
-  })
+export async function listProjectFindings(
+  projectId,
+  { kind = '', producer = '', batch = '', page = 1, per = 50, signal } = {}
+) {
+  const search = query({ kind, producer, batch, page, per })
+  return pb.send(
+    `/api/fangji/projects/${encodeURIComponent(projectId)}/findings${search ? `?${search}` : ''}`,
+    {
+      requestKey: null,
+      signal
+    }
+  )
 }
 
 // 两个重算都是同步执行的长任务（10k 行实测秒级），所以调用方必须自己守住"进行中"，
 // 重复点击不会并发跑第二遍 —— 见 ProjectDetailView 的 assistBusy。
 export async function recomputeProjectFindings(projectId) {
   return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/findings/recompute`, {
-    method: 'POST', body: {}, requestKey: null
+    method: 'POST',
+    body: {},
+    requestKey: null
   })
 }
 
 export async function recomputeProjectIdentity(projectId) {
   return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/identity/recompute`, {
-    method: 'POST', body: {}, requestKey: null
+    method: 'POST',
+    body: {},
+    requestKey: null
   })
 }
 
 export async function listProjectDismissals(projectId) {
-  return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/dismissals`, { requestKey: null })
+  return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/dismissals`, {
+    requestKey: null
+  })
 }
 
 export async function revokeGroupDismissal(projectId, dismissalId) {
-  return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/dismissals/${encodeURIComponent(dismissalId)}`, {
-    method: 'DELETE', requestKey: null
-  })
+  return pb.send(
+    `/api/fangji/projects/${encodeURIComponent(projectId)}/dismissals/${encodeURIComponent(dismissalId)}`,
+    {
+      method: 'DELETE',
+      requestKey: null
+    }
+  )
 }

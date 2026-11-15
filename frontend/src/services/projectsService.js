@@ -52,10 +52,10 @@ export async function getColumnRoles(projectId) {
   })
 }
 
-export async function saveColumnRoles(projectId, roles) {
+export async function saveColumnRoles(projectId, roles, toneCountFields) {
   return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/column-roles`, {
     method: 'PUT',
-    body: { roles },
+    body: { roles, tone_count_fields: toneCountFields },
     requestKey: null
   })
 }

@@ -46,7 +46,7 @@ async function request(url, { method = 'GET', token = '', body, expected = 200 }
 //   R2 hits=3 (A1,A2,A3) tp=1 fp=2 → precision=1/3；作用域 ipa 的负例=1 → recall=1
 //   R3 hits=1 (A3)       tp=0 fp=1 → precision=0；  ipa 负例=1 未命中 → recall=0
 //   R1 hits=0 → precision n/a；     作用域 all 的负例=2 → recall=0
-//   R6a/R6b hits=0 → precision n/a；作用域 reading 的负例=1 → recall=0
+//   R6 长数字串 hits=0 → precision n/a；作用域 reading 的负例=1 → recall=0
 //   R5 hits=1 (A4)   tp=1 fp=0 → precision=1；role 作用域负例=2，命中 1 → recall=0.5
 const fixture = require('../tests/fixtures/assist_traps.json')
 const { pages, attempts, roles } = fixture
@@ -192,6 +192,7 @@ assert.deepEqual(stripSecrets(labels).filter((item) => !item.accepted)
   // 弱标注是 (提交, 字段) 粒度，整列/整项目判据天然对不上：明确列为不打分，而不是悄悄漏掉。
   const notScored = [
     'encoding_form_anomaly/mixed_normalization_forms',
+    'reading_format_invalid/tone_token_count_differs',
     'punctuation_mix/punctuation_width_mixed_in_column',
     'page_outlier/pdf_page_backtrack',
     'page_outlier/page_entry_count_outlier'
@@ -219,7 +220,7 @@ assert.deepEqual(scored.scored.find((e) => e.rule.startsWith('R2')).wilson, { lo
 // 没有列角色时 R5 根本不该参与打分（不是 0 分，是不存在）
 const noRoles = scoreRules(labels, defaultRuleSet({ keyboards: [{ definition: keyboard }] }))
 assert.equal(noRoles.scored.some((item) => item.rule.startsWith('R5')), false)
-assert.equal(noRoles.scored.length, 5)
+assert.equal(noRoles.scored.length, 4)
 
 // ---------- 门槛判据本身 ----------
 assert.deepEqual(suggestGate(0, 0), { gate: 'off', basis: 'n/a', note: '无命中样本，证据不足以下结论' })

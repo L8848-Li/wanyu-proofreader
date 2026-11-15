@@ -54,10 +54,11 @@ async function importCsv(csv) {
     assert.ok(settled, `导入没有进入 ${want}`)
     if (want === 'validated') await api(`/api/fangji/imports/${job.id}/commit`, { method: 'POST', token, status: 202 })
   }
+  return job.id
 }
 
 // 释义列里同时出现全角与半角括号 —— R4 是列级判据，必须看到整列才判得出来。
-await importCsv('词条,拼音,释义,PDF页码\n甲,ka1,第一（个）测试,1\n乙,ka2,第二(个)测试,2\n')
+const mixedBatch = await importCsv('词条,拼音,释义,PDF页码\n甲,ka1,第一（个）测试,26\n乙,ka2,第二(个)测试,2\n丙,ka3,第三(个)测试,3\n')
 
 async function findingsOf(query = '') {
   const view = await api(`/api/fangji/projects/${project.id}/findings${query}`, { token })
@@ -65,10 +66,12 @@ async function findingsOf(query = '') {
 }
 
 // 同一身份（词条+拼音 归一后相同）的两条：给跨行判据和人工结论对照组用。
-await importCsv('词条,拼音,释义,PDF页码\n人,lang2,人类,3\n人,lang2,别人,4\n')
+const cleanBatch = await importCsv('词条,拼音,释义,PDF页码\n人,lang2,人类,1\n人,lang2,别人,2\n')
+const otherProject = await api('/api/fangji/projects', { method: 'POST', token, body: { name: `另一项目 ${suffix}` }, status: 201 })
 
 const before = await findingsOf()
 assert.deepEqual(before.items, [], `重算前不该有任何疑点（列级判据没跑过）：${JSON.stringify(before.items)}`)
+assert.deepEqual((await findingsOf(`?batch=${mixedBatch}`)).items, [])
 
 const recompute = await api(`/api/fangji/projects/${project.id}/findings/recompute`, { method: 'POST', token })
 assert.ok(recompute.pages >= 2, JSON.stringify(recompute))
@@ -78,11 +81,21 @@ assert.ok(columnKinds.length >= 1,
   `点一次项目级重算后应出现列级标点判据，实得 ${JSON.stringify(after.items.map((i) => [i.kind, i.message.key]))}`)
 for (const item of columnKinds) {
   assert.equal(item.field, '释义')
+  assert.equal(item.audience, 'batch')
+  assert.equal(item.evidence.batch, mixedBatch)
   // 管理端口必须带 gate 与判据数字，否则"off 仍统计"这半条设计无法核实。
   for (const field of ['gate', 'gate_sample_n', 'gate_precision_hat', 'producer', 'producer_version']) {
     assert.ok(Object.hasOwn(item, field), `统计口缺少 ${field}：${JSON.stringify(item)}`)
   }
 }
+const mixedFindings = await findingsOf(`?batch=${mixedBatch}`)
+assert.deepEqual(mixedFindings.items.map(item => item.message.key).sort(),
+  ['pdf_page_backtrack', 'punctuation_width_mixed_in_column'])
+assert.ok(mixedFindings.items.every(item => item.evidence.batch === mixedBatch))
+assert.deepEqual((await findingsOf(`?batch=${cleanBatch}`)).items, [], '跨批次不报 PDF 回退')
+assert.equal((await findingsOf(`?batch=${mixedBatch}&per=1`)).hasMore, true)
+assert.equal((await findingsOf(`?batch=${mixedBatch}&per=1&page=2`)).hasMore, false)
+await api(`/api/fangji/projects/${otherProject.id}/findings?batch=${mixedBatch}`, { token, status: 404 })
 // `gate_rows_truncated` 与 gate 放行通道同属 #230，本支基线上还没有那个字段，
 // 所以这里不钉它；#230 的 gate_release 套件已经在端到端上钉过了。
 
@@ -159,6 +172,7 @@ const outsiderAuth = await api('/api/collections/users/auth-with-password', {
 for (const [who, auth] of [['proofreader 成员', memberAuth], ['项目外用户', outsiderAuth]]) {
   await api(`/api/fangji/projects/${project.id}/dismissals`, { token: auth.token, status: 403 })
   await api(`/api/fangji/projects/${project.id}/findings`, { token: auth.token, status: 403 })
+  await api(`/api/fangji/projects/${project.id}/findings?batch=${mixedBatch}`, { token: auth.token, status: 403 })
   await api(`/api/fangji/projects/${project.id}/findings/recompute`, { method: 'POST', token: auth.token, status: 403 })
   await api(`/api/fangji/projects/${project.id}/identity/recompute`, { method: 'POST', token: auth.token, status: 403 })
   await api(`/api/fangji/projects/${project.id}/dismissals`, { method: 'POST', token: auth.token, status: 403, body: { group_key: groupKey, kind: 'duplicate_identity' } })
@@ -167,7 +181,7 @@ for (const [who, auth] of [['proofreader 成员', memberAuth], ['项目外用户
 // 未登录也进不来
 await api(`/api/fangji/projects/${project.id}/dismissals`, { status: 401 })
 
-for (const projectId of [project.id]) {
+for (const projectId of [project.id, otherProject.id]) {
   await api(`/api/collections/projects/records/${projectId}`, { method: 'DELETE', token: superAuth.token, status: 204 })
 }
 

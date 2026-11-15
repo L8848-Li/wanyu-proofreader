@@ -4,7 +4,7 @@
     <div class="section-heading">
       <div>
         <h2>机器疑点</h2>
-        <p>列级与页级判据要看到整批数据才判得出来，所以只能在这里手动触发。</p>
+        <p>重算后可在批次报告查看列格式与 PDF 分页疑点。</p>
       </div>
       <div class="assist-actions">
         <button
@@ -29,13 +29,12 @@
     </p>
 
     <p class="assist-summary">
-      当前批次 {{ assistRows.length }} 条：
+      本页 {{ assistRows.length }} 条
       <span v-for="entry in assistKinds" :key="entry.kind"
         >{{ entry.label }} {{ entry.count }}、</span
       >
       strong {{ assistStrong }} / warn {{ assistWarn }} / info {{ assistInfo }}；
       <template v-if="assistGatedOff.total">{{ assistGatedOffText }}，校对员今天看不到；</template>
-      <template v-else>全部规则已放行。</template>
     </p>
 
     <div v-if="assistKinds.length" class="assist-filter">
@@ -62,12 +61,23 @@
       <li v-for="view in assistViewRows" :key="view.row.id" class="assist-row">
         <strong>{{ assistKindLabel(view.row.kind) }}</strong>
         <span class="assist-field">{{ view.row.field || '整条' }}</span>
-        <span class="assist-locator">
+        <span v-if="view.row.audience === 'batch'" class="assist-locator">批次检查</span>
+        <span v-else class="assist-locator">
           {{ view.locator.entryText
           }}<template v-if="view.locator.pdfText"> · {{ view.locator.pdfText }}</template>
         </span>
+        <RouterLink
+          v-if="view.row.audience === 'batch' && view.row.evidence?.batch"
+          :to="{
+            name: 'ProjectBatchReport',
+            params: { id: projectId, batchId: view.row.evidence.batch },
+            hash: '#report-findings'
+          }"
+          class="btn btn-sm btn-quiet"
+          >查看批次报告</RouterLink
+        >
         <button
-          v-if="view.locator.jumpable"
+          v-else-if="view.row.audience !== 'batch' && view.locator.jumpable"
           type="button"
           class="btn btn-sm btn-quiet"
           @click="jumpToEntryPage(view)"
@@ -82,8 +92,9 @@
           :value="assistWording(view.row)"
           :font-notice="false"
         />
-        <span class="assist-span">{{ view.span }}</span>
-        <span class="assist-gate"
+        <span v-if="view.row.audience !== 'batch'" class="assist-span">{{ view.span }}</span>
+        <span v-if="view.row.audience === 'diagnostic'" class="assist-gate">供管理端抽样</span>
+        <span v-else-if="view.row.audience !== 'batch'" class="assist-gate"
           >gate {{ view.row.gate }} · 样本 {{ view.row.gate_sample_n }}</span
         >
       </li>
@@ -300,7 +311,9 @@ const assistWarn = computed(() => severityCount(assistRows.value, 'warn'))
 
 const assistInfo = computed(() => severityCount(assistRows.value, 'info'))
 
-const assistGatedOff = computed(() => gatedOffSplit(assistRows.value))
+const assistGatedOff = computed(() =>
+  gatedOffSplit(assistRows.value.filter((row) => !row.audience || row.audience === 'entry'))
+)
 
 const assistGatedOffText = computed(() => gatedOffNotice(assistGatedOff.value))
 

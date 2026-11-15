@@ -25,18 +25,22 @@ const identity = loadLib("assist_identity")
 
 // 弱标注粒度是 `(提交, 字段)`：同一格两次提交比得出对错，就能算精度。
 const SCORED = [
-  { producer_version: rules.RULES_VERSION, kind: "char_out_of_repertoire", message_key: "non_ipa_range_codepoints", rule: "R1 char_out_of_repertoire" },
-  { producer_version: rules.RULES_VERSION, kind: "confusable_substitution", message_key: "confusable_ascii_in_reading", rule: "R2 confusable_substitution" },
-  { producer_version: rules.RULES_VERSION, kind: "encoding_form_anomaly", message_key: "combining_marks_present", rule: "R3 combining_marks" },
-  { producer_version: rules.RULES_VERSION, kind: "reading_format_invalid", message_key: "long_digit_run", rule: "R6 long_digit_run" },
-  { producer_version: rules.RULES_VERSION, kind: "reading_format_invalid", message_key: "tone_token_count_differs", rule: "R6 tone_token_count_differs" },
+  { producer_version: rules.LEGACY_RULES_VERSION, kind: "char_out_of_repertoire", message_key: "non_ipa_range_codepoints", rule: "R1 char_out_of_repertoire" },
+  { producer_version: rules.LEGACY_RULES_VERSION, kind: "confusable_substitution", message_key: "confusable_ascii_in_reading", rule: "R2 confusable_substitution" },
+  { producer_version: rules.LEGACY_RULES_VERSION, kind: "encoding_form_anomaly", message_key: "combining_marks_present", rule: "R3 combining_marks" },
+  { producer_version: rules.LEGACY_RULES_VERSION, kind: "reading_format_invalid", message_key: "long_digit_run", rule: "R6 long_digit_run" },
   // R5 只在项目标了列角色时才产：没有角色就没有"必填字段"这回事。
-  { producer_version: rules.RULES_VERSION, kind: "missing_field", message_key: "required_role_field_empty", rule: "R5 missing_field", requires_roles: true }
+  { producer_version: rules.LEGACY_RULES_VERSION, kind: "missing_field", message_key: "required_role_field_empty", rule: "R5 missing_field", requires_roles: true }
 ]
 
 // 有疑点在产、但现有通道量不到精度。理由必须逐条写：这一栏存在的意义就是
 // "沉默会被读成没问题"，一句笼统的"不支持打分"等于没写。
 const UNSCORED = [
+  {
+    producer_version: rules.RULES_VERSION, kind: "reading_format_invalid",
+    message_key: rules.TONE_COUNT_MESSAGE_KEY, rule: "R6 tone_token_count_differs",
+    reason: "需要项目指定的对照列与对音节或调号漏写的人工判定，现有字段差异标签不能区分这些错误"
+  },
   {
     producer_version: rules.RULES_VERSION, kind: "encoding_form_anomaly",
     message_key: "mixed_normalization_forms", rule: "R3 mixed_normalization_forms",
@@ -93,6 +97,12 @@ for (const entry of UNSCORED) {
     throw new Error(`判据身份被重复归类：${keyOf(entry)}`)
   }
   BY_KEY.set(keyOf(entry), { ...entry, channel: "unscored" })
+}
+// Historical gate and finding records remain interpretable after recompute.
+for (const entry of UNSCORED.filter(item => item.producer_version === rules.RULES_VERSION)) {
+  const historical = { ...entry, producer_version: rules.LEGACY_RULES_VERSION,
+    channel: entry.message_key === rules.TONE_COUNT_MESSAGE_KEY ? "scored" : "unscored" }
+  BY_KEY.set(keyOf(historical), historical)
 }
 
 // `unknown` 不是"没查到"的中性值，而是一个必须让构建变红的信号：

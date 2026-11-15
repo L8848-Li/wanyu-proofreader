@@ -5,10 +5,10 @@
 > 档位判据（哪条规则能进校对端）见 [`2026-09-25-assist-rule-thresholds.md`](./2026-09-25-assist-rule-thresholds.md)。
 > **三份文件分工不重叠**：本文件只写「规则怎么判、判出来是什么 severity、阈值是多少」。
 
-规则清单版本：`l0-v1`（`backend/pb_hooks/lib/assist_rules.js` 的 `RULES_VERSION`）。
-**任何判定口径变化都必须升这个版本号**——`producer_version` 就是它，登记表按它置档，
-旧批次的数字不会串到新规则上。移植基准是 #201 入仓的 `scripts/corpus_probe/detectors.py`，
-不是 W2 工作区的本机缓存脚本。
+引擎版本为 `l0-v2`。本次改变判定口径的带调音节数、列级及 PDF 页级判据使用
+`l0-v2` 作为 `producer_version`。其余判据仍使用 `l0-v1`，对应的既有门控继续生效。
+改变判定口径时须为受影响的判据分配新版本，避免沿用旧判据的精度样本。
+第一版移植基准为 `scripts/corpus_probe/detectors.py`。
 
 ## 1. 规则表
 
@@ -21,9 +21,9 @@
 | R4 | `punctuation_mix` | `punctuation_width_mixed_in_column` | warn | 同一列里某对全/半角标点都出现过 | **整列** | ❌ 新建 |
 | R5 | `missing_field` | `required_role_field_empty` | strong | 角色 ∈ {headword, reading, meaning} 的列为空 | 逐格 | ❌ 新建，**依赖 #170** |
 | R6 | `reading_format_invalid` | `long_digit_run` | strong | 记音列 ≥3 位连续数字，除 `533`/`453` 外视为上标压平 | 逐格 | ✅ `detect_illegal_tone_runs` |
-| R6 | `reading_format_invalid` | `tone_token_count_differs` | warn | `拼音` 与 `莆田IPA` 的数字调号个数不等 | 整行 | ✅ `detect_tone_count_mismatch` |
-| R7 | `page_outlier` | `pdf_page_backtrack` | warn | 条目顺序前进时 `pdf_page` 回退超过容差 | 全项目 | ❌ 新建 |
-| R7 | `page_outlier` | `page_entry_count_outlier` | warn | 某页条目数 > max(中位数×3, 中位数+8) | 全项目 | ❌ 新建 |
+| R6 | `reading_format_invalid` | `tone_token_count_differs` | warn | 配置的两列带调音节数不同 | 整行 | 新版按项目配对 |
+| R7 | `page_outlier` | `pdf_page_backtrack` | warn | 相邻条目 `pdf_page` 回退超过容差 | 同批同一 PDF | ❌ 新建 |
+| R7 | `page_outlier` | `page_entry_count_outlier` | warn | 某页条目数 > max(中位数×3, 中位数+8) | 同批同一 PDF | ❌ 新建 |
 
 `merged_columns` 不在本表：它由 #125（识别）与 #178（跨行规则）产出。同理
 `duplicate_identity` / `cross_source_conflict` 归 #178。
@@ -75,15 +75,15 @@ R1 的放行集合是「启用键盘字符 ∪ 固定区段」。实测发现两
 所以 R2 的作用域是 `IPA_FIELDS`。hint 的解析要求同时满足「含区别于」与
 「hint 里声明的码位等于目标字符」，解析不出来就不收（宁可少一条规则也不猜表）。
 
-### 3.3 R5/R6 与 #170 的关系
+### 3.3 必填列与带调音节数
 
-`pages` 今天没有列角色信息（#170 未落地）。R5 的做法是：**上下文里没有 roles 就整条规则沉默**，
-不拿列名猜角色。集成测试同时断言了「无 roles 返回空数组」与「有 roles 时精确报出空的必填列」，
-所以这条规则的启用与否是可见的，不是静默失效。
+R5 读取管理员保存的词头、释义与记音列角色。
 
-R6 的两个判据沿用入仓版的硬编码列名（`拼音`/`莆田IPA`/`仙游IPA`）——这正是 #170 要消灭的东西，
-`detectors.py` 的 README 也把它列为已知债务。#170 落地后应改成按角色查询，
-届时 `RULES_VERSION` 升版。
+R6 带调音节数核对由管理员在「项目设置 → 列与核验规则 → 列角色」选择两列应逐音节对应的记音。默认关闭。
+两列均按来源核验共用的语法完整解析为由空白隔开的带调音节时才比较。一段普通数字或上标数字各算一个调，
+例如 `ka1`、`ka53`、`ka⁵³` 均计一个带调音节。遇到注释、空值、混合数字或无法分词的值时跳过。
+数量不等时在待核对列提示，列名与计数留作核对依据。项目级重算会发布新结果。
+此项仍按新判据身份读取门控。R6 长数字串是独立判据，仍使用原来的记音列和阈值。
 
 ### 3.4 占位符为什么要在 R6 里先摘掉
 
@@ -108,16 +108,14 @@ R6 的两个判据沿用入仓版的硬编码列名（`拼音`/`莆田IPA`/`仙�
 | 规则 | 挂哪一条 | `evidence.anchor` |
 | --- | --- | --- |
 | R1、R2、R3 格级、R5、R6 | 产生它的那一条 | `entry` |
-| R3 列级、R4 | 扫描顺序第一条 | `column_first_entry` |
-| R7（两个判据） | 该 PDF 页上的第一个条目 | `pdf_page_first_entry` |
+| R3 列级、R4 | 同批扫描顺序第一条 | `column_first_entry` |
+| R7（两个判据） | 同批同一 PDF 页上的第一个条目 | `pdf_page_first_entry` |
 | 解析不出条目 | 不写入，返回体 `unanchored` 计数并打日志 | — |
 
-- **列级为什么可以挂第一条**：这两条的 `params_json` 只有计数与码位标签（`nfc/nfd/minority`、
-  `pairs`/`pair_count`），不含任何原样内容片段，测试 `assist_rules_integration.mjs` 直接钉住了
-  "params 里不得出现非 ASCII 内容、不得出现任何一行的单元格原文"。真正的消费方是管理端的
-  项目级读口（#176 的 `GET /api/fangji/projects/{id}/findings`）；挂在校对端可见的条目上只是
-  #176 契约「page 必填」的连带结果。若以后要让列级疑点脱离条目，需要先放开 #176 的 schema，
-  那是 #176 的决策，不在本 PR 顺手改。
+- 列级与页级疑点在「质量与交付报告」按导入批次显示。条目关系仅用于存储，会同时记录
+  `evidence.batch`；旧项目级结果可在「质量检查」查看，重算后按实际批次归档。没有批次关系的历史条目
+  按已绑定文件分组，结果留在项目质量检查。页面回退比较同批同一 PDF 上相邻有页码的条目，
+  同一个回退后继续递增只提示一次。密度阈值也以同批同一 PDF 计算。
 - **单条重算不得抹掉任何项目级疑点**：列级与页级疑点也挂在某一条条目上，但单条重算只判定格级
   规则，所以下线范围用 `PROJECT_ONLY_MESSAGE_KEYS` 把这两类一起排除（`assist_writer.js:pageScope`）。
   不排除的话，"给某一条补算"会顺手把挂在那一条上的项目级疑点标下线，而只有项目重算会再产出——
@@ -143,7 +141,7 @@ R6 的两个判据沿用入仓版的硬编码列名（`拼音`/`莆田IPA`/`仙�
 | --- | --- | --- |
 | 提交 | `proofreading.pb.js` 的 submit 成功后调用 `safeRecomputePage`，**传入刚提交的那一行** | R1、R2、R3 格级、R5、R6 |
 | 仲裁 | 同上，仲裁落定的最终行 | 同上 |
-| 项目全量 | `POST /api/fangji/projects/{id}/findings/recompute`（manager 专属，同步执行，返回 `duration_ms`） | 全部，含整列(R3/R4)与全项目(R7) |
+| 项目全量 | `POST /api/fangji/projects/{id}/findings/recompute`（manager 专属，同步执行，返回 `duration_ms`） | 全部，按导入批次划分整列(R3/R4)与页级(R7) |
 | 单条补算 | `POST /api/fangji/pages/{id}/findings/recompute`（manager 或该条在手者） | R1、R2、R3 格级、R5、R6 |
 
 设计约束与遗留：
@@ -234,7 +232,7 @@ ASSIST_P95 {"case":"many_findings","findings":5,"samples":30,"p50":4,"p95":5,"ma
 | R3 列级 | NFC 与 NFD 并存 | 全列同形 | 形式中性值(`ka`)不得被当成一种形式 |
 | R4 | 同列 `（` 与 `(` 并存 | 全列只用全角 | — |
 | R5 | roles 下必填列为空 | 无 roles（#170 未落地）；region 空 | roles 为空对象也算无角色 |
-| R6 | `ua5333` | `ua533`、`oa453`、`a2` | `a@20000` 不报；两列调号数不等才报第二条；缺列不猜 |
+| R6 | `ua5333` 或两列分别有一、两个带调音节 | `ua533`、`oa453`、`a2`；`ka53` 对 `ka⁵³` | 缺列或整格无法解析时跳过比较 |
 | R7 顺序 | 40→12 页 | 单调序列 | 回退 1 页在容差内不报 |
 | R7 密度 | 30 条 vs 中位数 6 | 均匀 6 条/页 | 样本 < 20 页时沉默 |
 

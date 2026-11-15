@@ -80,7 +80,7 @@ func TestAssistStagedFindingNativeUpdateCannotBreakPublication(t *testing.T) {
 }
 
 func TestAssistPreparedBasisChangeKeepsPreviousPublication(t *testing.T) {
-	for _, change := range []string{"source_row", "roles", "current_finding", "dismissal"} {
+	for _, change := range []string{"source_row", "roles", "tone_pair", "current_finding", "dismissal"} {
 		t.Run(change, func(t *testing.T) {
 			app, project, page := newAssistAtomicFixture(t)
 			if err := runAssistWriter(app, "recomputeProject", project); err != nil {
@@ -101,12 +101,16 @@ func TestAssistPreparedBasisChangeKeepsPreviousPublication(t *testing.T) {
 						if err = e.App.Save(row); err != nil {
 							return err
 						}
-					case "roles":
+					case "roles", "tone_pair":
 						row, err := e.App.FindRecordById("projects", project)
 						if err != nil {
 							return err
 						}
-						row.Set("column_roles_json", `{"释义":"meaning"}`)
+						if change == "roles" {
+							row.Set("column_roles_json", `{"释义":"meaning"}`)
+						} else {
+							row.Set("assist_tone_count_fields_json", `["拼音","莆田IPA"]`)
+						}
 						if err = e.App.Save(row); err != nil {
 							return err
 						}
@@ -217,7 +221,8 @@ func TestAssistMissingEpochTriggerRefusesPublication(t *testing.T) {
 func TestAssistCommittedStageFailureRemainsInvisibleAndCleanupBounded(t *testing.T) {
 	app, project, _ := newAssistAtomicFixture(t)
 	pages, _ := app.FindCollectionByNameOrId("pages")
-	for i := 2; i < 70; i++ {
+	// This fixture needs at least 150 findings even with optional rules off.
+	for i := 2; i < 82; i++ {
 		page := core.NewRecord(pages)
 		page.Set("project", project)
 		page.Set("page_number", i+1)

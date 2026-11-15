@@ -156,7 +156,7 @@ function dropUnfaithfulOffsets(findings, lookup) {
 function contextFor(dao, page, storedRoles) {
   const { makeContext } = require(`${__hooks}/lib/assist_rules.js`)
   const { projectConfig: proofProjectConfig } = require(`${__hooks}/lib/keyboards.js`)
-  const { loadProjectRoles, rolesForRules } = require(`${__hooks}/lib/column_roles.js`)
+  const { loadProjectRoles, rolesForRules, toneCountFieldsFor } = require(`${__hooks}/lib/column_roles.js`)
   const projectId = page.getString("project")
   const stored = storedRoles !== undefined
     ? storedRoles
@@ -165,6 +165,7 @@ function contextFor(dao, page, storedRoles) {
     projectId,
     // 没有任何有效角色时保持 null。R5 和难度信号因此与未标注时相同，不会按列名猜。
     roles: rolesForRules(stored, rowForRules(page)),
+    toneCountFields: projectId ? toneCountFieldsFor(dao.findRecordById("projects", projectId), stored) : [],
     keyboards: projectId ? proofProjectConfig(dao, projectId).items : []
   })
 }
@@ -324,6 +325,7 @@ function recomputePage(app, pageId, rowOverride = null, authorize = null) {
 }
 
 function preparedPayload(dao, pages, anchored, events, derivations, kinds, summary, version, projectOnlyKeys = []) {
+  const { RULES_VERSION, producerVersionForRule } = require(`${__hooks}/lib/assist_rules.js`)
   const at = nowStamp(), contexts = findingContexts(dao), byId = new Map(pages.map(page => [page.id, page]))
   const contextJson = new Map(), inserted = new Map()
   let inputBytes = 0, preparationBytes = 0, payloadBytes = 0
@@ -358,7 +360,8 @@ function preparedPayload(dao, pages, anchored, events, derivations, kinds, summa
     },
     saveFinding(tx, item, publication) {
       const page = byId.get(item.page)
-      const record = insertFinding(tx, tx.findCollectionByNameOrId("review_findings"), page, item.row, at, version,
+      const producerVersion = version === RULES_VERSION ? producerVersionForRule(item.row.message_key) : version
+      const record = insertFinding(tx, tx.findCollectionByNameOrId("review_findings"), page, item.row, at, producerVersion,
         value => contextJson.get(value.id), publication)
       inserted.get(page.id).push(record.id)
     },
@@ -455,8 +458,12 @@ function recomputeProjectBatch(dao, projectId) {
   assertSharedMetadata(dao, projectId)
   const pages = loadAllPages(dao, projectId, { budgeted: true })
   const storedRoles = loadProjectRoles(dao, projectId)
-  const entries = pages.map((page, index) => ({ pageId: page.id, order: index + 1, pdfPage: Number(page.get("pdf_page")) || 0,
-    row: rowForRules(page), roles: rolesForRules(storedRoles, rowForRules(page)) }))
+  const entries = pages.map((page, index) => {
+    const row = rowForRules(page)
+    return { pageId: page.id, order: index + 1, pdfPage: page.getInt("pdf_page"), row,
+      batchId: page.getString("import_job"), fileId: page.getString("project_file"),
+      roles: rolesForRules(storedRoles, row) }
+  })
   const shared = pages.length ? contextFor(dao, pages[0], storedRoles) : makeContext({ projectId, keyboards: [], roles: null })
   const findings = runProjectRules({ ...shared, roles: null }, entries, findingBudget())
   const byId = new Map(pages.map(page => [page.id, page])), rowByPage = new Map(entries.map(entry => [entry.pageId, entry.row]))

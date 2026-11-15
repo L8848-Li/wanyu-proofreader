@@ -40,15 +40,22 @@ function count(value, fallback = 0) {
 const MESSAGES = {
   long_digit_run: (params) => {
     const runs = list(params?.runs)
-    const where = runs.length ? `（${runs.slice(0, 3).join('、')}${runs.length > 3 ? ' 等' : ''}）` : ''
+    const where = runs.length
+      ? `（${runs.slice(0, 3).join('、')}${runs.length > 3 ? ' 等' : ''}）`
+      : ''
     return `记音里出现 ${count(params?.run_count, runs.length)} 段三位以上连续数字${where}。请对照来源 PDF 和项目声调约定确认，不要仅因普通数字改写`
   },
-  tone_layout_allowed: () => '本项目允许声调普通数字与右上标两种形式，纯排版差别无需改写；请继续对照来源 PDF 核对声调内容及所属音节',
+  tone_layout_allowed: () =>
+    '本项目允许声调普通数字与右上标两种形式，纯排版差别无需改写；请继续对照来源 PDF 核对声调内容及所属音节',
   tone_token_count_differs: (params) =>
-    `拼音与 IPA 的声调个数不等（${count(params?.pinyin_count)} 对 ${count(params?.ipa_count)}），疑似漏字或多字`,
+    params?.left_field && params?.right_field
+      ? `「${params.left_field}」有 ${count(params.left_count)} 个带调音节，「${params.right_field}」有 ${count(params.right_count)} 个。请对照原文核对是否漏写音节或调号。`
+      : `旧版数字字符数不同（${count(params?.pinyin_count)} 对 ${count(params?.ipa_count)}）。重算后按带调音节数核对。`,
   missing_glyph_placeholder: (params) => {
     const marks = list(params?.marks)
-    const where = marks.length ? `（${marks.slice(0, 3).join('、')}${marks.length > 3 ? ' 等' : ''}）` : ''
+    const where = marks.length
+      ? `（${marks.slice(0, 3).join('、')}${marks.length > 3 ? ' 等' : ''}）`
+      : ''
     return `该格含 ${count(params?.mark_count, marks.length)} 处缺字占位标记${where}，需查缺字登记表`
   },
   column_collapse: (params) => {
@@ -61,7 +68,8 @@ const MESSAGES = {
     const minority = String(params?.minority || '').toUpperCase()
     return `本列 NFC 与 NFD 两种编码形式并存（NFC ${count(params?.nfc)} 行、NFD ${count(params?.nfd)} 行），少数派为 ${minority || '未知'}`
   },
-  combining_marks_present: (params) => `该格含组合附加符（${codepointList(params, 'marks') || '未列出'}）`,
+  combining_marks_present: (params) =>
+    `该格含组合附加符（${codepointList(params, 'marks') || '未列出'}）`,
   non_ipa_range_codepoints: (params) =>
     `出现启用键盘与放行区段之外的字符（${codepointList(params, 'codepoints') || '未列出'}）`,
   cjk_extension_present: (params) =>
@@ -73,18 +81,27 @@ const MESSAGES = {
   // #177 规则引擎新增的措辞键。同样只出现码位与计数，不出现字形。
   confusable_ascii_in_reading: (params) => {
     const suggestions = Array.isArray(params?.suggestions) ? params.suggestions : []
-    const detail = suggestions.slice(0, 3).map((item) => {
-      const targets = Array.isArray(item?.suggested) ? item.suggested.join(' 或 ') : String(item?.suggested || '')
-      return `${item?.found || '未知码位'}→${targets}`
-    }).join('、')
-    const where = Array.isArray(params?.positions) && params.positions.length
-      ? `（第 ${params.positions.slice(0, 3).join('、')}${params.positions.length > 3 ? ' 等' : ''} 个字符）`
-      : ''
-    return `记音里出现易混 ASCII${where}${detail ? `，可对照辨别 ${detail}` : ''}；须按来源 PDF 确认，不自动替换`
+    const detail = suggestions
+      .slice(0, 3)
+      .map((item) => {
+        const targets = Array.isArray(item?.suggested)
+          ? item.suggested.join(' 或 ')
+          : String(item?.suggested || '')
+        return `${item?.found || '未知码位'}→${targets}`
+      })
+      .join('、')
+    const where =
+      Array.isArray(params?.positions) && params.positions.length
+        ? `（第 ${params.positions.slice(0, 3).join('、')}${params.positions.length > 3 ? ' 等' : ''} 个字符）`
+        : ''
+    return `记音里出现可能相似的字符${where}${detail ? `（${detail}）` : ''}。键盘字形相似性仅供抽样，需回看原文判断。`
   },
   punctuation_width_mixed_in_column: (params) => {
     const pairs = Array.isArray(params?.pairs) ? params.pairs : []
-    const detail = pairs.slice(0, 3).map((pair) => `${pair?.full || '?'} / ${pair?.half || '?'}`).join('、')
+    const detail = pairs
+      .slice(0, 3)
+      .map((pair) => `${pair?.full || '?'} / ${pair?.half || '?'}`)
+      .join('、')
     return `本列全角与半角标点混用${detail ? `（${detail}）` : ''}，共 ${count(params?.pair_count, pairs.length)} 组`
   },
   required_role_field_empty: (params) => {
@@ -95,7 +112,7 @@ const MESSAGES = {
   pdf_page_backtrack: (params) =>
     `条目顺序与 PDF 页码不一致：从第 ${count(params?.from_page)} 页回退到第 ${count(params?.to_page)} 页（回退 ${count(params?.backtrack)} 页），疑似页码或条目顺序错乱`,
   page_entry_count_outlier: (params) =>
-    `该 PDF 页挂了 ${count(params?.entries_on_page)} 条条目，明显高于项目中位数 ${count(params?.median_entries)} 条（阈值 ${count(params?.ceiling)}），疑似分页或拆行异常`,
+    `该 PDF 页有 ${count(params?.entries_on_page)} 条条目，参考页的中位数为 ${count(params?.median_entries)} 条（阈值 ${count(params?.ceiling)}）。请核对分页与拆行。`,
 
   // #178 跨行检出的措辞键。词头与记音既不进措辞正文、也不进 payload：`identity-v1` 起 params
   // 只有 differs_on / partner_count / sources，evidence 只有条目 id 与偏移（契约见

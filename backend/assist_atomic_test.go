@@ -37,6 +37,7 @@ func newAssistAtomicFixture(t *testing.T) (core.App, string, string) {
 		"1789113600_review_findings.js", "1789113700_page_difficulty.js",
 		"1789113800_entry_identity.js", "1789200000_source_registry.js", "1789200100_column_roles.js",
 		"1792627200_source_fidelity.js", "1794204700_assist_publications.js",
+		"1794442600_assist_tone_count_fields.js",
 	} {
 		vm := goja.New()
 		jsvm.BindCore(vm)

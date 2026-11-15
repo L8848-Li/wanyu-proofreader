@@ -290,12 +290,12 @@ export function renderReport(result, { synthetic, real, generatedAt, sourceNote,
   // 进来那一次）会被整份覆盖。表里只有弱标注粒度能度量的判据，缺哪几条要点名，否则单看这份
   // 报告（或引用它的 README §8「所有规则一律保持 off」）会以为覆盖面是完整的。
   lines.push("> 本表只列弱标注粒度 `(提交, 字段)` 能度量的判据；R3 列级 `mixed_normalization_forms`、"
-    + "R4 `punctuation_mix`、R7 的两个判据不参与打分，**它们的档位决策不在本报告的证据范围内**"
+    + "R4 `punctuation_mix`、新版带调音节数核对及 R7 的两个判据不参与打分，**它们的档位决策不在本报告的证据范围内**"
     + "（理由见 `scripts/assist/README.md` §4）。")
   lines.push("")
   lines.push("## 真实样本指标")
   if (!real || !real.scored?.length) {
-    lines.push("n/a —— 部署库内尚无真实分歧/仲裁样本。")
+    lines.push("n/a（本次未提供真实材料的评分结果）。")
   } else {
     lines.push(`标签来源：${real.scoring_basis || 'weak_submission_final_comparison'}。`)
     lines.push(ruleTable(real))

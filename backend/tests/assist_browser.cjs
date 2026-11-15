@@ -134,13 +134,13 @@ async function dismissOnboarding (page) {
     // 断言的是"截图里有东西可看"，不是"我预期它长这样"：
     // 必须出现 gate 值与至少一个 kind，否则这张图不能当验收证据。
     assert.match(blockText, /off|warn|strong/, `管理端区块没显示档位：${blockText.slice(0, 400)}`)
-    assert.match(blockText, /当前批次 \d+ 条/, `管理端区块没有计数：${blockText.slice(0, 400)}`)
+    assert.match(blockText, /本页 \d+ 条/, `管理端区块没有计数：${blockText.slice(0, 400)}`)
     await manager.getByRole('button', { name: '重算跨行身份' }).click({ timeout: 60000 })
     await manager.waitForTimeout(2500)
     await block.scrollIntoViewIfNeeded()
     await shoot(manager, 'findings-normal')
     const afterIdentity = await (await manager.locator('section', { has: manager.locator('h2', { hasText: '机器疑点' }) }).first()).innerText()
-    assert.match(afterIdentity, /当前批次 \d+ 条/)
+    assert.match(afterIdentity, /本页 \d+ 条/)
 
     // ---------- 2. 空态之一：从没跑过重算（不得暗示"这批干净"） ----------
     const never = await session(browser, fixture.manager)

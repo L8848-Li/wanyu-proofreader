@@ -33,8 +33,7 @@ export function defaultRuleSet({ keyboards = [], roles = null }) {
     { name: 'R1 char_out_of_repertoire', kind: 'char_out_of_repertoire', message_key: 'non_ipa_range_codepoints', scope: 'all', context },
     { name: 'R2 confusable_substitution', kind: 'confusable_substitution', message_key: 'confusable_ascii_in_reading', scope: 'ipa', context },
     { name: 'R3 combining_marks', kind: 'encoding_form_anomaly', message_key: 'combining_marks_present', scope: 'ipa', context },
-    { name: 'R6 long_digit_run', kind: 'reading_format_invalid', message_key: 'long_digit_run', scope: 'reading', context },
-    { name: 'R6 tone_token_count_differs', kind: 'reading_format_invalid', message_key: 'tone_token_count_differs', scope: 'reading', context }
+    { name: 'R6 long_digit_run', kind: 'reading_format_invalid', message_key: 'long_digit_run', scope: 'reading', context }
   ]
   // 未覆盖（本报告以 n/a 呈现，不算 0 精度）：R3 列级 mixed_normalization_forms、
   // R4 punctuation_mix、R7 两个判据，以及跨行身份那一族。它们要看到整列/整批/相邻两条
@@ -43,7 +42,7 @@ export function defaultRuleSet({ keyboards = [], roles = null }) {
   if (roles && Object.keys(roles).length) {
     list.push({ name: 'R5 missing_field', kind: 'missing_field', message_key: 'required_role_field_empty', scope: 'role_required', context })
   }
-  const producerVersion = rules.RULES_VERSION
+  const producerVersion = rules.LEGACY_RULES_VERSION
   coverage.assertCovered(
     list.map((item) => ({ producer_version: producerVersion, kind: item.kind, message_key: item.message_key })),
     '打分清单'
@@ -93,6 +92,7 @@ function main() {
   // 没有它，R5 缺席到底是漏了还是没给列角色，读产物的人分不出来（#254 验收第 1 条）。
   const synthetic = {
     ...result,
+    producer_version: rules.LEGACY_RULES_VERSION,
     sample_origin: sampleOrigin,
     synthetic: sampleOrigin === 'constructed',
     labels: stripSecrets(labels),

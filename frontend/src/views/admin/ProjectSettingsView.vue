@@ -155,6 +155,47 @@
                   </td>
                 </tr>
               </AppDataTable>
+              <fieldset
+                v-if="toneReadingColumns.length || toneReference || toneComparison"
+                class="settings-fieldset tone-count-settings"
+              >
+                <legend class="form-label">带调音节数核对</legend>
+                <p class="text-sm text-muted">
+                  选择音节应一一对应的两列。规则识别空格分隔的带调音节，普通数字和上标均可。
+                </p>
+                <div class="tone-count-fields">
+                  <AppField label="参照记音列">
+                    <select
+                      v-model="toneReference"
+                      aria-label="参照记音列"
+                      class="form-control"
+                      :disabled="savingRoles"
+                    >
+                      <option value="">关闭核对</option>
+                      <option v-for="field in toneReadingColumns" :key="field" :value="field">
+                        {{ field }}
+                      </option>
+                    </select>
+                  </AppField>
+                  <AppField v-if="toneReference" label="待核对记音列">
+                    <select
+                      v-model="toneComparison"
+                      aria-label="待核对记音列"
+                      class="form-control"
+                      :disabled="savingRoles"
+                    >
+                      <option value="">请选择</option>
+                      <option
+                        v-for="field in toneReadingColumns.filter((name) => name !== toneReference)"
+                        :key="field"
+                        :value="field"
+                      >
+                        {{ field }}
+                      </option>
+                    </select>
+                  </AppField>
+                </div>
+              </fieldset>
               <p v-if="columnRolesNote" class="text-sm text-muted mt-3">{{ columnRolesNote }}</p>
               <div class="section-heading mt-3">
                 <button
@@ -168,7 +209,9 @@
                 <button
                   type="button"
                   class="btn btn-primary"
-                  :disabled="savingRoles || !columnRoles.length"
+                  :disabled="
+                    savingRoles || !columnRoles.length || (toneReference && !canCompareTone)
+                  "
                   @click="saveRoles"
                 >
                   {{ savingRoles ? '正在保存…' : '保存列角色' }}
@@ -704,6 +747,21 @@ const detailsDirty = computed(
     details.description.trim() !== (project.value?.description || '')
 )
 const columnRoles = ref([])
+const toneReference = ref('')
+const toneComparison = ref('')
+const toneReadingColumns = computed(() =>
+  columnRoles.value
+    .filter((column) => column.role === 'reading' && column.present)
+    .map((column) => column.name)
+)
+const canCompareTone = computed(
+  () =>
+    toneReference.value !== toneComparison.value &&
+    toneReadingColumns.value.includes(toneReference.value) &&
+    toneReadingColumns.value.includes(toneComparison.value)
+)
+const columnSettingsSnapshot = () =>
+  JSON.stringify([columnRoles.value, toneReference.value, toneComparison.value])
 const columnRolesNote = ref('')
 const savingRoles = ref(false)
 const rolesError = ref('')
@@ -745,7 +803,7 @@ const hasUnsavedSettings = computed(() =>
       settings.password ||
       settings.accessMode !== project.value.access_mode ||
       Number(settings.requiredProofreads) !== Number(project.value.required_proofreads || 2) ||
-      JSON.stringify(columnRoles.value) !== rolesBaseline.value ||
+      columnSettingsSnapshot() !== rolesBaseline.value ||
       JSON.stringify([enabledKeyboardIds.value, defaultKeyboardId.value]) !==
         keyboardBaseline.value ||
       (generatedBatch.value && !credentialsDownloaded.value))
@@ -779,7 +837,7 @@ async function load() {
   project.value = null
   members.value = []
   columnRoles.value = []
-  rolesBaseline.value = '[]'
+  applyToneCountFields([])
   enabledKeyboardIds.value = []
   defaultKeyboardId.value = ''
   keyboardBaseline.value = JSON.stringify([[], ''])
@@ -821,7 +879,7 @@ async function activateSettings() {
       const roleView = await getColumnRoles(id)
       if (!currentProject(id) || generation !== sectionGeneration) return
       columnRoles.value = (roleView.columns || []).map((column) => ({ ...column }))
-      rolesBaseline.value = JSON.stringify(columnRoles.value)
+      applyToneCountFields(roleView.tone_count_fields)
       columnRolesNote.value = roleView.headers_truncated
         ? '列名较多，这里只展示前 1000 条里出现过的列。'
         : ''
@@ -869,8 +927,15 @@ function applyRoleSuggestions() {
   }
 }
 
+function applyToneCountFields(fields = []) {
+  const [reference = '', comparison = ''] = fields
+  toneReference.value = reference
+  toneComparison.value = comparison
+  rolesBaseline.value = columnSettingsSnapshot()
+}
+
 async function saveRoles() {
-  if (savingRoles.value) return
+  if (savingRoles.value || (toneReference.value && !canCompareTone.value)) return
   savingRoles.value = true
   rolesError.value = ''
   rolesSuccess.value = ''
@@ -878,10 +943,11 @@ async function saveRoles() {
   try {
     const roles = {}
     for (const column of columnRoles.value) roles[column.name] = column.role
-    const roleView = await saveColumnRoles(id, roles)
+    const fields = canCompareTone.value ? [toneReference.value, toneComparison.value] : []
+    const roleView = await saveColumnRoles(id, roles, fields)
     if (!currentProject(id)) return
     columnRoles.value = (roleView.columns || []).map((column) => ({ ...column }))
-    rolesBaseline.value = JSON.stringify(columnRoles.value)
+    applyToneCountFields(roleView.tone_count_fields)
     rolesSuccess.value = '列角色已保存。条目内容没有改动。'
   } catch (e) {
     if (!currentProject(id)) return
@@ -1152,6 +1218,15 @@ function originLabel(origin) {
   padding: 0;
   margin: 0;
   min-width: 0;
+}
+.tone-count-settings {
+  margin-top: var(--space-4);
+}
+.tone-count-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 </style>
 

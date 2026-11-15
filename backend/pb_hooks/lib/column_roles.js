@@ -84,6 +84,20 @@ function loadProjectRoles(dao, projectId) {
   return parseStoredRoles(project.getString("column_roles_json"))
 }
 
+function validToneCountFields(fields, roles) {
+  return Array.isArray(fields) && fields.length === 2 && fields[0] !== fields[1]
+    && fields.every(field => typeof field === "string" && roles[field] === "reading")
+}
+
+function toneCountFieldsFor(project, roles) {
+  try {
+    const fields = JSON.parse(project.getString("assist_tone_count_fields_json") || "[]")
+    return validToneCountFields(fields, roles) ? fields : []
+  } catch {
+    return []
+  }
+}
+
 function headersForProject(dao, projectId) {
   const headers = []
   const seen = new Set()
@@ -120,11 +134,18 @@ function columnRoleView(dao, projectId) {
   const project = dao.findRecordById("projects", projectId)
   const stored = parseStoredRoles(project.getString("column_roles_json"))
   const { headers, truncated } = headersForProject(dao, projectId)
-  return { ...resolveColumnRoles(stored, headers), headers_truncated: truncated }
+  return { ...resolveColumnRoles(stored, headers), headers_truncated: truncated,
+    tone_count_fields: toneCountFieldsFor(project, stored) }
 }
 
-function saveColumnRoles(dao, project, roles) {
+function saveColumnRoles(dao, project, roles, toneCountFields) {
+  // Clients predating the paired setting can still save roles.
+  const fields = toneCountFields === undefined ? toneCountFieldsFor(project, roles) : toneCountFields
+  if (!(Array.isArray(fields) && fields.length === 0) && !validToneCountFields(fields, roles)) {
+    throw new BadRequestError("声调数核对需要两个不同的记音字段，或将此检查关闭")
+  }
   project.set("column_roles_json", JSON.stringify(roles))
+  project.set("assist_tone_count_fields_json", JSON.stringify(fields))
   dao.save(project)
   return columnRoleView(dao, project.id)
 }
@@ -137,6 +158,7 @@ module.exports = {
   rolesForRules,
   validateRoleMap,
   loadProjectRoles,
+  toneCountFieldsFor,
   columnRoleView,
   saveColumnRoles
 }

@@ -94,7 +94,7 @@ routerAdd("GET", "/api/fangji/projects/{projectId}/findings", (c) => {
   const query = c.request.url.query()
   const result = require(`${__hooks}/lib/assist_read_consistency.js`).projectResponse($app, projectId, c.auth, () =>
     require(`${__hooks}/lib/findings.js`).listForProject($app, projectId, {
-      page: query.get("page"), per: query.get("per"), kind: query.get("kind"), producer: query.get("producer")
+      page: query.get("page"), per: query.get("per"), kind: query.get("kind"), producer: query.get("producer"), batch: query.get("batch")
     }))
   return c.json(200, result)
 }, $apis.requireAuth("users"))

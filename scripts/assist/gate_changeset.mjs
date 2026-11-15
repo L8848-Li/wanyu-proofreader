@@ -176,7 +176,7 @@ function main() {
   const changeset = buildChangeset(score, {
     approvedBy: values['approved-by'],
     approvedAt,
-    producerVersion: score.producer_version || rules.RULES_VERSION,
+    producerVersion: score.producer_version || rules.LEGACY_RULES_VERSION,
     changesetId: values.changeset || `cs-${approvedAt.slice(0, 10)}-${(score.scored?.length ?? 0)}`
   })
   const json = `${JSON.stringify(changeset, null, 2)}\n`

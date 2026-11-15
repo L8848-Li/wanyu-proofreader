@@ -312,7 +312,8 @@ const { buildChangeset } = await import('../../scripts/assist/gate_changeset.mjs
 
 // 规则引擎自己声明的 key 划分（CELL + PROJECT_ONLY）与通道表必须**双向相等**。
 // 只判单向包含会放过"表上登记了却根本不产出的判据"，那正是这份表要消灭的另一种沉默。
-const keysForVersion = (list) => [...new Set(list.filter((e) => e.producer_version === rulesLib.RULES_VERSION)
+const currentRuleEntries = (list) => list.filter((e) => e.producer_version === rulesLib.producerVersionForRule(e.message_key))
+const keysForVersion = (list) => [...new Set(currentRuleEntries(list)
   .map((e) => e.message_key))].sort()
 const engineMessageKeys = [...new Set([
   ...rulesLib.CELL_MESSAGE_KEYS, ...rulesLib.PROJECT_ONLY_MESSAGE_KEYS
@@ -329,14 +330,14 @@ assert.notDeepEqual(keysForVersion([...coverage.SCORED, ...droppedOne]), engineM
 // merged_columns 这一族是 #254 报的那件事：在产、却两栏都不提。
 assert.ok(coverage.UNSCORED.some((e) => e.kind === 'merged_columns' && e.reason),
   'merged_columns 没有被点名为无通道')
-assert.equal(coverage.channelOf({ producer_version: rulesLib.RULES_VERSION, kind: 'missing_field', message_key: 'required_role_field_empty' }), 'scored')
+assert.equal(coverage.channelOf({ producer_version: rulesLib.LEGACY_RULES_VERSION, kind: 'missing_field', message_key: 'required_role_field_empty' }), 'scored')
 assert.equal(coverage.channelOf({ producer_version: 'no-such-version', kind: 'x', message_key: 'y' }), 'unknown')
 
 const allScored = coverage.SCORED.map((e) => ({
   rule: e.rule, kind: e.kind, message_key: e.message_key,
   hits: 200, precision: 0.95, gate: { gate: 'warn', basis: '反证用', note: '' }, wilson: { lower: 0.9, upper: 0.98 }
 }))
-const meta = { approvedBy: 'suite@example.com', approvedAt: '2026-10-02T00:00:00.000Z', producerVersion: rulesLib.RULES_VERSION, changesetId: 'cs-suite-coverage' }
+const meta = { approvedBy: 'suite@example.com', approvedAt: '2026-10-02T00:00:00.000Z', producerVersion: rulesLib.LEGACY_RULES_VERSION, changesetId: 'cs-suite-coverage' }
 const full = buildChangeset({ scored: allScored, scope_roles: true }, meta)
 assert.equal(full.entries.length, coverage.SCORED.length)
 assert.equal(full.no_channel.length, coverage.UNSCORED.length)
