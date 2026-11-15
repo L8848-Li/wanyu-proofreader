@@ -12,7 +12,7 @@ export function currentUserRole(fallbackUser = null) {
 // Auth SDK helpers save tokens before resolving. Use the same REST endpoints
 // with a scoped publication step, so a late response cannot restore a session
 // after logout or replace a different account selected in another tab.
-async function withCurrentSession(operation, accept) {
+async function withCurrentSession(operation, accept, signal) {
   const store = pb.authStore
   let unchanged = true
   const unsubscribe = store.onChange(() => {
@@ -20,6 +20,7 @@ async function withCurrentSession(operation, accept) {
   })
   try {
     const result = await operation()
+    signal?.throwIfAborted()
     if (!unchanged || store !== pb.authStore)
       throw new DOMException('登录会话已变化，请重试。', 'AbortError')
     accept(result, store)
@@ -75,7 +76,7 @@ export async function bindExternalIdentity(provider, identity, password) {
   )
 }
 
-export async function refreshStoredAuth() {
+export async function refreshStoredAuth({ signal, throwOnError = false } = {}) {
   if (!pb.authStore.isValid) return null
   try {
     return await withCurrentSession(
@@ -83,6 +84,7 @@ export async function refreshStoredAuth() {
         try {
           return await pb.send('/api/collections/users/auth-refresh', {
             method: 'POST',
+            signal,
             requestKey: null
           })
         } catch (error) {
@@ -92,10 +94,13 @@ export async function refreshStoredAuth() {
       (result, store) => {
         if (result.refreshError) {
           if (shouldClearAuthAfterRefreshError(result.refreshError)) store.clear()
+          else if (throwOnError) throw result.refreshError
         } else store.save(result.token, result.record)
-      }
+      },
+      signal
     ).then((result) => (result.refreshError ? null : result))
-  } catch {
+  } catch (error) {
+    if (throwOnError) throw error
     return null
   }
 }

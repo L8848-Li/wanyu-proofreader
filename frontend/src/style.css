@@ -3068,3 +3068,15 @@ textarea {
     white-space: nowrap;
   }
 }
+
+.startup-screen {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  max-width: 40rem;
+  padding-block: var(--space-6);
+}
+
+.startup-screen [hidden] {
+  display: none;
+}

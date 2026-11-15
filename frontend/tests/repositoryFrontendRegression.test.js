@@ -439,6 +439,32 @@ regression(
 )
 
 regression(
+  'timed out startup refresh cannot republish credentials even if transport resolves late',
+  async () => {
+    const waiting = deferred()
+    const { api, store, listeners } = sessionFixture(() => waiting.promise)
+    const controller = new AbortController()
+    const refresh = api.refreshStoredAuth({ signal: controller.signal, throwOnError: true })
+    controller.abort(new DOMException('synthetic timeout', 'TimeoutError'))
+    waiting.resolve({ token: 'late-token', record: { id: 'a' } })
+    await assert.rejects(refresh, { name: 'TimeoutError' })
+    assert.equal(store.token, 'a-token')
+    assert.equal(listeners.size, 0)
+  }
+)
+
+regression(
+  'startup reports temporary refresh failure while keeping the existing account',
+  async () => {
+    const { api, store } = sessionFixture(async () => {
+      throw { status: 503 }
+    })
+    await assert.rejects(api.refreshStoredAuth({ throwOnError: true }), { status: 503 })
+    assert.equal(store.token, 'a-token')
+  }
+)
+
+regression(
   'profile update does not roll a newer token for the same account backwards',
   async () => {
     const waiting = deferred()

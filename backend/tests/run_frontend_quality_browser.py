@@ -14,7 +14,7 @@ import time
 import harness
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--only', nargs='+', choices=['review', 'modal', 'fonts', 'profile', 'pagination', 'unicode', 'members', 'editor', 'repository', 'workbench', 'components', 'delivery'])
+parser.add_argument('--only', nargs='+', choices=['review', 'modal', 'fonts', 'profile', 'pagination', 'unicode', 'members', 'editor', 'repository', 'workbench', 'components', 'delivery', 'startup'])
 selected = parser.parse_args().only
 ROOT = harness.BACKEND.parent
 FRONTEND = ROOT / 'frontend'
@@ -51,6 +51,7 @@ with harness.temporary_root() as temporary:
                 else:
                     raise RuntimeError('Quality fixture Vite did not start')
                 checks = {
+                    'startup': ['frontend/tests/browser/application-startup.cjs'],
                     'components': ['frontend/tests/browser/reka-controls.cjs', 'frontend/tests/browser/disclosure.cjs', 'frontend/tests/browser/job-observer.cjs', 'frontend/tests/browser/admin-invalidation.cjs', 'frontend/tests/browser/workspace-ready.cjs'],
                     'repository': ['frontend/tests/browser/repository-review.cjs', 'frontend/tests/browser/draft-logout.cjs', 'frontend/tests/browser/pdf-lifecycle.cjs', 'frontend/tests/browser/source-fidelity.cjs', 'frontend/tests/browser/normalization-draft.cjs'],
                     'review': ['frontend/tests/browser/review.cjs', 'frontend/tests/browser/arbitration-queue.cjs',

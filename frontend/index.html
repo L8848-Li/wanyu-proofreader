@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -8,7 +8,18 @@
     <title>万语校坊 — 方言资料协同校勘</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <main
+        id="startup-screen"
+        class="container page startup-screen"
+        aria-labelledby="startup-title"
+        aria-busy="true"
+      >
+        <h1 id="startup-title">正在打开万语校坊</h1>
+        <p id="startup-message" role="status" tabindex="-1">正在更新登录状态…</p>
+        <button id="startup-retry" type="button" class="btn btn-primary" hidden>重新尝试</button>
+      </main>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

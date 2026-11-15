@@ -7,6 +7,7 @@ import { documentTitleFor } from '@/lib/pageTitle'
 import { shouldFocusMainLandmark } from '@/lib/routeFocus'
 import { focusMainLandmark } from '@/lib/mainLandmark'
 import { startTelemetry } from '@/services/telemetryService'
+import { createApplicationStartup, renderStartupState } from '@/lib/applicationStartup'
 import './style.css'
 import './workbench.css'
 import './styles/ui-components.css'
@@ -19,8 +20,7 @@ router.afterEach(async (to, from, failure) => {
   focusMainLandmark()
 })
 
-async function bootstrap() {
-  await refreshStoredAuth()
+async function mountApplication() {
   const app = createApp(App)
   app.use(createPinia())
   app.use(router)
@@ -31,4 +31,17 @@ async function bootstrap() {
   focusMainLandmark()
 }
 
-bootstrap()
+const startup = createApplicationStartup({
+  refresh: (options) => refreshStoredAuth({ ...options, throwOnError: true }),
+  mount: mountApplication,
+  onState: (state) => renderStartupState(document, state)
+})
+document.getElementById('startup-retry')?.addEventListener('click', () => void startup.start())
+window.addEventListener('pagehide', (event) => {
+  if (event.persisted) startup.suspend()
+  else startup.dispose()
+})
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) void startup.resume()
+})
+void startup.start()

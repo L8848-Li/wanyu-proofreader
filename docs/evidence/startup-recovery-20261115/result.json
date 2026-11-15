@@ -1,0 +1,30 @@
+[
+  {
+    "viewport": "desktop",
+    "failure": "timeout",
+    "credentialsRetained": true,
+    "retryReachedLogin": true,
+    "overflow": false
+  },
+  {
+    "viewport": "mobile",
+    "failure": "503",
+    "credentialsRetained": true,
+    "retryReachedLogin": true,
+    "overflow": false
+  },
+  {
+    "initial": "pending",
+    "persistedLifecycleEvents": true,
+    "oldResultIgnored": true,
+    "retryReachedLogin": true,
+    "singleMount": true
+  },
+  {
+    "initial": "error",
+    "persistedLifecycleEvents": true,
+    "oldResultIgnored": true,
+    "retryReachedLogin": true,
+    "singleMount": true
+  }
+]
