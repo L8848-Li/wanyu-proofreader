@@ -111,6 +111,18 @@ export function useProofreadEditor() {
   const claimNextFailureNotice = CLAIM_NEXT_FAILURE_NOTICE
   const textareaRefs = new Map()
   const fieldHints = ref(prepareFieldHints([]))
+  const findingReviews = ref({})
+  const findingsDirty = ref(false)
+  watch(
+    submittedHere,
+    (submitted) => {
+      if (submitted) {
+        findingReviews.value = {}
+        findingsDirty.value = false
+      }
+    },
+    { flush: 'sync' }
+  )
   const findingsTruncated = ref(false)
   const findingsSuppressed = ref(0)
   const gatedNoticeText = computed(() => gatedNotice(findingsSuppressed.value))
@@ -273,6 +285,38 @@ export function useProofreadEditor() {
     insertText: insertIntoActiveField,
     stringifyEditedRow
   } = useStructuredRow()
+  watch(
+    () => (Object.keys(findingReviews.value).length ? { ...editedRow.value } : null),
+    (values, previous) => {
+      if (!values || !previous) return
+      const changed = new Set(rowHeaders.value.filter((field) => values[field] !== previous[field]))
+      if (!changed.size) return
+      const entries = Object.entries(findingReviews.value)
+      const remaining = entries.filter(([, review]) => review.field && !changed.has(review.field))
+      if (remaining.length !== entries.length) {
+        findingReviews.value = Object.fromEntries(remaining)
+        findingsDirty.value = true
+        scheduleDraftSave()
+      }
+    },
+    { flush: 'sync' }
+  )
+
+  const canReviewFindings = computed(
+    () => !readOnly.value && Boolean(verificationContext.value?.basis)
+  )
+  function updateFindingReview(hint, reviewed) {
+    if (!canReviewFindings.value || !hint.id || !fieldHints.value.includes(hint)) return
+    const field = hint.targetField
+    const next = { ...findingReviews.value }
+    if (reviewed) {
+      const result = !field ? 'reviewed' : isFieldChanged(field) ? 'corrected' : 'kept'
+      next[hint.id] = { field, result }
+    } else delete next[hint.id]
+    findingReviews.value = next
+    findingsDirty.value = true
+    scheduleDraftSave()
+  }
 
   const {
     prevTaskId,
@@ -338,6 +382,8 @@ export function useProofreadEditor() {
     currentUserId,
     initialRowJson,
     hasUnsavedChanges,
+    findingReviews,
+    findingsDirty,
     stringifyEditedRow,
     verificationContext,
     restoredLocalDraft,
@@ -442,7 +488,9 @@ export function useProofreadEditor() {
     rememberSelection,
     isFieldChanged,
     locateHint,
+    clearHintLocation,
     sourceSegments,
+    findingsState,
     loadFindings,
     restoreField,
     invalidateFindings
@@ -598,6 +646,8 @@ export function useProofreadEditor() {
     retryingClaim.value = false
     textareaRefs.clear()
     fieldHints.value = prepareFieldHints([])
+    findingReviews.value = {}
+    findingsDirty.value = false
     findingsTruncated.value = false
     findingsSuppressed.value = 0
     locatedSpan.value = null
@@ -618,9 +668,8 @@ export function useProofreadEditor() {
         restoreDraft()
         await restoreOrAcquireLease()
         if (version !== caseVersion) return
-        await loadNeighbors()
-        // 疑点读取是渐进增强：不 await，失败或空数组都保持界面原样（getPageFindings 内部已兜错）。
         void loadFindings(page.value.id)
+        await loadNeighbors()
       }
       if (version !== caseVersion) return
       const flash = takeTaskFlash(window.sessionStorage)
@@ -726,7 +775,7 @@ export function useProofreadEditor() {
 
   function handleBeforeUnload(event) {
     flushDraft()
-    if (!hasUnsavedChanges.value) return
+    if (!hasUnsavedChanges.value && !findingsDirty.value) return
     event.preventDefault()
     event.returnValue = ''
   }
@@ -846,6 +895,11 @@ export function useProofreadEditor() {
     receiveVerificationContext,
     researchTelemetry,
     fieldHints,
+    findingReviews,
+    canReviewFindings,
+    updateFindingReview,
+    findingsState,
+    loadFindings,
     findingsTruncated,
     gatedNoticeText,
     currentField,
@@ -854,6 +908,7 @@ export function useProofreadEditor() {
     selectField,
     restoreField,
     locateHint,
+    clearHintLocation,
     setTextareaRef,
     activateField,
     rememberSelection,

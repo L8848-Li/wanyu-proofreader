@@ -71,6 +71,7 @@
         :font-notice="false"
       />
     </div>
+    <slot name="finding" />
   </article>
 </template>
 <script setup>

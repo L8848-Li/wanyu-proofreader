@@ -1,4 +1,4 @@
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
 import { locateSpan, prepareFieldHints } from '../../lib/fieldHints.js'
 import { getPageFindings } from '../../services/pagesService.js'
 
@@ -34,9 +34,12 @@ export function useProofreadFields({
   findingsSuppressed,
   editedRow
 }) {
-  let findingsGeneration = 0
-  const invalidateFindings = () => {
-    findingsGeneration += 1
+  const findingsState = ref('idle')
+  let findingsRequest
+  function invalidateFindings() {
+    findingsRequest?.abort()
+    findingsRequest = null
+    findingsState.value = 'idle'
   }
 
   function onTextChange() {
@@ -111,11 +114,15 @@ export function useProofreadFields({
     return changedFields.value.includes(header)
   }
 
+  function clearHintLocation() {
+    locatedSpan.value = null
+  }
+
   async function locateHint(hint) {
     const header = hint.targetField
     const index = rowHeaders.value.indexOf(header)
     const textarea = textareaRefs.get(header)
-    locatedSpan.value = null
+    clearHintLocation()
     if (index < 0 || !textarea) return
 
     selectField(index)
@@ -146,14 +153,26 @@ export function useProofreadFields({
   }
 
   async function loadFindings(pageId) {
-    const generation = ++findingsGeneration
-    const result = await getPageFindings(pageId)
-    if (generation !== findingsGeneration || page.value?.id !== pageId) return
-    fieldHints.value = prepareFieldHints(result.hints, rowHeaders.value)
-    rawFindings.value = result.hints
-    researchSession.value = result.research
-    findingsTruncated.value = result.truncated
-    findingsSuppressed.value = result.suppressedByGate
+    if (!pageId || page.value?.id !== pageId) return
+    findingsRequest?.abort()
+    const request = new AbortController()
+    findingsRequest = request
+    const current = () => findingsRequest === request && page.value?.id === pageId
+    findingsState.value = 'loading'
+    try {
+      const result = await getPageFindings(pageId, { signal: request.signal })
+      if (!current()) return
+      fieldHints.value = prepareFieldHints(result.hints, rowHeaders.value)
+      rawFindings.value = result.hints
+      researchSession.value = result.research
+      findingsTruncated.value = result.truncated
+      findingsSuppressed.value = result.suppressedByGate
+      findingsState.value = 'ready'
+    } catch {
+      if (current()) findingsState.value = 'error'
+    } finally {
+      if (findingsRequest === request) findingsRequest = null
+    }
   }
 
   async function restoreField(header) {
@@ -173,7 +192,9 @@ export function useProofreadFields({
     rememberSelection,
     isFieldChanged,
     locateHint,
+    clearHintLocation,
     sourceSegments,
+    findingsState,
     loadFindings,
     restoreField,
     invalidateFindings

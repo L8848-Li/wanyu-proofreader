@@ -221,38 +221,19 @@ export async function submitTwoPassProofread(
   })
 }
 
-// #161 — 疑点只读接口（契约见 docs/plans/2026-09-25-review-findings.md §3.1）。
-// 任何失败都退化成空 hints：疑点标注是渐进增强，读不到绝不影响校对本身。
-export async function getPageFindings(pageId) {
-  if (!pageId)
-    return { page: '', hints: [], truncated: false, suppressedByGate: 0, gateRowsTruncated: false }
-  try {
-    const result = await pb.send(`/api/fangji/pages/${encodeURIComponent(pageId)}/findings`, {
-      requestKey: null
-    })
-    return {
-      page: String(result?.page || pageId),
-      hints: Array.isArray(result?.hints) ? result.hints : [],
-      truncated: Boolean(result?.truncated),
-      // #228 的字段级区分能力：没下发 ≠ 没疑点。缺字段按 0 处理，让老后端不至于报错。
-      suppressedByGate: Number.isFinite(Number(result?.suppressed_by_gate))
-        ? Math.max(0, Math.floor(Number(result.suppressed_by_gate)))
-        : 0,
-      gateRowsTruncated: Boolean(result?.gate_rows_truncated),
-      inputVersion: result?.input_version || '',
-      candidateCount: result?.candidate_count ?? null,
-      countsAreLowerBounds: Boolean(result?.counts_are_lower_bounds),
-      offsetsStale: result?.offsets_stale || 0,
-      offsetsUnbaselined: result?.offsets_unbaselined || 0,
-      research: result?.research || null
-    }
-  } catch {
-    return {
-      page: String(pageId),
-      hints: [],
-      truncated: false,
-      suppressedByGate: 0,
-      gateRowsTruncated: false
-    }
+export async function getPageFindings(pageId, { signal } = {}) {
+  const result = await pb.send(`/api/fangji/pages/${encodeURIComponent(pageId)}/findings`, {
+    requestKey: null,
+    signal
+  })
+  if (!Array.isArray(result?.hints) || (result.page && result.page !== pageId))
+    throw new Error('疑点响应无效')
+  return {
+    hints: result.hints,
+    truncated: Boolean(result.truncated),
+    suppressedByGate: Number.isFinite(Number(result.suppressed_by_gate))
+      ? Math.max(0, Math.floor(Number(result.suppressed_by_gate)))
+      : 0,
+    research: result.research || null
   }
 }

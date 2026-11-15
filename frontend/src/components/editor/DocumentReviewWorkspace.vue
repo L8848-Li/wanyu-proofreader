@@ -473,7 +473,11 @@ async function revealEntrySource(field) {
   if (pageId === props.page?.id) sourcePanel.value?.focus({ preventScroll: true })
 }
 
-defineExpose({ revealEntrySource })
+function clearFindingSource() {
+  findingSource.value = null
+}
+
+defineExpose({ revealEntrySource, clearFindingSource })
 
 function showLocalSource() {
   if (!hasSourceRegion.value) return

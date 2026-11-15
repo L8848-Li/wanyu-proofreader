@@ -95,6 +95,109 @@ function waitForFindingPresentation(page, id, presented) {
     }
   }
   await fs.mkdir(findingsOutput, { recursive: true })
+  const desktop = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  desktop.on('dialog', (dialog) => dialog.accept())
+  try {
+    await installReviewRoutes(desktop)
+    await desktop.route(
+      '**/api/fangji/pages/page1/verification',
+      (route) =>
+        route.fulfill({
+          status: 409,
+          json: { message: '分析结果或来源已更新，请重新读取。' }
+        }),
+      { times: 1 }
+    )
+    const endpoint = '**/api/fangji/pages/page1/findings'
+    let failures = 0
+    const failFindings = (route) => {
+      failures++
+      return route.fulfill({ status: 503, json: { message: 'Synthetic timeout' } })
+    }
+    await desktop.route(endpoint, failFindings)
+    await desktop.goto(base + '/tests/fixtures/review.html')
+    await desktop
+      .getByRole('region', { name: '来源与核验记录' })
+      .getByText('来源与约定', { exact: true })
+      .waitFor()
+    const pane = desktop.getByRole('region', { name: '本条疑点' })
+    const retry = pane.getByRole('button', { name: '重试读取疑点' })
+    const reading = desktop.getByRole('textbox', { name: '读音 校对结果' })
+    await retry.waitFor()
+    await reading.fill('tɛ⁵³')
+    await retry.click()
+    await retry.waitFor()
+    assert.equal(failures, 2)
+    await desktop.unroute(endpoint, failFindings)
+    await retry.click()
+    await pane.getByText('待核对 4 · 已核对 0', { exact: true }).waitFor()
+    assert.equal(await reading.inputValue(), 'tɛ⁵³')
+    const compactHeight = (await pane.boundingBox()).height
+    assert.ok(compactHeight < 100, 'The resting list must leave room for the fields')
+    await pane.getByRole('button', { name: '查看疑点列表' }).click()
+    assert.equal(await pane.getByRole('listitem').count(), 4)
+    await pane.locator('[data-locate-finding="finding-reading"]').click()
+    const evidence = desktop.getByRole('region', { name: '读音的疑点证据' })
+    await evidence.getByRole('button', { name: '已按原文修正' }).click()
+    await evidence.getByText('已核对 · 已按原文修正', { exact: true }).waitFor()
+    await pane.getByText('待核对 3 · 已核对 1', { exact: true }).waitFor()
+    await evidence.getByRole('button', { name: '报告问题' }).click()
+    const form = desktop.locator('.verification-report')
+    const description = form.getByLabel('问题说明')
+    await description.fill('读音原文无连续调值')
+    await form.getByRole('checkbox').check()
+    const openFinding = async (id) => {
+      await pane.getByRole('button', { name: '查看疑点列表' }).click()
+      await pane.locator('[data-locate-finding="' + id + '"]').click()
+    }
+    await openFinding('finding-meaning')
+    const meaning = desktop.getByRole('region', { name: '释义的疑点证据' })
+    await meaning.getByRole('button', { name: '报告问题' }).click()
+    assert.equal(await form.getByLabel('涉及字段').inputValue(), '释义')
+    assert.equal(await form.getByLabel('相关提示（可选）').inputValue(), 'finding-meaning')
+    assert.equal(await description.inputValue(), '')
+    assert.equal(await form.getByRole('checkbox').isChecked(), false)
+    const category = form.getByLabel('问题类型')
+    await category.selectOption('input_display')
+    await meaning.getByRole('button', { name: '核对无误，保留原值' }).click()
+    await pane.getByText('待核对 2 · 已核对 2', { exact: true }).waitFor()
+    await meaning.getByRole('button', { name: '下一处待核对' }).click()
+    await desktop.getByRole('region', { name: '声调的疑点证据' }).waitFor()
+    await openFinding('finding-reading')
+    await evidence.getByRole('button', { name: '报告问题' }).click()
+    assert.equal(await description.inputValue(), '读音原文无连续调值')
+    assert.equal(await form.getByRole('checkbox').isChecked(), true)
+    assert.equal(await category.inputValue(), 'hint')
+    await openFinding('finding-meaning')
+    await meaning.getByRole('button', { name: '报告问题' }).click()
+    assert.equal(await description.inputValue(), '')
+    assert.equal(await category.inputValue(), 'input_display')
+    await desktop.waitForFunction(() => {
+      const draft = JSON.parse(localStorage.getItem('fangji:task-draft:v1:fixture-user:page1'))
+      return (
+        draft?.findingReviews?.['finding-reading']?.result === 'corrected' &&
+        draft?.findingReviews?.['finding-meaning']?.result === 'kept'
+      )
+    })
+    await desktop.reload()
+    await pane.getByText('待核对 2 · 已核对 2', { exact: true }).waitFor()
+    await reading.fill('tɛ⁵⁵')
+    await pane.getByText('待核对 3 · 已核对 1', { exact: true }).waitFor()
+    await openFinding('finding-reading')
+    await desktop.getByRole('img', { name: 'PDF 页面图像' }).waitFor()
+    await desktop.screenshot({ path: path.join(findingsOutput, 'desktop-review-progress.png') })
+    await reading.fill('tɛ')
+    await desktop.reload()
+    await pane.getByText('待核对 3 · 已核对 1', { exact: true }).waitFor()
+    assert.equal(
+      await reading.inputValue(),
+      'tɛ',
+      'a review can persist by itself without a text edit'
+    )
+  } finally {
+    await desktop.close()
+  }
+
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true })
   try {
     await installReviewRoutes(mobile, { research: true })
@@ -178,15 +281,16 @@ function waitForFindingPresentation(page, id, presented) {
     await openTray(page)
     if (!admin) {
       const hints = page.getByRole('region', { name: '本条疑点' })
-      const more = hints.getByRole('button', { name: '展开其余 1 个疑点', exact: true })
+      const more = hints.getByRole('button', { name: '查看疑点列表', exact: true })
       await more.waitFor()
-      assert.equal(await hints.locator('li').count(), 3)
+      assert.equal(await hints.locator('li').count(), 0)
       await more.click()
       assert.equal(await hints.locator('li').count(), 4)
-      await hints.getByRole('button', { name: '收起其余疑点', exact: true }).click()
-      assert.equal(await hints.locator('li').count(), 3)
+      await hints.getByRole('button', { name: '收起列表', exact: true }).click()
+      assert.equal(await hints.locator('li').count(), 0)
       await page.getByRole('button', { name: '下一页原文', exact: true }).click()
       assert.equal(await page.getByRole('spinbutton', { name: 'PDF 页码' }).inputValue(), '6')
+      await more.click()
       await hints.locator('[data-locate-finding="finding-reading"]').click()
       assert.equal(await page.getByRole('spinbutton', { name: 'PDF 页码' }).inputValue(), '5')
       assert.equal(await page.locator('.source-value__hit').innerText(), 'tɛ')
@@ -363,15 +467,19 @@ function waitForFindingPresentation(page, id, presented) {
   })
   await page.goto(base + '/tests/fixtures/review.html')
   const draftField = page.locator('.proofread-field textarea').first()
+  const draftResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/draft') &&
+      response.request().method() === 'PUT' &&
+      response.request().postDataJSON().row?.字词 === '合成草稿𠮷'
+  )
   await draftField.fill('合成草稿𠮷')
   await page.waitForFunction(() =>
     Object.keys(localStorage).some(
       (key) => key.includes('task-draft') && localStorage.getItem(key).includes('合成草稿𠮷')
     )
   )
-  await page.waitForResponse(
-    (response) => response.url().endsWith('/draft') && response.request().method() === 'PUT'
-  )
+  await draftResponse
   if (
     !state.drafts.some(
       (draft) =>

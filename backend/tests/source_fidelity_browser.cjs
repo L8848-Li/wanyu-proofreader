@@ -15,17 +15,28 @@ async function api(url, auth, method = 'GET', body) {
   assert.ok(response.ok, `${response.status} ${url}: ${text.slice(0, 400)}`)
   return text ? JSON.parse(text) : null
 }
-async function session(browser, auth) {
+async function session(browser, auth, verificationPage) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
   const page = await context.newPage()
   page.__errors = []
   page.__expectedHttpErrors = new Set()
   page.__expectedNetworkErrors = new Set()
+  const verificationUrl = verificationPage && `http://localhost/api/fangji/pages/${verificationPage}/verification`
+  const verificationStatuses = []
+  page.expectVerificationLoaded = async () => {
+    await page.getByRole('region', { name: '来源与核验记录' })
+      .getByText('来源与约定', { exact: true }).waitFor()
+    assert.deepEqual(verificationStatuses, verificationStatuses[0] === 409 ? [409, 200] : [200])
+  }
   page.on('pageerror', error => page.__errors.push(error.message))
   page.on('console', message => {
     if (message.type() !== 'error') return
     if (page.__expectedHttpErrors.has(message.location().url) && message.text().includes('status of 400')) return
     if (page.__expectedNetworkErrors.has(message.location().url) && message.text().includes('net::ERR_FAILED')) return
+    // The editor may retry one live verification-read conflict. The scenario
+    // must still verify the successful retry and the rendered source context.
+    if (message.location().url === verificationUrl && verificationStatuses.includes(409) &&
+      message.text().includes('status of 409')) return
     page.__errors.push(message.text().slice(0, 1500))
   })
   await page.route('**/*', async route => {
@@ -36,6 +47,8 @@ async function session(browser, auth) {
       const headers = { ...request.headers(), Authorization: auth.token }
       delete headers.host; delete headers['content-length']; delete headers.authorization
       const response = await fetch(fixture.base + url.pathname + url.search, { method: request.method(), headers, body: ['GET', 'HEAD'].includes(request.method()) ? undefined : request.postDataBuffer() })
+      if (request.method() === 'GET' && request.url() === verificationUrl)
+        verificationStatuses.push(response.status)
       const responseHeaders = Object.fromEntries(response.headers)
       delete responseHeaders['content-length']; delete responseHeaders['content-encoding']
       return route.fulfill({ status: response.status, headers: responseHeaders, body: Buffer.from(await response.arrayBuffer()) })
@@ -169,10 +182,11 @@ async function waitFor(check) {
 
     if (fixture.research) {
       const research = fixture.research
-      const worker = await session(browser, fixture.users[0])
+      const worker = await session(browser, fixture.users[0], research.pages[0].id)
       await worker.goto(`http://localhost/tasks/${research.pages[0].id}/edit`)
       await worker.bringToFront()
       await worker.getByText('研究过程记录已启用', { exact: false }).waitFor()
+      await worker.expectVerificationLoaded()
       await worker.getByRole('button', { name: '展开其余 1 个疑点', exact: true }).waitFor()
       const hintField = worker.locator('.proofread-field').filter({ has: worker.getByRole('heading', { name: '释义', exact: true }) })
       await hintField.scrollIntoViewIfNeeded()
@@ -195,10 +209,11 @@ async function waitFor(check) {
       assert.ok(process.events.some(event => event.kind === 'research_submission' && event.ref === research.session.id && event.payload.row.记音 === 'ka⁵³³'))
       assert.deepEqual(worker.__errors, [])
       await api(`/api/fangji/projects/${research.project.id}/claim`, fixture.users[2], 'POST', {})
-      const baseline = await session(browser, fixture.users[2])
+      const baseline = await session(browser, fixture.users[2], research.pages[1].id)
       await baseline.goto(`http://localhost/tasks/${research.pages[1].id}/edit`)
       await baseline.bringToFront()
       await baseline.getByText('研究过程记录已启用', { exact: false }).waitFor()
+      await baseline.expectVerificationLoaded()
       assert.equal(await baseline.locator('[data-finding-id]').count(), 0)
       assert.equal(await baseline.getByText('字段处理记录（保留／修改／暂未完成）', { exact: true }).count(), 0, 'the frozen current-method routing strategy is actually applied')
       await baseline.locator('.verification-panel > details > summary').click()

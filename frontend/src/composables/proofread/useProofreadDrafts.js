@@ -14,6 +14,8 @@ export function useProofreadDrafts({
   currentUserId,
   initialRowJson,
   hasUnsavedChanges,
+  findingReviews,
+  findingsDirty,
   stringifyEditedRow,
   verificationContext,
   restoredLocalDraft,
@@ -24,6 +26,7 @@ export function useProofreadDrafts({
   // This editor belongs to its mounting account even during forced auth teardown.
   const ownerUserId = currentUserId.value
   let draftTimer = null
+  let savedFindingDraftAt = ''
 
   function scheduleDraftSave() {
     if (!draftReady.value) return
@@ -36,19 +39,24 @@ export function useProofreadDrafts({
     clearDraftTimer()
     if (ownReview.value) return { ok: true, saved: false }
     if (!draftReady.value || !page.value || !ownerUserId || !initialRowJson.value)
-      return { ok: !hasUnsavedChanges.value, saved: false }
+      return { ok: !hasUnsavedChanges.value && !findingsDirty?.value, saved: false }
     try {
-      if (!hasUnsavedChanges.value) {
+      const changed = hasUnsavedChanges.value || findingsDirty?.value
+      if (preserveExisting && !changed) return { ok: true, saved: false }
+      if (!hasUnsavedChanges.value && !Object.keys(findingReviews?.value || {}).length) {
         // Logout/teardown must not remove a copy written by another tab or a
         // historical source just because this mounted editor is unchanged.
-        if (preserveExisting) return { ok: true, saved: false }
         // An incompatible draft can still occupy the current storage key. Keep
         // its old values before clearing an otherwise unchanged current row.
         for (const draft of staleLocalDrafts.value) archiveTaskDraft(window.localStorage, draft)
-        clearTaskDraft(window.localStorage, {
-          userId: ownerUserId,
-          pageId: page.value.id
-        })
+        if (!preserveExisting || savedFindingDraftAt)
+          clearTaskDraft(window.localStorage, {
+            userId: ownerUserId,
+            pageId: page.value.id,
+            ...(preserveExisting ? { savedAt: savedFindingDraftAt } : {})
+          })
+        savedFindingDraftAt = ''
+        if (findingsDirty) findingsDirty.value = false
         draftStatus.value = ''
         return { ok: true, saved: false }
       }
@@ -57,9 +65,12 @@ export function useProofreadDrafts({
         pageId: page.value.id,
         sourceSignature: initialRowJson.value,
         contextBasis: verificationContext.value?.basis,
+        findingReviews: findingReviews?.value,
         row: JSON.parse(stringifyEditedRow())
       })
       if (!draft) throw new Error('draft not saved')
+      savedFindingDraftAt = draft.findingReviews ? draft.savedAt : ''
+      if (findingsDirty) findingsDirty.value = false
       draftStatus.value = `草稿已保存于 ${formatDraftTime(draft.savedAt)}`
       return { ok: true, saved: true }
     } catch {
@@ -69,6 +80,7 @@ export function useProofreadDrafts({
   }
 
   function restoreDraft() {
+    savedFindingDraftAt = ''
     const draft = loadTaskDraft(window.localStorage, {
       userId: ownerUserId,
       pageId: page.value?.id,
@@ -81,7 +93,10 @@ export function useProofreadDrafts({
     if (!draft) return
     restoredLocalDraft.value = draft
     replaceEditedRow(draft.row)
-    if (stringifyEditedRow() === initialRowJson.value) {
+    if (
+      stringifyEditedRow() === initialRowJson.value &&
+      !(draft.contextBasis && Object.keys(draft.findingReviews || {}).length)
+    ) {
       clearTaskDraft(window.localStorage, {
         userId: ownerUserId,
         pageId: page.value.id
@@ -99,6 +114,18 @@ export function useProofreadDrafts({
       staleLocalDrafts.value.push(draft)
       replaceEditedRow(originalRow.value)
       draftStatus.value = '本机草稿的来源或约定已变化，旧值保留，未套用到当前来源'
+    } else if (findingReviews && draft?.contextBasis === context.basis && draft.findingReviews) {
+      // The server draft can still restore a different row after this callback.
+      // A subsequent field edit invalidates reviews for that field.
+      findingReviews.value = Object.fromEntries(
+        Object.entries(draft.findingReviews).filter(([, review]) =>
+          review?.result === 'reviewed'
+            ? review.field === ''
+            : ['kept', 'corrected'].includes(review?.result) &&
+              Object.hasOwn(originalRow.value, review.field)
+        )
+      )
+      if (Object.keys(findingReviews.value).length) savedFindingDraftAt = draft.savedAt
     }
     const history = loadTaskDraftHistory(window.localStorage, {
       userId: ownerUserId,

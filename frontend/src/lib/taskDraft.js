@@ -7,7 +7,15 @@ export function taskDraftKey(userId, pageId) {
 
 export function saveTaskDraft(
   storage,
-  { userId, pageId, sourceSignature, row, contextBasis, savedAt = new Date().toISOString() }
+  {
+    userId,
+    pageId,
+    sourceSignature,
+    row,
+    contextBasis,
+    findingReviews,
+    savedAt = new Date().toISOString()
+  }
 ) {
   if (!storage || !userId || !pageId || !sourceSignature || !row) return null
   const payload = {
@@ -19,6 +27,8 @@ export function saveTaskDraft(
     savedAt
   }
   if (contextBasis) payload.contextBasis = String(contextBasis)
+  if (contextBasis && Object.keys(findingReviews || {}).length)
+    payload.findingReviews = findingReviews
   let previous = null
   try {
     previous = JSON.parse(storage.getItem(taskDraftKey(userId, pageId)) || 'null')
@@ -96,9 +106,21 @@ export function loadTaskDraftHistory(storage, { userId, pageId }) {
   return rows
 }
 
-export function clearTaskDraft(storage, { userId, pageId }) {
+export function clearTaskDraft(storage, { userId, pageId, savedAt }) {
   if (!storage || !userId || !pageId) return
-  storage.removeItem(taskDraftKey(userId, pageId))
+  const key = taskDraftKey(userId, pageId)
+  if (savedAt) {
+    const raw = storage.getItem(key)
+    let current
+    try {
+      current = JSON.parse(raw)
+    } catch {
+      // Leave the entry in place if we cannot verify which draft it belongs to.
+      return
+    }
+    if (current?.savedAt !== savedAt) return
+  }
+  storage.removeItem(key)
 }
 
 export function setTaskFlash(storage, message) {

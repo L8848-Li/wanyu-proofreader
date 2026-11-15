@@ -264,6 +264,7 @@ async function dismissOnboarding (page) {
 
     await editor.reload()
     await dismissOnboarding(editor)
+    await editor.getByRole('button', { name: '查看疑点列表', exact: true }).click()
     const chips = editor.locator('.field-hint-chip')
     await chips.first().waitFor({ timeout: 60000 })
     assert.ok(await chips.count() >= 1, '放行后编辑页没有疑点芯片')
@@ -273,7 +274,7 @@ async function dismissOnboarding (page) {
     assert.equal(await editor.locator('.field-hint-gated').count(), 0, '放行后仍提示"有疑点被挡住"')
     await strongChip.first().scrollIntoViewIfNeeded()
     await editor.locator('#proofread-finding-list li').filter({ has: strongChip }).first()
-      .getByRole('button', { name: '定位原文' }).click()
+      .getByRole('button', { name: '查看证据' }).click()
     // 核对导入文本中被标出的字符。
     // 断言标出来的**文字**而不是"有个元素"：区间错位时元素照样在，字却是别的字。
     const hits = editor.locator('.source-value__hit')

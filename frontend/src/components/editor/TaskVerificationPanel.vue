@@ -134,7 +134,7 @@
           <button
             type="button"
             class="btn btn-secondary btn-sm"
-            :disabled="!active"
+            :disabled="!active || saving"
             @click="reportOpen = !reportOpen"
           >
             提交问题
@@ -152,23 +152,29 @@
         <form v-if="reportOpen" class="verification-report" @submit.prevent="sendReport">
           <label class="form-label"
             >涉及字段<select
-              v-model="report.field"
+              :value="report.field"
               class="form-control"
-              @change="report.finding = ''"
+              :disabled="saving"
+              @change="switchReportTarget($event.target.value, '')"
             >
               <option value="">整条／来源页</option>
               <option v-for="field in fields" :key="field">{{ field }}</option>
             </select></label
           >
           <label class="form-label"
-            >问题类型<select v-model="report.category" class="form-control">
+            >问题类型<select v-model="report.category" class="form-control" :disabled="saving">
               <option v-for="(label, key) in PROBLEM_TYPES" :key="key" :value="key">
                 {{ label }}
               </option>
             </select></label
           >
           <label class="form-label"
-            >相关提示（可选）<select v-model="report.finding" class="form-control">
+            >相关提示（可选）<select
+              :value="report.finding"
+              class="form-control"
+              :disabled="saving"
+              @change="switchReportTarget(report.field, $event.target.value)"
+            >
               <option value="">不针对某条提示</option>
               <option v-for="hint in matchingHints" :key="hint.id" :value="hint.id">
                 {{ hint.field || '整条' }} · {{ hintKindLabel(hint.kind) }}
@@ -180,13 +186,14 @@
               ref="reportDescription"
               v-model="report.description"
               class="form-control"
+              :disabled="saving"
               required
               maxlength="4000"
               placeholder="说明看不清、无法输入或需要帮助的位置"
             ></textarea>
           </label>
           <label class="form-label"
-            ><input v-model="report.blocking" type="checkbox" />
+            ><input v-model="report.blocking" type="checkbox" :disabled="saving" />
             此问题使本条无法完成；保留草稿，等待处理</label
           >
           <button class="btn btn-primary btn-sm" :disabled="saving || !active">
@@ -220,7 +227,7 @@ import {
   PROBLEM_TYPES
 } from '@/services/verificationService'
 import { hintKindLabel } from '@/lib/fieldHints'
-import { getPbMessage } from '@/utils/pbErrors'
+import { getPbMessage, getPbStatus } from '@/utils/pbErrors'
 
 const props = defineProps({
   page: Object,
@@ -266,6 +273,9 @@ function emptyReport() {
 }
 
 const report = reactive(emptyReport())
+// Keep unsent reports on this entry apart, including manual changes of target.
+const reportDrafts = new Map()
+const reportKey = (field, finding) => JSON.stringify([field, finding])
 const reportDescription = ref(null)
 const canReport = computed(() => !!data.value && props.active && !saving.value)
 const fields = computed(() => Object.keys(props.row || {}))
@@ -310,12 +320,17 @@ async function load() {
   message.value = ''
   reportOpen.value = false
   Object.assign(report, emptyReport())
+  reportDrafts.clear()
   detailsOpen.value = false
   saving.value = false
   if (!pageId) return
   loading.value = true
   try {
-    const result = await getVerification(pageId)
+    const result = await getVerification(pageId).catch((error) => {
+      // Research events can advance the verification revision during this read.
+      if (getPbStatus(error) !== 409 || token !== generation) throw error
+      return getVerification(pageId)
+    })
     if (token !== generation) return
     restoring = true
     for (const field of Object.keys(result.context.input))
@@ -438,14 +453,26 @@ async function saveExplicitDraft() {
     saving.value = false
   }
 }
+function switchReportTarget(field, finding) {
+  if (saving.value || (report.field === field && report.finding === finding)) return
+  const category = finding ? 'hint' : report.finding ? 'input_display' : report.category
+  reportDrafts.set(reportKey(report.field, report.finding), { ...report })
+  Object.assign(
+    report,
+    reportDrafts.get(reportKey(field, finding)) || {
+      ...emptyReport(),
+      field,
+      finding,
+      category
+    }
+  )
+}
+
 async function openReport(hint) {
   if (!canReport.value || !props.hints.some(({ id }) => id === hint.id)) return
   const pageId = props.page?.id
   const field = fields.value.includes(hint.targetField) ? hint.targetField : ''
-  if (report.finding !== hint.id || report.field !== field) report.blocking = false
-  report.field = field
-  report.finding = hint.id
-  report.category = 'hint'
+  switchReportTarget(field, hint.id)
   reportOpen.value = true
   detailsOpen.value = true
   await nextTick()
@@ -476,6 +503,7 @@ async function sendReport() {
     message.value = report.blocking
       ? '问题和草稿已保存。待处理期间可释放任务，稍后从“我的问题与草稿”恢复。'
       : '问题已提交，可继续逐字段核对。'
+    reportDrafts.delete(reportKey(report.field, report.finding))
     Object.assign(report, emptyReport())
   } catch (e) {
     if (isCurrent()) saveError.value = getPbMessage(e, '问题提交失败，请重试')

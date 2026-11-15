@@ -1,27 +1,80 @@
 <template>
-  <section v-if="hints.length" class="proofread-findings" aria-label="本条疑点">
+  <section
+    v-if="state !== 'idle'"
+    class="proofread-findings"
+    aria-labelledby="proofread-finding-title"
+  >
     <div class="proofread-findings__heading">
-      <h2>本条疑点（{{ hints.length }}）</h2>
+      <h2 id="proofread-finding-title" ref="heading" tabindex="-1">本条疑点</h2>
+      <span v-if="state === 'ready'" class="text-sm text-muted" role="status">
+        <template v-if="hints.length">
+          {{
+            sequential
+              ? `待核对 ${pendingCount} · 已核对 ${hints.length - pendingCount}`
+              : `${hints.length} 条`
+          }}
+        </template>
+        <template v-else>
+          {{ gatedNoticeText ? '当前没有已开放的疑点' : '暂无可显示的疑点' }}
+        </template>
+      </span>
+      <span v-else-if="state === 'loading'" class="text-sm text-muted" role="status"
+        >正在读取疑点…</span
+      >
+      <span v-else class="text-sm text-muted" role="status">疑点读取失败，可继续校对。</span>
       <button
-        v-if="overflow > 0"
+        v-if="state === 'error'"
+        type="button"
+        class="btn btn-secondary btn-sm"
+        @click="emit('retry')"
+      >
+        重试读取疑点
+      </button>
+      <button
+        v-if="sequential && pendingCount"
+        :disabled="state !== 'ready'"
+        type="button"
+        class="btn btn-secondary btn-sm"
+        @click="emit('next')"
+      >
+        下一处待核对
+      </button>
+      <button
+        v-if="hints.length && (compact || overflow > 0)"
         type="button"
         class="btn btn-quiet btn-sm"
         :aria-expanded="expanded"
         aria-controls="proofread-finding-list"
         @click="expanded = !expanded"
       >
-        {{ expanded ? '收起其余疑点' : `展开其余 ${overflow} 个疑点` }}
+        {{
+          compact
+            ? expanded
+              ? '收起列表'
+              : '查看疑点列表'
+            : expanded
+              ? '收起其余疑点'
+              : `展开其余 ${overflow} 个疑点`
+        }}
       </button>
     </div>
-    <ul id="proofread-finding-list" class="field-hint-list">
+    <ul
+      v-show="visibleHints.length"
+      id="proofread-finding-list"
+      class="field-hint-list"
+      :class="{ 'field-hint-list--compact': compact }"
+    >
       <li v-for="hint in visibleHints" :key="hint.key">
-        <div :data-finding-id="hint.id || undefined">
+        <div :data-finding-id="!compact ? hint.id || undefined : undefined">
           <span class="field-hint-chip" :class="{ 'field-hint-chip--strong': hint.highlight }">
             <b aria-hidden="true">疑</b>{{ hintKindLabel(hint.kind) }}
           </span>
           <strong>{{ hint.field || '整条' }}</strong>
-          <p>{{ hint.text }}</p>
-          <p v-if="hint.inputStatus === 'different_input'" class="text-sm text-muted">
+          <span v-if="compact" class="text-sm text-muted">
+            {{ Object.hasOwn(reviews, hint.id) ? '已核对' : '待核对' }}
+          </span>
+          <p v-if="!compact">{{ hint.text }}</p>
+          <p v-if="!compact && hint.inputStatus === 'different_input'" class="text-sm text-muted">
             导入文本已变化，请按字段对照原文。
           </p>
         </div>
@@ -32,10 +85,10 @@
             :data-locate-finding="hint.id || undefined"
             @click="emit('locate', hint)"
           >
-            定位原文
+            {{ compact ? '查看证据' : '定位原文' }}
           </button>
           <button
-            v-if="hint.id && canReport"
+            v-if="!compact && hint.id && canReport"
             type="button"
             class="btn btn-quiet btn-sm"
             @click="emit('report', hint)"
@@ -55,20 +108,29 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { HINT_DISPLAY_LIMIT, hintKindLabel } from '@/lib/fieldHints'
 
 const props = defineProps({
   hints: { type: Array, default: () => [] },
+  reviews: { type: Object, required: true },
+  state: { type: String, required: true },
+  compact: Boolean,
+  sequential: Boolean,
   canReport: Boolean,
   findingsTruncated: Boolean,
   gatedNoticeText: String
 })
-const emit = defineEmits(['locate', 'report'])
+const emit = defineEmits(['locate', 'report', 'retry', 'next'])
 const expanded = defineModel('expanded', { type: Boolean, default: false })
+const heading = ref(null)
+defineExpose({ focus: () => heading.value?.focus() })
 const overflow = computed(() => props.hints.length - HINT_DISPLAY_LIMIT)
+const pendingCount = computed(
+  () => props.hints.filter((hint) => !Object.hasOwn(props.reviews, hint.id)).length
+)
 const visibleHints = computed(() =>
-  expanded.value ? props.hints : props.hints.slice(0, HINT_DISPLAY_LIMIT)
+  expanded.value ? props.hints : props.compact ? [] : props.hints.slice(0, HINT_DISPLAY_LIMIT)
 )
 </script>
 
@@ -88,7 +150,7 @@ const visibleHints = computed(() =>
   gap: var(--space-2);
 }
 .proofread-findings__heading {
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 .proofread-findings__heading h2 {
   margin: 0;
@@ -105,6 +167,21 @@ const visibleHints = computed(() =>
   border-top: 1px solid var(--line);
 }
 .field-hint-list strong {
+  margin-inline-start: var(--space-2);
+}
+.field-hint-list--compact {
+  max-height: min(28vh, 16rem);
+  overflow: auto;
+  margin-block-start: var(--space-2);
+}
+.field-hint-list--compact li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.field-hint-list--compact .text-muted {
   margin-inline-start: var(--space-2);
 }
 .field-hint-list p {

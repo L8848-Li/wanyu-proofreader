@@ -87,14 +87,34 @@
         />
         <ProofreadPageHints
           :key="page.id"
+          ref="findingsPanel"
           v-model:expanded="findingsExpanded"
           :hints="fieldHints"
+          :reviews="findingReviews"
+          :state="findingsState"
+          :compact="compactFindings"
+          :sequential="!researchSession"
           :can-report="verificationPanel?.canReport"
           :findings-truncated="findingsTruncated"
           :gated-notice-text="gatedNoticeText"
           @locate="locateFinding"
           @report="verificationPanel?.openReport($event)"
+          @next="nextFinding"
+          @retry="loadFindings(page.id)"
         />
+        <div
+          v-if="selectedFinding && !selectedFinding.targetField"
+          ref="entryFinding"
+          tabindex="-1"
+        >
+          <ProofreadFindingDetail
+            v-bind="selectedFindingProps"
+            @review="reviewSelectedFinding"
+            @next="nextFinding"
+            @report="verificationPanel?.openReport(selectedFinding)"
+            @close="closeFinding"
+          />
+        </div>
         <div class="proofread-fields">
           <ProofreadFieldCard
             v-for="(header, index) in rowHeaders"
@@ -122,7 +142,18 @@
             @activate="activateField(header, $event)"
             @remember="rememberSelection(header, $event)"
             @change="onTextChange"
-          />
+          >
+            <template #finding>
+              <ProofreadFindingDetail
+                v-if="selectedFinding?.targetField === header"
+                v-bind="selectedFindingProps"
+                @review="reviewSelectedFinding"
+                @next="nextFinding"
+                @report="verificationPanel?.openReport(selectedFinding)"
+                @close="closeFinding"
+              />
+            </template>
+          </ProofreadFieldCard>
         </div>
         <details v-if="!ownReview" class="editor-correction-help">
           <summary>校对与提交说明</summary>
@@ -213,6 +244,7 @@ import RareCharacterNotice from '@/components/editor/RareCharacterNotice.vue'
 import TaskVerificationPanel from '@/components/editor/TaskVerificationPanel.vue'
 import ResearchTelemetry from '@/components/editor/ResearchTelemetry.vue'
 import ProofreadPageHints from '@/components/editor/ProofreadPageHints.vue'
+import ProofreadFindingDetail from '@/components/editor/ProofreadFindingDetail.vue'
 import ProofreadTaskHeader from '@/components/editor/ProofreadTaskHeader.vue'
 import ProofreadTaskFeedback from '@/components/editor/ProofreadTaskFeedback.vue'
 import ProofreadFieldCard from '@/components/editor/ProofreadFieldCard.vue'
@@ -272,6 +304,11 @@ const {
   receiveVerificationContext,
   researchTelemetry,
   fieldHints,
+  findingReviews,
+  canReviewFindings,
+  updateFindingReview,
+  findingsState,
+  loadFindings,
   findingsTruncated,
   gatedNoticeText,
   currentField,
@@ -280,6 +317,7 @@ const {
   selectField,
   restoreField,
   locateHint,
+  clearHintLocation,
   setTextareaRef,
   activateField,
   rememberSelection,
@@ -311,7 +349,28 @@ const {
 } = useProofreadEditor()
 
 const workspace = ref(null)
+const findingsPanel = ref(null)
+const entryFinding = ref(null)
 const findingsExpanded = ref(false)
+const selectedFindingKey = ref(null)
+const compactFindings = computed(() => !mobile.value && !researchSession.value)
+const selectedFinding = computed(() => {
+  if (researchSession.value) return null
+  return fieldHints.value.find((hint) => hint.key === selectedFindingKey.value) || null
+})
+const pendingFindings = computed(() =>
+  fieldHints.value.filter((hint) => !Object.hasOwn(findingReviews.value, hint.id))
+)
+const selectedFindingProps = computed(() => ({
+  hint: selectedFinding.value,
+  review: Object.hasOwn(findingReviews.value, selectedFinding.value.id)
+    ? findingReviews.value[selectedFinding.value.id]
+    : undefined,
+  changed: isFieldChanged(selectedFinding.value.targetField),
+  canReview: canReviewFindings.value,
+  canReport: verificationPanel.value?.canReport,
+  hasNext: pendingFindings.value.some((hint) => hint.key !== selectedFinding.value.key)
+}))
 const densityCollapsedIds = computed(() =>
   findingsExpanded.value
     ? []
@@ -325,6 +384,7 @@ watch(
   () => page.value?.id,
   () => {
     findingsExpanded.value = false
+    selectedFindingKey.value = null
   }
 )
 watch(findingsExpanded, (expanded) => {
@@ -332,7 +392,40 @@ watch(findingsExpanded, (expanded) => {
 })
 
 async function locateFinding(hint) {
-  workspace.value?.revealEntrySource(hint.targetField)
+  const pageId = page.value?.id
+  selectedFindingKey.value = hint.key
+  if (compactFindings.value) findingsExpanded.value = false
+  await workspace.value?.revealEntrySource(hint.targetField)
+  if (pageId !== page.value?.id || selectedFindingKey.value !== hint.key) return
   await locateHint(hint)
+  if (selectedFinding.value === hint && !hint.targetField) {
+    entryFinding.value?.focus({ preventScroll: true })
+    entryFinding.value?.scrollIntoView({ block: 'nearest' })
+  }
+}
+
+watch(selectedFinding, (selected, previous) => {
+  if (previous && (!selected || (selected.key === previous.key && selected !== previous))) {
+    clearHintLocation()
+    workspace.value?.clearFindingSource()
+  }
+})
+
+function nextFinding() {
+  const index = fieldHints.value.indexOf(selectedFinding.value)
+  const isPending = (hint) => !Object.hasOwn(findingReviews.value, hint.id)
+  const next = fieldHints.value.slice(index + 1).find(isPending) || pendingFindings.value[0]
+  if (next) void locateFinding(next)
+}
+
+function reviewSelectedFinding(reviewed) {
+  if (selectedFinding.value) updateFindingReview(selectedFinding.value, reviewed)
+}
+
+function closeFinding() {
+  selectedFindingKey.value = null
+  clearHintLocation()
+  workspace.value?.clearFindingSource()
+  findingsPanel.value?.focus()
 }
 </script>
