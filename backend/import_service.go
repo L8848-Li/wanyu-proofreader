@@ -157,31 +157,7 @@ func (s *importService) register() {
 }
 
 func (s *importService) requireProjectManager(c *core.RequestEvent, projectID string) (*core.Record, *core.Record, error) {
-	auth := c.Auth
-	if auth == nil {
-		return nil, nil, apis.NewUnauthorizedError("登录状态已失效，请重新登录。", nil)
-	}
-	if auth.GetBool("must_change_password") {
-		return nil, nil, apis.NewForbiddenError("首次登录请先修改密码。", nil)
-	}
-	project, err := s.findProject(projectID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if auth.GetString("role") == "platform_admin" || project.GetString("admin") == auth.Id {
-		return auth, project, nil
-	}
-	memberships, err := s.app.FindRecordsByFilter(
-		"project_memberships",
-		fmt.Sprintf(`project = %q && user = %q && role = "manager"`, projectID, auth.Id),
-		"",
-		1,
-		0,
-	)
-	if err == nil && len(memberships) > 0 {
-		return auth, project, nil
-	}
-	return nil, nil, apis.NewForbiddenError("只有项目所有者或管理员可以上传项目文件。", err)
+	return requireProjectManagerInApp(s.app, c, projectID)
 }
 
 func (s *importService) findProject(projectID string) (*core.Record, error) {

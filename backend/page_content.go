@@ -107,6 +107,10 @@ func (s *importService) setPageContent(c *core.RequestEvent) error {
 
 	var page *core.Record
 	err = s.app.RunInTransaction(func(app core.App) error {
+		auth, _, err := requireProjectManagerInApp(app, c, projectID)
+		if err != nil {
+			return err
+		}
 		current, err := app.FindRecordById("pages", c.Request.PathValue("pageId"))
 		if err != nil || current == nil {
 			return apis.NewNotFoundError("条目不存在。", err)
@@ -163,7 +167,7 @@ func (s *importService) setPageContent(c *core.RequestEvent) error {
 		if page.GetBool("missing_glyph") && !glyphPlaceholderRe.MatchString(text) {
 			page.Set("missing_glyph", false)
 		}
-		page.Set("fidelity_change_actor", c.Auth.Id)
+		page.Set("fidelity_change_actor", auth.Id)
 		// Timestamp precision is milliseconds. Even two saves in the same millisecond
 		// must produce different optimistic versions, including after clock rollback.
 		nextUpdated := types.NowDateTime()

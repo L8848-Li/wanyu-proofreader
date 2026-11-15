@@ -747,17 +747,7 @@ func (s *importService) decideNormalization(c *core.RequestEvent) error {
 		if page.GetString("project") != projectID {
 			return apis.NewApiError(http.StatusConflict, "条目所属项目已变化，请刷新复核队列。", nil)
 		}
-		project, err := tx.FindRecordById("projects", projectID)
-		if err != nil {
-			return apis.NewNotFoundError("项目不存在或已被删除。", err)
-		}
-		auth := c.Auth
-		if auth.GetString("role") != "platform_admin" && project.GetString("admin") != auth.Id {
-			memberships, err := tx.FindRecordsByFilter("project_memberships", "project={:project} && user={:user} && role='manager'", "", 1, 0, dbx.Params{"project": projectID, "user": auth.Id})
-			if err != nil || len(memberships) == 0 {
-				return apis.NewForbiddenError("当前已没有管理本项目的权限。", err)
-			}
-		}
+		auth, project, err := requireProjectManagerInApp(tx, c, projectID)
 		if err != nil {
 			return err
 		}
