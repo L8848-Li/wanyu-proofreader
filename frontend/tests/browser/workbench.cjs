@@ -318,14 +318,42 @@ async function catalogFits(page) {
         .evaluate((element) => getComputedStyle(element).display),
       'table'
     )
-    await page.getByRole('button', { name: `${project.name} 更多操作`, exact: true }).click()
-    await page.getByRole('menuitem', { name: '项目设置', exact: true }).waitFor()
+    const managedRow = page.locator(
+      `.admin-project-table tbody tr[data-project-id="${project.id}"]`
+    )
+    const managedName = managedRow.locator('.project-name-link')
+    const managedAction = managedRow.getByRole('link', { name: /处理 \d+ 条待仲裁/ })
+    const managedSettings = managedRow.getByRole('link', {
+      name: `${project.name}：项目设置`,
+      exact: true
+    })
+    await managedSettings.waitFor()
+    assert.deepEqual(await page.getByRole('columnheader').allTextContents(), [
+      '项目',
+      '待仲裁',
+      '校对中',
+      '完成进度',
+      '操作'
+    ])
+    await managedRow
+      .locator('.project-created')
+      .getByText(/创建于/)
+      .waitFor()
     assert.equal(
-      await page.getByRole('menuitem', { name: '项目设置', exact: true }).getAttribute('href'),
+      await managedSettings.getAttribute('href'),
       `/admin/projects/${project.id}/settings`
     )
-    await page.keyboard.press('Escape')
     await page.screenshot({ path: path.join(output, 'desktop-managed-catalog.png') })
+    await page.getByRole('button', { name: '筛选待仲裁项目', exact: true }).click()
+    await page.waitForURL('**/admin?filter=attention')
+    await managedAction.click()
+    await page.waitForURL(
+      `**/admin/projects/${project.id}?section=work&view=entries&status=arbitration`
+    )
+    await page.goBack()
+    await page.getByRole('button', { name: '全部', exact: true }).click()
+    await page.waitForURL('**/admin')
+    await managedSettings.waitFor()
     const dashboardRequest = '**/api/fangji/project-insights?*'
     await page.route(dashboardRequest, (route) =>
       route.fulfill({ status: 503, json: { message: '合成测试：项目目录暂时不可用' } })
@@ -354,34 +382,16 @@ async function catalogFits(page) {
       true,
       'Mobile management actions do not need horizontal scrolling'
     )
-    const managedRow = page.locator(
-      `.admin-project-table tbody tr[data-project-id="${project.id}"]`
-    )
-    const managedName = managedRow.locator('.project-name-link')
-    const managedAction = managedRow.getByRole('link', { name: '处理仲裁', exact: true })
-    const managedMore = managedRow.getByRole('button', {
-      name: `${project.name} 更多操作`,
-      exact: true
-    })
     assert.equal(await managedAction.count(), 1)
-    assert.equal(await managedMore.count(), 1)
-    for (const element of [managedName, managedAction, managedMore]) {
+    assert.equal(await managedSettings.count(), 1)
+    for (const element of [managedName, managedAction, managedSettings]) {
       const bounds = await element.boundingBox()
       assert.ok(
         bounds.x >= 0 && bounds.x + bounds.width <= 390 && bounds.y + bounds.height <= 845,
         'Project identity and actions stay on the first mobile screen'
       )
     }
-    const managedDetails = managedRow.locator('.project-status-details')
-    assert.equal(await managedDetails.getAttribute('data-state'), 'closed')
-    await managedDetails.getByRole('button', { name: '状态与创建信息', exact: true }).click()
-    assert.equal(await managedDetails.getAttribute('data-state'), 'open')
-    for (const label of ['待开始', '处理中', '收集中', '已完成'])
-      await managedDetails.getByText(label, { exact: true }).waitFor()
-    await managedDetails.locator('.project-created').waitFor()
-    await managedDetails.getByRole('button', { name: '状态与创建信息', exact: true }).click()
-    assert.equal(await managedDetails.getAttribute('data-state'), 'closed')
-    await managedDetails.locator('.app-disclosure__content').waitFor({ state: 'hidden' })
+    assert.equal(await managedRow.locator('.project-created').isVisible(), true)
     await page.screenshot({ path: path.join(output, 'mobile-managed-catalog.png') })
     await page.setViewportSize({ width: 320, height: 844 })
     await page.evaluate(() => scrollTo(0, 0))

@@ -3,7 +3,6 @@
     <header class="page-heading">
       <div>
         <h1>项目管理</h1>
-        <p>查看项目进展，优先处理需要判断的条目。</p>
       </div>
       <div class="page-heading-actions">
         <RouterLink
@@ -39,31 +38,47 @@
     </AppStatusPanel>
 
     <dl
-      class="catalog-summary catalog-summary--four admin-summary"
-      aria-label="项目总体状态"
+      class="catalog-summary admin-summary"
+      aria-label="所有管理项目的校对概况"
       :aria-busy="loading"
     >
-      <div>
-        <dt>项目总数</dt>
-        <dd>{{ hasResult ? overallSummary.projects : '—' }}<span>个项目</span></dd>
-        <small v-if="hasResult">{{ overallSummary.total }} 条材料</small>
+      <div
+        :class="{
+          'catalog-summary__attention': hasResult && overallSummary.arbitration > 0
+        }"
+      >
+        <dt>待仲裁</dt>
+        <dd>
+          <AppButton
+            v-if="hasResult && overallSummary.arbitration > 0"
+            class="summary-arbitration"
+            variant="ghost"
+            size="sm"
+            aria-label="筛选待仲裁项目"
+            @click="selectArbitrationProjects"
+            >{{ overallSummary.arbitration }}<span class="summary-unit">条</span
+            ><AppIcon name="arrow"
+          /></AppButton>
+          <template v-else>{{ hasResult ? '0 条' : '—' }}</template>
+        </dd>
       </div>
       <div>
-        <dt>校对完成率</dt>
-        <dd>{{ hasResult ? overallSummary.completionPct : '—' }}<span v-if="hasResult">%</span></dd>
-        <small>{{
-          hasResult
-            ? `${overallSummary.approved} 条已完成 · ${overallSummary.incomplete} 条未完成`
-            : '完成统计不受列表筛选影响'
-        }}</small>
+        <dt>校对中</dt>
+        <dd>{{ hasResult ? overallSummary.active : '—' }}<span v-if="hasResult">条</span></dd>
       </div>
-      <div>
-        <dt>校对处理中</dt>
-        <dd>{{ hasResult ? overallSummary.active : '—' }}<span>条</span></dd>
-      </div>
-      <div :class="{ 'catalog-summary__attention': hasResult && overallSummary.arbitration > 0 }">
-        <dt>等待仲裁</dt>
-        <dd>{{ hasResult ? overallSummary.arbitration : '—' }}<span>条</span></dd>
+      <div class="summary-completion">
+        <dt>校对完成</dt>
+        <dd v-if="hasResult && overallSummary.total > 0">
+          {{ overallSummary.completionPct }}<span>%</span>
+          <div class="progress" aria-hidden="true">
+            <div class="progress-bar" :style="{ width: overallSummary.completionPct + '%' }"></div>
+          </div>
+        </dd>
+        <dd v-else>—</dd>
+        <small v-if="hasResult"
+          >已完成 {{ overallSummary.approved }} 条 · 未完成
+          {{ overallSummary.incomplete }} 条</small
+        >
       </div>
     </dl>
 
@@ -72,27 +87,24 @@
       aria-labelledby="admin-project-list-title"
       :aria-busy="loading"
     >
-      <div class="section-heading">
-        <div>
-          <h2 id="admin-project-list-title">项目进展</h2>
-        </div>
-        <span v-if="loading && hasResult" class="admin-updating" role="status">正在更新…</span>
-        <span v-else-if="hasResult" class="section-count">{{ pagination.totalItems }} 个项目</span>
-      </div>
-
-      <div class="admin-list-filters admin-insights-controls">
+      <div class="section-heading admin-project-heading">
+        <h2 id="admin-project-list-title">项目进展</h2>
         <label class="admin-filter-field" for="admin-project-search">
           <span class="sr-only">搜索项目名或简介</span>
+          <AppIcon name="search" />
           <input
             id="admin-project-search"
             v-model="searchQuery"
             class="form-control"
             type="search"
             autocomplete="off"
-            placeholder="输入项目名或简介关键词"
+            placeholder="搜索项目名或简介"
             @input="scheduleSearch"
           />
         </label>
+      </div>
+
+      <div class="admin-list-filters admin-insights-controls">
         <div class="admin-quick-filters" role="group" aria-label="项目快捷筛选">
           <AppButton
             v-for="option in FILTER_OPTIONS"
@@ -106,6 +118,10 @@
             {{ option.label }}
           </AppButton>
         </div>
+        <span v-if="loading && hasResult" class="admin-updating" role="status">正在更新…</span>
+        <span v-else-if="hasResult" class="section-count"
+          >{{ hasActiveFilters ? '找到 ' : '共 ' }}{{ pagination.totalItems }} 个项目</span
+        >
       </div>
 
       <AppStatusPanel v-if="loading && !hasResult" state="pending" message="正在加载项目…" />
@@ -144,8 +160,9 @@
         <template #head>
           <tr>
             <th>项目</th>
+            <th>待仲裁</th>
+            <th>校对中</th>
             <th>完成进度</th>
-            <th>待办</th>
             <th>操作</th>
           </tr>
         </template>
@@ -162,73 +179,56 @@
               </RouterLink>
               <ProjectPurposeBadge :purpose="item.project.purpose" />
             </div>
-            <p v-if="item.project.description">{{ item.project.description }}</p>
-            <AppDisclosure class="project-status-details" label="状态与创建信息">
-              <dl class="project-pipeline">
-                <div>
-                  <dt>待开始</dt>
-                  <dd>{{ item.summary.unstarted }}</dd>
-                </div>
-                <div>
-                  <dt>处理中</dt>
-                  <dd>{{ item.summary.active }}</dd>
-                </div>
-                <div>
-                  <dt>收集中</dt>
-                  <dd>{{ item.summary.collecting }}</dd>
-                </div>
-                <div>
-                  <dt>已完成</dt>
-                  <dd>{{ item.summary.approved }}</dd>
-                </div>
-              </dl>
-              <p class="project-created">创建于 {{ formatDate(item.project.created) }}</p>
-            </AppDisclosure>
-          </td>
-          <td class="project-progress-cell">
-            <div
-              class="progress"
-              role="progressbar"
-              :aria-label="`${item.project.name} 校对进度`"
-              :aria-valuenow="item.summary.completionPct"
-              aria-valuemin="0"
-              aria-valuemax="100"
-            >
-              <div class="progress-bar" :style="{ width: item.summary.completionPct + '%' }"></div>
-            </div>
-            <span
-              >{{ item.summary.approved }} / {{ item.summary.total }} 条已完成 ·
-              {{ item.summary.completionPct }}%</span
-            >
+            <p class="project-created">
+              <template v-if="item.project.description">{{ item.project.description }} · </template>
+              创建于 {{ formatDate(item.project.created) }}
+            </p>
           </td>
           <td class="admin-project-attention">
+            <span class="project-mobile-label" aria-hidden="true">待仲裁</span>
             <RouterLink
               v-if="item.summary.arbitration"
-              :to="`/admin/projects/${item.project.id}?status=${PAGE_STATUS.ARBITRATION}`"
+              :to="`/admin/projects/${item.project.id}?section=work&view=entries&status=${PAGE_STATUS.ARBITRATION}`"
               class="attention-count"
-            >
-              {{ item.summary.arbitration }} 条待仲裁
-            </RouterLink>
-            <span v-else class="attention-clear">暂无待仲裁</span>
+              :aria-label="`${item.project.name}：处理 ${item.summary.arbitration} 条待仲裁`"
+              >{{ item.summary.arbitration }} 条 <AppIcon name="arrow"
+            /></RouterLink>
+            <span v-else class="attention-clear">—</span>
+          </td>
+          <td class="admin-project-active">
+            <span class="project-mobile-label" aria-hidden="true">校对中</span>
+            <span v-if="item.summary.active">{{ item.summary.active }} 条</span>
+            <span v-else class="attention-clear">—</span>
+          </td>
+          <td class="project-progress-cell">
+            <template v-if="item.summary.total > 0">
+              <div class="project-progress-label">
+                <span>{{ item.summary.approved }} / {{ item.summary.total }} 条</span>
+                <strong>{{ item.summary.completionPct }}%</strong>
+              </div>
+              <div
+                class="progress"
+                role="progressbar"
+                :aria-label="`${item.project.name} 校对进度`"
+                :aria-valuenow="item.summary.completionPct"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <div
+                  class="progress-bar"
+                  :style="{ width: item.summary.completionPct + '%' }"
+                ></div>
+              </div>
+            </template>
+            <span v-else class="attention-clear">暂无材料</span>
           </td>
           <td class="admin-project-action-cell">
-            <div class="admin-project-actions">
-              <RouterLink
-                :to="
-                  item.summary.arbitration
-                    ? `/admin/projects/${item.project.id}?status=${PAGE_STATUS.ARBITRATION}`
-                    : `/admin/projects/${item.project.id}`
-                "
-                class="btn btn-sm"
-                :class="item.summary.arbitration ? 'btn-primary' : 'btn-secondary'"
-              >
-                {{ item.summary.arbitration ? '处理仲裁' : '管理项目' }}
-              </RouterLink>
-              <AppDropdown
-                :aria-label="`${item.project.name} 更多操作`"
-                :items="[{ label: '项目设置', to: `/admin/projects/${item.project.id}/settings` }]"
-              />
-            </div>
+            <RouterLink
+              :to="`/admin/projects/${item.project.id}/settings`"
+              class="btn btn-quiet btn-sm project-settings-link"
+              :aria-label="`${item.project.name}：项目设置`"
+              ><AppIcon name="settings" />项目设置</RouterLink
+            >
           </td>
         </tr>
       </AppDataTable>
@@ -253,8 +253,6 @@ import AppStatusPanel from '@/components/AppStatusPanel.vue'
 import AppDataTable from '@/components/AppDataTable.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import AppButton from '@/components/AppButton.vue'
-import AppDropdown from '@/components/AppDropdown.vue'
-import AppDisclosure from '@/components/AppDisclosure.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import '@/styles/work-catalog.css'
 import { useAsyncResource } from '@/composables/useAsyncResource'
@@ -282,7 +280,12 @@ const router = useRouter()
 const auth = useAuthStore()
 const projectInsights = ref([])
 const overallSummary = ref(emptySummary())
-const pagination = ref({ page: 1, perPage: PROJECTS_PER_PAGE, totalItems: 0, totalPages: 0 })
+const pagination = ref({
+  page: 1,
+  perPage: PROJECTS_PER_PAGE,
+  totalItems: 0,
+  totalPages: 0
+})
 const searchQuery = ref('')
 const {
   pending: loading,
@@ -323,7 +326,10 @@ onBeforeUnmount(() => {
 })
 
 async function loadDashboard(requestedQuery = dashboardQuery.value) {
-  const requested = normalizeProjectInsightsQuery({ ...requestedQuery, perPage: PROJECTS_PER_PAGE })
+  const requested = normalizeProjectInsightsQuery({
+    ...requestedQuery,
+    perPage: PROJECTS_PER_PAGE
+  })
   const request = await reloadDashboard(requested)
   if (!request.ok) return
   const result = request.data
@@ -337,7 +343,10 @@ async function loadDashboard(requestedQuery = dashboardQuery.value) {
   }
   if (pagination.value.page !== requested.page) {
     router.replace({
-      query: toProjectInsightsRouteQuery({ ...requested, page: pagination.value.page })
+      query: toProjectInsightsRouteQuery({
+        ...requested,
+        page: pagination.value.page
+      })
     })
   }
 }
@@ -353,6 +362,12 @@ function scheduleSearch() {
 function setFilter(filter) {
   clearSearchTimer()
   replaceFilters({ q: searchQuery.value, filter, page: 1 })
+}
+
+function selectArbitrationProjects() {
+  clearSearchTimer()
+  searchQuery.value = ''
+  replaceFilters({ q: '', filter: 'attention', page: 1 })
 }
 
 function clearFilters() {
@@ -422,50 +437,125 @@ function formatDate(value) {
 
 <style scoped>
 .admin-catalog .admin-summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-4) var(--space-5);
-  margin-bottom: var(--space-4);
+  grid-template-columns: minmax(96px, 0.65fr) minmax(96px, 0.65fr) minmax(230px, 2fr);
+  gap: var(--space-5);
   padding-bottom: var(--space-4);
+  margin-bottom: var(--space-5);
 }
-.admin-summary > div {
-  display: grid;
-  align-content: start;
-  gap: var(--space-1);
+.admin-summary > div + div {
+  border-inline-start: 1px solid var(--line);
+  padding-inline-start: var(--space-5);
 }
-.admin-catalog .admin-summary dt,
-.admin-catalog .admin-summary dd,
-.admin-catalog .admin-summary small {
-  margin: 0;
-}
-.admin-catalog .admin-summary dd {
+.admin-summary .summary-arbitration {
+  padding-inline: 0;
+  min-height: 0;
+  padding-block: 0;
+  color: var(--warn-hot-ink-deep);
   font-size: var(--text-xl);
+  line-height: 1.3;
+  font-weight: 600;
 }
-.admin-project-identity {
-  width: 44%;
+.admin-catalog .admin-summary .summary-arbitration :deep(.app-button__content) {
+  color: inherit;
+  font: inherit;
+  align-items: baseline;
+}
+.admin-catalog .admin-summary .summary-unit {
+  align-self: baseline;
+  color: var(--warn-hot-ink-deep);
+}
+.summary-arbitration .app-icon {
+  width: 16px;
+  height: 16px;
+  align-self: center;
+  margin-inline-start: var(--space-1);
+}
+.summary-completion .progress {
+  align-self: center;
+  width: 112px;
+  height: 6px;
+  margin-inline-start: var(--space-3);
+}
+.admin-catalog .admin-project-heading {
+  margin-bottom: var(--space-2);
+  gap: var(--space-3);
+}
+.admin-project-heading .admin-filter-field {
+  display: flex;
+  flex: 0 1 280px;
+  align-items: center;
+  position: relative;
+}
+.admin-filter-field .app-icon {
+  position: absolute;
+  left: var(--space-3);
+  pointer-events: none;
+}
+.admin-filter-field .form-control {
+  padding-inline-start: var(--space-6);
+}
+.admin-catalog .admin-insights-controls {
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
 }
 .admin-catalog :deep(.admin-project-table) {
   width: 100%;
 }
 .admin-catalog :deep(.admin-project-table td) {
-  vertical-align: top;
+  vertical-align: middle;
 }
-.admin-project-attention {
+.admin-project-identity {
+  width: 39%;
+}
+.admin-project-attention,
+.admin-project-active {
+  width: 13%;
   white-space: nowrap;
+  font-size: var(--text-sm);
+}
+.admin-catalog .attention-count {
+  align-items: center;
+  gap: var(--space-1);
+}
+.attention-count .app-icon {
+  width: 13px;
+  height: 13px;
+}
+.admin-catalog .project-created {
+  max-width: 100%;
+  margin-top: var(--space-1);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.project-mobile-label {
+  display: none;
+}
+.project-progress-cell {
+  width: 22%;
+}
+.project-progress-cell .progress {
+  height: 6px;
+  margin: var(--space-1) 0 0;
+}
+.project-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  align-items: baseline;
+  color: var(--gray-500);
+  white-space: nowrap;
+  font-size: var(--text-xs);
+}
+.project-progress-label strong {
+  color: var(--ink);
+  font-weight: 600;
 }
 .admin-project-action-cell {
-  width: 170px;
+  white-space: nowrap;
 }
-.admin-catalog .project-status-details :deep(.app-disclosure__trigger) {
-  min-height: var(--control-height-sm);
-  align-content: center;
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-  font-weight: 400;
-}
-.admin-catalog .project-status-details .project-created {
-  white-space: normal;
-  margin-top: var(--space-2);
+.project-settings-link {
+  margin-inline-start: calc(-1 * var(--space-2));
 }
 @media (max-width: 640px) {
   .admin-catalog .page-heading {
@@ -476,69 +566,52 @@ function formatDate(value) {
     grid-column: 1 / -1;
     flex-wrap: wrap;
   }
-  .admin-catalog .project-hub-tabs {
-    margin-bottom: var(--space-3);
-  }
   .admin-catalog .admin-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-3) var(--space-4);
-    margin-bottom: var(--space-3);
-    padding-bottom: var(--space-3);
+    gap: var(--space-3);
   }
-  .admin-catalog .admin-summary dt {
-    font-size: var(--text-sm);
+  .admin-summary > div + div {
+    border-inline-start: 0;
+    padding-inline-start: 0;
   }
-  .admin-catalog .admin-summary dd {
-    font-size: var(--text-lg);
+  .summary-completion {
+    grid-column: 1 / -1;
   }
-  .admin-catalog .admin-summary dd span {
-    font-size: var(--text-xs);
+  .admin-catalog .admin-summary .summary-completion {
+    display: block;
   }
-  .admin-catalog .admin-summary > div {
-    gap: var(--space-1);
+  .admin-catalog .admin-project-heading {
+    flex-wrap: wrap;
   }
-  .admin-catalog .section-heading {
-    margin-bottom: var(--space-3);
+  .admin-project-heading .admin-filter-field {
+    flex: 1 1 170px;
   }
   .admin-catalog .admin-insights-controls {
-    gap: var(--space-2);
-    margin-bottom: var(--space-3);
-  }
-  .admin-catalog .admin-filter-field {
-    min-width: 0;
-  }
-  .admin-catalog :deep(.table-wrapper) {
-    overflow: visible;
-    border: 0;
-    border-radius: var(--radius-none);
+    flex-wrap: wrap;
   }
   .admin-catalog :deep(.admin-project-table),
   .admin-catalog :deep(.admin-project-table tbody) {
     display: block;
-    min-width: 0;
-    width: 100%;
-  }
-  .admin-catalog :deep(.admin-project-table) {
-    border-radius: var(--radius-panel);
   }
   .admin-catalog :deep(.admin-project-table thead) {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
   }
   .admin-catalog :deep(.admin-project-table tr) {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: 'identity identity' 'progress progress' 'attention actions';
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: 'identity identity' 'attention active' 'progress progress' 'actions actions';
     gap: var(--space-2) var(--space-3);
-    padding: var(--space-4) var(--space-3);
+    padding: var(--space-3);
     border-bottom: 1px solid var(--line);
-  }
-  .admin-catalog :deep(.admin-project-table tr:last-child) {
-    border-bottom: 0;
   }
   .admin-catalog :deep(.admin-project-table td) {
     display: block;
-    min-width: 0;
     width: auto;
+    min-width: 0;
     padding: 0;
     border: 0;
   }
@@ -548,60 +621,32 @@ function formatDate(value) {
   .admin-project-identity {
     grid-area: identity;
   }
-  .admin-catalog .admin-project-name {
-    display: block;
-  }
-  .admin-catalog .project-name-link {
-    display: inline-flex;
-    align-items: center;
-    min-height: var(--control-height-touch);
-    font-size: var(--text-lg);
-    line-height: 1.4;
+  .project-name-link {
     overflow-wrap: anywhere;
-  }
-  .admin-catalog :deep(.admin-project-table td:first-child p) {
-    max-width: none;
-  }
-  .admin-catalog :deep(.admin-project-table td.project-progress-cell) {
-    grid-area: progress;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .project-progress-cell .progress {
-    width: 72px;
-    margin: 0;
   }
   .admin-project-attention {
     grid-area: attention;
-    align-self: center;
   }
-  .admin-catalog .attention-count {
-    padding: 0;
-    background: transparent;
-    min-height: var(--control-height-touch);
-    align-items: center;
-    font-size: var(--text-sm);
+  .admin-project-active {
+    grid-area: active;
+  }
+  .project-progress-cell {
+    grid-area: progress;
   }
   .admin-project-action-cell {
     grid-area: actions;
   }
-  .admin-project-actions {
-    flex-wrap: nowrap;
-    align-items: center;
-    gap: var(--space-2);
+  .project-mobile-label {
+    display: inline;
+    margin-inline-end: var(--space-1);
+    color: var(--gray-500);
+    font-size: var(--text-xs);
   }
-  .admin-catalog .project-status-details {
-    margin-top: 0;
+  .attention-count {
+    min-height: var(--control-height-sm);
   }
-  .admin-catalog .project-status-details :deep(.app-disclosure__trigger) {
+  .project-settings-link {
     min-height: var(--control-height-touch);
-  }
-  .admin-catalog .project-pipeline {
-    min-width: 0;
-    width: 100%;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 </style>
