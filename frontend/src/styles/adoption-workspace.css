@@ -1,0 +1,231 @@
+.adoption-report-scope {
+  padding: var(--space-3);
+  margin-block: var(--space-3);
+  border: 1px solid var(--primary-line);
+  border-radius: var(--radius-panel);
+  background: var(--primary-glow-soft);
+  overflow-wrap: anywhere;
+}
+.adoption-report-scope p {
+  margin: 0;
+}
+.adoption-report-scope .btn {
+  margin-top: var(--space-2);
+}
+.adoption-form-body {
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.adoption-create-summary,
+.adoption-next-step {
+  padding: var(--space-3) 0;
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+  line-height: 1.7;
+}
+.adoption-next-step strong {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--gray-600);
+}
+.adoption-exceptions-done {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+.adoption-workspace {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.adoption-more {
+  padding: var(--space-2) 0;
+}
+.adoption-more summary,
+.adoption-optional summary {
+  cursor: pointer;
+  color: var(--gray-600);
+  font-size: var(--text-sm);
+}
+.adoption-more[open] {
+  flex-basis: 100%;
+}
+.adoption-optional {
+  padding: var(--space-2) 0;
+}
+.adoption-heading {
+  margin-bottom: var(--space-3);
+}
+.adoption-heading h1 {
+  font-size: var(--text-2xl);
+}
+.adoption-explanation {
+  color: var(--gray-600);
+  font-size: var(--text-sm);
+}
+.adoption-explanation p {
+  padding-top: var(--space-2);
+}
+.adoption-steps,
+.adoption-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.adoption-steps span {
+  padding: var(--space-2) var(--space-3);
+  color: var(--gray-600);
+  border-bottom: 2px solid var(--line);
+}
+.adoption-steps [aria-current='step'] {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+.adoption-tabs button {
+  padding: var(--space-2) var(--space-3);
+  min-height: 44px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--gray-600);
+  cursor: pointer;
+  font: inherit;
+}
+.adoption-tabs .is-active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+.adoption-history li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+.adoption-history button {
+  text-align: left;
+  white-space: normal;
+}
+.adoption-history-trigger {
+  display: grid;
+  gap: var(--space-1);
+  min-height: 44px;
+  padding-inline: 0;
+}
+.adoption-history-trigger strong {
+  font-size: var(--text-md);
+}
+@media (max-width: 640px) {
+  .adoption-history li {
+    align-items: start;
+    flex-direction: column;
+  }
+}
+.adoption-workspace .back-link {
+  display: inline-block;
+  margin-bottom: var(--space-3);
+}
+.adoption-form-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+.adoption-fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-3) 0;
+}
+.adoption-check {
+  display: inline-block;
+  margin-right: var(--space-3);
+}
+.adoption-batch-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.adoption-batch-head h2 {
+  min-width: 0;
+  font-size: var(--text-xl);
+}
+.adoption-batch-head .badge {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.adoption-counts {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin: var(--space-3) 0;
+}
+.adoption-count {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+}
+.adoption-count-value {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+.adoption-reasons {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.2rem;
+}
+.adoption-subhead {
+  font-size: 1rem;
+  margin: var(--space-3) 0 var(--space-1);
+}
+.adoption-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.adoption-hint {
+  color: var(--gray-600);
+  font-size: 0.85rem;
+}
+.adoption-pending {
+  border-top: 1px solid var(--line);
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+}
+.adoption-metrics {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  margin: var(--space-3) 0;
+}
+.adoption-metric {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+}
+.adoption-metric dt {
+  font-size: 0.85rem;
+  color: var(--gray-600);
+}
+.adoption-metric dd {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin: 0;
+}
+.adoption-metric small {
+  color: var(--gray-600);
+}
+.adoption-history {
+  list-style: none;
+  padding: 0;
+}
+.adoption-history-current {
+  font-weight: 600;
+}

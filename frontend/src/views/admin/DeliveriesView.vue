@@ -334,70 +334,21 @@
       </details>
     </section>
 
-    <section v-if="!accessLost && !projectUnavailable && view === 'records'" class="card mb-6">
-      <div class="section-heading">
-        <div>
-          <h2>交付记录</h2>
-          <p v-if="metrics">
-            共 {{ metrics.package_count }} 包
-            <template v-if="Number.isFinite(metrics.awaiting_receipt_packages)">
-              · 待回执 {{ metrics.awaiting_receipt_packages }} 包
-            </template>
-            · 已停用 {{ metrics.withdrawn_packages }} 包
-          </p>
-        </div>
-        <button class="btn btn-secondary btn-sm" :disabled="busy || loading" @click="load">
-          刷新
-        </button>
-      </div>
-      <p v-if="batchReportContext" class="text-sm text-muted">显示此项目的全部交付包。</p>
-      <p v-if="loading" role="status">正在加载交付记录…</p>
-      <div v-else-if="loadError" class="text-muted">
-        交付记录暂时无法读取，请用上方「重新加载」重试。
-      </div>
-      <div v-else-if="!items.length" class="empty-state">
-        <div class="empty-state-text">还没有交付包</div>
-        <p>检查通过并经人工确认后，首个包会显示在这里。</p>
-        <button class="btn btn-secondary mt-3" @click="navigate({ view: 'prepare' })">
-          准备首个交付包
-        </button>
-      </div>
-      <AppPagination
-        :page="listPage"
-        :total-pages="listPages"
-        :busy="busy || loading"
-        label="交付记录分页"
-        @change="changePage"
-      />
-      <ul class="delivery-records">
-        <li v-for="item in items" :key="item.id">
-          <div>
-            <strong>{{ item.recipient }} · 第 {{ item.version }} 版</strong>
-            <p>
-              {{ purposeLabel(item.purpose) }} · 正文 {{ item.reconciliation.payload_count }} 条
-            </p>
-            <span
-              class="text-sm"
-              :class="
-                item.withdrawn ||
-                item.rights_blocked ||
-                item.workflow_state === 'pending_resolution'
-                  ? 'text-danger'
-                  : 'text-muted'
-              "
-            >
-              {{ receiptLabel(item) }}
-              <template v-if="!item.withdrawn && item.rights_blocked">
-                · 当前用途许可阻断下载</template
-              >
-            </span>
-          </div>
-          <button class="btn btn-secondary" :disabled="busy" @click="openDelivery(item)">
-            查看交付详情
-          </button>
-        </li>
-      </ul>
-    </section>
+    <DeliveryRecordsPanel
+      v-if="!accessLost && !projectUnavailable && view === 'records'"
+      :metrics="metrics"
+      :batch-report-context="batchReportContext"
+      :loading="loading"
+      :busy="busy"
+      :load-error="loadError"
+      :items="items"
+      :list-page="listPage"
+      :list-pages="listPages"
+      @retry="load"
+      @prepare="navigate({ view: 'prepare' })"
+      @page="changePage"
+      @open="openDelivery"
+    />
 
     <section v-if="!accessLost && !projectUnavailable && view === 'detail'" class="mb-6">
       <nav class="delivery-tabs" aria-label="交付详情">
@@ -535,116 +486,26 @@
       </p>
     </section>
 
-    <section
+    <DeliveryEventEditor
       v-if="!accessLost && !projectUnavailable && view === 'detail' && selected"
       ref="eventEditor"
-      class="card mb-6 delivery-event-editor"
-    >
-      <h2 tabindex="-1">登记：{{ selected.recipient }} 第 {{ selected.version }} 版</h2>
-      <p class="text-muted">
-        保存会追加一条凭据。冲突或失败需由上游修复，再使用新交接清单关联前包重发。
-      </p>
-      <form class="settings-form" @submit.prevent="saveEvent">
-        <fieldset class="delivery-form-section" :disabled="busy">
-          <legend>1 · 记录发生了什么</legend>
-          <label class="form-group"
-            ><span class="form-label">动作</span
-            ><select v-model="eventForm.kind" class="form-control">
-              <option v-for="(label, value) in eventLabels" :key="value" :value="value">
-                {{ label }}
-              </option>
-            </select></label
-          >
-          <template v-if="eventForm.kind === 'receipt'">
-            <p class="text-sm text-muted">
-              对方自动回传尚未接入。这条记录是人工回执，写在当前包标识和第
-              {{ selected.version }} 版上。失败会记成整体失败，不会改成尚未回执。
-            </p>
-            <label class="form-group"
-              ><span class="form-label">消费方导入结果</span
-              ><select v-model="eventForm.status" class="form-control">
-                <option value="success">全部成功</option>
-                <option value="partial_conflict">部分冲突</option>
-                <option value="failed_rolled_back">整体失败并回滚</option>
-              </select></label
-            >
-            <label class="form-group"
-              ><span class="form-label">影响条数（冲突时填冲突条数）</span
-              ><input
-                v-model.number="eventForm.affected"
-                type="number"
-                min="0"
-                :max="selected.reconciliation.payload_count"
-                class="form-control"
-                required
-            /></label>
-          </template>
-        </fieldset>
-        <fieldset class="delivery-form-section" :disabled="busy">
-          <legend>2 · 填写说明与核查者</legend>
-          <label class="form-group"
-            ><span class="form-label">原因／处置说明</span
-            ><textarea
-              v-model.trim="eventForm.reason"
-              class="form-control"
-              required
-              maxlength="1000"
-            />
-          </label>
-          <label class="form-group"
-            ><span class="form-label">人工核查者</span
-            ><input v-model.trim="eventForm.reviewer" class="form-control" required maxlength="200"
-          /></label>
-          <label class="form-group"
-            ><span class="form-label">修复／通知责任人</span
-            ><input v-model.trim="eventForm.responsible" class="form-control" maxlength="200"
-          /></label>
-        </fieldset>
-        <fieldset class="delivery-form-section" :disabled="busy">
-          <legend>3 · 补充处置关联与凭据</legend>
-          <p class="text-sm text-muted">
-            正常导入可不填写退回位置。涉及停用、失败或上游修复时，请按实际处置留下凭据。
-          </p>
-          <label class="form-group"
-            ><span class="form-label">退回环节</span
-            ><select v-model="eventForm.target" class="form-control">
-              <option value="">不涉及上游退回</option>
-              <option v-for="target in returnTargets" :key="target" :value="target">
-                {{ deliveryStageLabel(target) }}
-              </option>
-            </select></label
-          >
-          <label class="form-group"
-            ><span class="form-label">处置凭据（停用时填升级记录；失败时填回滚凭据）</span
-            ><input v-model.trim="eventForm.evidence" class="form-control" maxlength="1000"
-          /></label>
-          <label v-if="eventForm.kind === 'resolution'" class="form-group"
-            ><span class="form-label">已处置的待办</span
-            ><select v-model="eventForm.resolves" class="form-control" required>
-              <option value="">请选择待办记录</option>
-              <option
-                v-for="event in selected.pending_action_events || []"
-                :key="event.id"
-                :value="event.id"
-              >
-                {{ eventLabel(event.kind) }} · {{ event.created }} · {{ event.payload.reason }}
-              </option>
-            </select></label
-          >
-        </fieldset>
-        <div class="delivery-form-actions">
-          <AppButton type="submit" variant="primary" :loading="busy" loading-label="正在保存…"
-            >保存凭据</AppButton
-          ><AppButton
-            type="button"
-            :disabled="busy"
-            @click="navigate({ ...route.query, editor: route.query.editor ? undefined : 'closed' })"
-          >
-            取消
-          </AppButton>
-        </div>
-      </form>
-    </section>
+      :selected="selected"
+      :busy="busy"
+      :event-labels="eventLabels"
+      :return-targets="returnTargets"
+      :stage-label="deliveryStageLabel"
+      v-model:kind="eventForm.kind"
+      v-model:status="eventForm.status"
+      v-model:affected="eventForm.affected"
+      v-model:reason="eventForm.reason"
+      v-model:reviewer="eventForm.reviewer"
+      v-model:responsible="eventForm.responsible"
+      v-model:target="eventForm.target"
+      v-model:evidence="eventForm.evidence"
+      v-model:resolves="eventForm.resolves"
+      @save="saveEvent"
+      @cancel="navigate({ ...route.query, editor: route.query.editor ? undefined : 'closed' })"
+    />
 
     <section v-if="!accessLost && !projectUnavailable && view === 'impacts'" class="card">
       <h2>来源权利变更后的影响</h2>
@@ -689,6 +550,8 @@
 </template>
 
 <script setup>
+import DeliveryRecordsPanel from '@/components/admin/delivery/DeliveryRecordsPanel.vue'
+import DeliveryEventEditor from '@/components/admin/delivery/DeliveryEventEditor.vue'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useProtectedPageScope } from '@/composables/useProtectedPageScope'
 import WorkspaceLeaveGuard from '@/components/admin/project/WorkspaceLeaveGuard.vue'
@@ -1171,8 +1034,7 @@ function selectEvent(item) {
 }
 function focusEventEditor() {
   nextTick(() => {
-    eventEditor.value?.scrollIntoView({ block: 'start' })
-    eventEditor.value?.querySelector('h2')?.focus({ preventScroll: true })
+    eventEditor.value?.focusEditor()
   })
 }
 async function saveEvent() {
@@ -1213,141 +1075,4 @@ watch(
 watch([previous, changeReason, legacyMode], invalidatePreview)
 </script>
 
-<style scoped>
-.delivery-workspace {
-  min-width: 0;
-}
-.delivery-workspace h1 {
-  font-size: var(--text-2xl);
-}
-.delivery-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-}
-.delivery-tabs button {
-  min-height: 44px;
-  padding: var(--space-2) var(--space-3);
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--gray-600);
-  font: inherit;
-  cursor: pointer;
-}
-.delivery-tabs [aria-current='page'] {
-  border-bottom-color: var(--primary);
-  color: var(--primary);
-  font-weight: 600;
-}
-.delivery-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-  color: var(--gray-600);
-  font-size: var(--text-sm);
-}
-.delivery-steps [aria-current='step'] {
-  color: var(--primary);
-  font-weight: 600;
-}
-.delivery-counts {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin: var(--space-4) 0;
-  gap: var(--space-3);
-}
-.delivery-saved-scope {
-  margin-top: var(--space-2);
-}
-.delivery-counts div {
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-.delivery-counts dt {
-  color: var(--gray-600);
-  font-size: var(--text-sm);
-}
-.delivery-counts dd {
-  margin: var(--space-1) 0 0;
-  font-size: var(--text-xl);
-  font-weight: 600;
-}
-.delivery-records {
-  list-style: none;
-  padding: 0;
-}
-.delivery-records li {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-3);
-  align-items: center;
-  padding: var(--space-4) 0;
-  border-bottom: 1px solid var(--line);
-}
-.delivery-records li > div {
-  min-width: 0;
-}
-.delivery-records p {
-  color: var(--gray-600);
-  font-size: var(--text-sm);
-  margin: var(--space-1) 0;
-}
-.delivery-history article {
-  padding: var(--space-3) 0;
-  border-top: 1px solid var(--line);
-}
-.delivery-confirmation {
-  margin-top: var(--space-3);
-  padding: var(--space-3);
-  background: var(--primary-light);
-  border-radius: var(--radius);
-}
-.delivery-reviewer {
-  max-width: 28rem;
-}
-.delivery-form-section {
-  min-width: 0;
-  margin: 0 0 var(--space-4);
-  padding: var(--space-3) 0 0;
-  border: 0;
-  border-top: 1px solid var(--line);
-}
-.delivery-form-section legend {
-  padding-right: var(--space-3);
-  font-weight: 600;
-  font-size: var(--text-md);
-}
-.delivery-form-section .form-group:last-child {
-  margin-bottom: 0;
-}
-.delivery-form-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-.delivery-event-editor {
-  scroll-margin-top: var(--space-4);
-}
-.delivery-digest,
-.delivery-filename,
-article,
-.delivery-records li {
-  overflow-wrap: anywhere;
-}
-@media (max-width: 640px) {
-  .delivery-counts {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .delivery-records li {
-    align-items: start;
-    flex-direction: column;
-  }
-  .delivery-records .btn {
-    min-height: 44px;
-  }
-}
-</style>
+<style src="../../styles/delivery-workspace.css"></style>

@@ -131,6 +131,14 @@ const { chromium } = require('playwright')
         isDeliveryDetail(url, 'events') && url.searchParams.get('package') === generatedPackage
     )
     await page.getByRole('button', { name: '登记回执或处置', exact: true }).click()
+    await page.getByRole('heading', { name: /^登记：/ }).waitFor()
+    assert.equal(
+      await page
+        .getByRole('heading', { name: /^登记：/ })
+        .evaluate((element) => element === document.activeElement),
+      true,
+      'opening the extracted receipt panel focuses its heading'
+    )
     await page.getByLabel('原因／处置说明', { exact: true }).fill('unsaved synthetic receipt')
     await page.getByRole('button', { name: '登记回执或处置', exact: true }).click()
     assert.equal(
@@ -271,6 +279,9 @@ const { chromium } = require('playwright')
     )
     await page.screenshot({ path: path.join(out, 'adoption-created.png'), fullPage: true })
     await page.setViewportSize({ width: 390, height: 844 })
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    )
     await page.evaluate(() => window.scrollTo(0, 0))
     assert.ok(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),

@@ -568,7 +568,10 @@ test('列表加载失败写入 loadError，不冒充空记录', async () => {
   // The empty state must stay behind the loadError branch, otherwise an unknown
   // result is announced as "no packages yet".
   assert.match(
-    source,
+    readFileSync(
+      new URL('../src/components/admin/delivery/DeliveryRecordsPanel.vue', import.meta.url),
+      'utf8'
+    ),
     /v-else-if="loadError"[\s\S]*?v-else-if="!items\.length" class="empty-state"/
   )
 })

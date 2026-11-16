@@ -122,7 +122,14 @@ test('事件类型与 Go 侧同源，且「权利变过」与「重评过」不�
 })
 
 test('重评只追加记录：界面必须说清不改写确认时的数字', () => {
-  const view = read('../src/views/admin/AdoptionView.vue')
+  const view = [
+    '../src/views/admin/AdoptionView.vue',
+    '../src/components/admin/adoption/AdoptionBatchDetails.vue',
+    '../src/components/admin/adoption/AdoptionSummaryPanel.vue',
+    '../src/components/admin/adoption/AdoptionExceptionEditor.vue'
+  ]
+    .map(read)
+    .join('\n')
   assert.match(view, /按当前数据重新评估/)
   assert.match(view, /重评只会追加一条记录，\s*不会改写确认时的数字/)
   assert.match(view, /已确认的数字没有改/)
@@ -134,7 +141,14 @@ test('重评只追加记录：界面必须说清不改写确认时的数字', ()
 })
 
 test('编选页把「不得静默遗漏」写进界面，而不是只留在接口里', () => {
-  const view = read('../src/views/admin/AdoptionView.vue')
+  const view = [
+    '../src/views/admin/AdoptionView.vue',
+    '../src/components/admin/adoption/AdoptionBatchDetails.vue',
+    '../src/components/admin/adoption/AdoptionSummaryPanel.vue',
+    '../src/components/admin/adoption/AdoptionExceptionEditor.vue'
+  ]
+    .map(read)
+    .join('\n')
   // 三个数各自可见，且总数对不上时不允许照抄。
   assert.match(view, /进入本批/)
   assert.match(view, /已定不进入/)

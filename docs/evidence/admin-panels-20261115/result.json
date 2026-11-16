@@ -1,0 +1,13 @@
+{
+  "data": "generated synthetic delivery integration fixture only",
+  "checks": [
+    "adoption creation and named form models",
+    "confirmed exception continuation and save",
+    "native preflight and generation",
+    "receipt draft survives reopen and navigation guards",
+    "mobile 320px and 390px without horizontal overflow",
+    "source permission popup and return"
+  ],
+  "result": "passed",
+  "browser": "local Chrome via Playwright"
+}

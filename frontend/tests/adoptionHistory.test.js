@@ -535,7 +535,10 @@ test('last/empty page metadata is applied from the server rather than guessed lo
   assert.equal(state.historyTotalItems.value, 0)
   assert.deepEqual(state.batchEvents.value, { events: [], stale: false })
   assert.match(
-    view,
+    readFileSync(
+      new URL('../src/components/admin/adoption/AdoptionHistoryPanel.vue', import.meta.url),
+      'utf8'
+    ),
     /<AppPagination[^>]*:page="historyPage"[^>]*:total-pages="historyTotalPages"[^>]*label="编选历史分页"/
   )
   const pagination = readFileSync(
