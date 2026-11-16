@@ -43,7 +43,7 @@ func deliveryProblem(status int, code, message, next string) *router.ApiError {
 	return err
 }
 
-func (s *importService) adoptionDeliveryHandoff(app core.App, projectID string, input adoptionDeliveryInput) (deliveryHandoff, error) {
+func (s *deliveryService) adoptionDeliveryHandoff(app core.App, projectID string, input adoptionDeliveryInput) (deliveryHandoff, error) {
 	var h deliveryHandoff
 	batch, err := app.FindRecordById("adoption_batches", input.BatchID)
 	if err != nil || batch.GetString("project") != projectID {
@@ -56,7 +56,7 @@ func (s *importService) adoptionDeliveryHandoff(app core.App, projectID string, 
 	if err != nil {
 		return h, err
 	}
-	computation, err := s.computeAdoption(app, projectID, batch.GetString("purpose"), batch.Id, rule)
+	computation, err := computeAdoption(app, projectID, batch.GetString("purpose"), batch.Id, rule)
 	if err != nil {
 		return h, err
 	}
@@ -80,7 +80,7 @@ func (s *importService) adoptionDeliveryHandoff(app core.App, projectID string, 
 	// The digest covers the ENTIRE project. Only afterwards may the adapter
 	// narrow declarations to a single complete imported bundle, including its
 	// excluded and pending rows. A selected-only manifest is not an authority.
-	rows, err := s.adoptionRows(app, projectID, batch.GetString("purpose"))
+	rows, err := adoptionRows(app, projectID, batch.GetString("purpose"))
 	if err != nil {
 		return h, err
 	}
@@ -123,7 +123,7 @@ func (s *importService) adoptionDeliveryHandoff(app core.App, projectID string, 
 	return h, nil
 }
 
-func (s *importService) adoptionDeliveryPreflight(c *core.RequestEvent) error {
+func (s *deliveryService) adoptionDeliveryPreflight(c *core.RequestEvent) error {
 	if os.Getenv("FANGJI_NATIVE_DELIVERY_ENABLED") == "0" {
 		return apis.NewApiError(http.StatusServiceUnavailable, "编选直接出包暂未开放，请使用原有交接清单流程。", nil)
 	}
@@ -164,7 +164,7 @@ func (s *importService) adoptionDeliveryPreflight(c *core.RequestEvent) error {
 
 var deliveryRequestUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
 
-func (s *importService) createAdoptionDelivery(c *core.RequestEvent) error {
+func (s *deliveryService) createAdoptionDelivery(c *core.RequestEvent) error {
 	if os.Getenv("FANGJI_NATIVE_DELIVERY_ENABLED") == "0" {
 		return apis.NewApiError(http.StatusServiceUnavailable, "编选直接出包暂未开放，请使用原有交接清单流程。", nil)
 	}
@@ -300,7 +300,7 @@ var deliveryPreparationSlots = struct {
 	projects map[string]int
 }{projects: map[string]int{}}
 
-func (s *importService) limitDeliveryPreparation(next func(*core.RequestEvent) error) func(*core.RequestEvent) error {
+func (s *deliveryService) limitDeliveryPreparation(next func(*core.RequestEvent) error) func(*core.RequestEvent) error {
 	return func(c *core.RequestEvent) error {
 		projectID := c.Request.PathValue("projectId")
 		if _, err := s.deliveryManager(c, projectID); err != nil {

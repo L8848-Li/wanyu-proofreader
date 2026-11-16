@@ -17,6 +17,15 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 )
 
+type deliveryService struct {
+	app      core.App
+	hooksDir string
+}
+
+func newDeliveryService(app core.App, hooksDir string) *deliveryService {
+	return &deliveryService{app: app, hooksDir: hooksDir}
+}
+
 // deliveryHandoff retains the legacy manual handoff boundary. Native adoption
 // derives this internal input from the confirmed batch instead of trusting client entries. All rows of ONE completed inbound batch must be
 // accounted for. Counts and content are always read from the server.
@@ -43,8 +52,7 @@ type deliveryHandoff struct {
 	IncludeOutside bool                     `json:"include_outside"`
 }
 
-func (s *importService) registerDeliveries(hooksDir string) {
-	s.deliveryHooksDir = hooksDir
+func (s *deliveryService) registerDeliveries() {
 	// Non-cascading relations are not restrictive foreign keys. Guard parent
 	// deletion at the model layer, including the owner route and superuser API,
 	// before PocketBase can clear relations or delete other project children.
@@ -95,11 +103,11 @@ func (s *importService) registerDeliveries(hooksDir string) {
 	})
 }
 
-func (s *importService) deliveryManager(c *core.RequestEvent, projectID string) (*core.Record, error) {
+func (s *deliveryService) deliveryManager(c *core.RequestEvent, projectID string) (*core.Record, error) {
 	if c.Auth != nil && c.Auth.GetBool("must_change_password") {
 		return nil, apis.NewForbiddenError("首次登录请先修改密码。", nil)
 	}
-	auth, _, err := s.requireProjectManager(c, projectID)
+	auth, _, err := requireProjectManagerInApp(s.app, c, projectID)
 	return auth, err
 }
 
@@ -151,7 +159,7 @@ func deliverySourceRightsProblem(app recordReader, source *core.Record, purpose 
 	return problem
 }
 
-func (s *importService) readDeliverySnapshot(app core.App, projectID, operator string, h deliveryHandoff) (reviewbundle.DeliverySnapshot, error) {
+func (s *deliveryService) readDeliverySnapshot(app core.App, projectID, operator string, h deliveryHandoff) (reviewbundle.DeliverySnapshot, error) {
 	snap := reviewbundle.DeliverySnapshot{}
 	if h.IncludeOutside {
 		return snap, apis.NewForbiddenError("范围外正文交付尚未开放；显式请求也不能绕过权利和用途编选规则。", nil)
@@ -275,7 +283,7 @@ func (s *importService) readDeliverySnapshot(app core.App, projectID, operator s
 				return snap, fmt.Errorf("采用范围包含未完成校对或暂缓外发条目，须退回用途编选环节重评。")
 			}
 			if businessComplete == nil {
-				businessComplete, err = newDeliveryCompletion(app, s.deliveryHooksDir)
+				businessComplete, err = newDeliveryCompletion(app, s.hooksDir)
 				if err != nil {
 					return snap, fmt.Errorf("无法核查来源复核完成状态，禁止出包：%w", err)
 				}
@@ -350,7 +358,7 @@ func arbitrationKey(pageID string, round int) string {
 	return pageID + "\x00" + strconv.Itoa(round)
 }
 
-func (s *importService) deliveryPreflight(c *core.RequestEvent) error {
+func (s *deliveryService) deliveryPreflight(c *core.RequestEvent) error {
 	_, err := s.deliveryManager(c, c.Request.PathValue("projectId"))
 	if err != nil {
 		return err
@@ -383,7 +391,7 @@ func (s *importService) deliveryPreflight(c *core.RequestEvent) error {
 	return c.JSON(200, map[string]any{"reconciliation": r, "preview_sha256": reviewbundle.SnapshotDigest(snap), "release_decision": "human_required", "can_generate": buildErr == nil, "dependency_gaps": []string{"当前使用旧人工交接清单兼容模式；建议改用已确认编选批次", "工作 CSV 用于查看校对记录，不能替代包含范围声明与核对信息的正式交付包", "接收方试导入与双方交接确认尚待完成"}})
 }
 
-func (s *importService) createDelivery(c *core.RequestEvent) error {
+func (s *deliveryService) createDelivery(c *core.RequestEvent) error {
 	_, err := s.deliveryManager(c, c.Request.PathValue("projectId"))
 	if err != nil {
 		return err
@@ -511,7 +519,7 @@ func deliveryEvents(app recordReader, id string) ([]*core.Record, error) {
 	return app.FindRecordsByFilter("release_events", "delivery = {:id}", "sequence", 0, 0, dbx.Params{"id": id})
 }
 
-func (s *importService) listDeliveries(c *core.RequestEvent) error {
+func (s *deliveryService) listDeliveries(c *core.RequestEvent) error {
 	projectID := c.Request.PathValue("projectId")
 	if _, err := s.deliveryManager(c, projectID); err != nil {
 		return err
@@ -565,7 +573,7 @@ func (s *importService) listDeliveries(c *core.RequestEvent) error {
 	return c.JSON(200, map[string]any{"items": items, "page": page, "perPage": perPage, "totalItems": total, "totalPages": totalPages, "metrics": map[string]any{"scope": "generated_packages_only", "reconciliation_scope": "immutable_package_snapshot", "rights_scope": "current_source_permissions", "package_count": total, "receipt_states": states, "awaiting_receipt_packages": awaitingReceipts, "withdrawn_packages": withdrawn, "rights_impacted_packages": rightsImpacted, "pending_consumer_notices": pendingNotices, "reconciliation_states": reconciliationStates}, "dependency_gaps": []string{"接收方试导入与双方交接确认", "未保存失败检查次数与全生产线周吞吐"}})
 }
 
-func (s *importService) loadManagedDelivery(c *core.RequestEvent) (*core.Record, error) {
+func (s *deliveryService) loadManagedDelivery(c *core.RequestEvent) (*core.Record, error) {
 	r, err := s.app.FindRecordById("release_deliveries", c.Request.PathValue("deliveryId"))
 	if err != nil {
 		return nil, apis.NewNotFoundError("交付包不存在。", nil)
@@ -574,7 +582,7 @@ func (s *importService) loadManagedDelivery(c *core.RequestEvent) (*core.Record,
 	return r, err
 }
 
-func (s *importService) downloadDelivery(c *core.RequestEvent) error {
+func (s *deliveryService) downloadDelivery(c *core.RequestEvent) error {
 	r, err := s.loadManagedDelivery(c)
 	if err != nil {
 		return err
@@ -594,7 +602,7 @@ func (s *importService) downloadDelivery(c *core.RequestEvent) error {
 			return apis.NewForbiddenError("该历史包已追加停用记录，请重发新包。", nil)
 		}
 	}
-	reader, closeFn, err := s.openRecordFile(r, "archive")
+	reader, closeFn, err := openRecordFile(s.app, r, "archive")
 	if err != nil {
 		return err
 	}
@@ -626,7 +634,7 @@ type deliveryEventInput struct {
 	Channel     string `json:"channel,omitempty"`
 }
 
-func (s *importService) appendDeliveryEvent(c *core.RequestEvent) error {
+func (s *deliveryService) appendDeliveryEvent(c *core.RequestEvent) error {
 	r, err := s.loadManagedDelivery(c)
 	if err != nil {
 		return err
@@ -747,7 +755,7 @@ func (s *importService) appendDeliveryEvent(c *core.RequestEvent) error {
 	return c.JSON(201, deliveryView(r, events))
 }
 
-func (s *importService) deliveryImpacts(c *core.RequestEvent) error {
+func (s *deliveryService) deliveryImpacts(c *core.RequestEvent) error {
 	projectID := c.Request.PathValue("projectId")
 	if _, err := s.deliveryManager(c, projectID); err != nil {
 		return err

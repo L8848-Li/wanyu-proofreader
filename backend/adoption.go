@@ -766,7 +766,7 @@ func (s *importService) previewAdoptionBatchInApp(app core.App, c *core.RequestE
 	if err != nil {
 		return nil, apis.NewBadRequestError(err.Error(), nil)
 	}
-	computation, err := s.computeAdoption(app, record.GetString("project"), record.GetString("purpose"), record.Id, rule)
+	computation, err := computeAdoption(app, record.GetString("project"), record.GetString("purpose"), record.Id, rule)
 	if err != nil {
 		return nil, apis.NewBadRequestError("计算编选范围失败。", err)
 	}
@@ -820,7 +820,7 @@ func (s *importService) confirmAdoptionBatchInApp(app core.App, c *core.RequestE
 	if err != nil {
 		return nil, apis.NewBadRequestError(err.Error(), nil)
 	}
-	computation, err := s.computeAdoption(app, record.GetString("project"), record.GetString("purpose"), record.Id, rule)
+	computation, err := computeAdoption(app, record.GetString("project"), record.GetString("purpose"), record.Id, rule)
 	if err != nil {
 		return nil, apis.NewBadRequestError("计算编选范围失败。", err)
 	}
@@ -869,7 +869,7 @@ func (s *importService) listAdoptionExceptions(c *core.RequestEvent) error {
 	if err != nil {
 		return apis.NewBadRequestError(err.Error(), nil)
 	}
-	computation, err := s.computeAdoption(s.app, record.GetString("project"), record.GetString("purpose"), record.Id, rule)
+	computation, err := computeAdoption(s.app, record.GetString("project"), record.GetString("purpose"), record.Id, rule)
 	if err != nil {
 		return apis.NewBadRequestError("计算编选范围失败。", err)
 	}
@@ -912,7 +912,7 @@ func (s *importService) getAdoptionExceptionByPage(c *core.RequestEvent) error {
 	if err != nil {
 		return err
 	}
-	computation, err := s.computeAdoption(s.app, record.GetString("project"), record.GetString("purpose"), record.Id, rule)
+	computation, err := computeAdoption(s.app, record.GetString("project"), record.GetString("purpose"), record.Id, rule)
 	if err != nil {
 		return err
 	}
@@ -989,7 +989,7 @@ func (s *importService) decideAdoptionExceptionInApp(app core.App, c *core.Reque
 	if err != nil {
 		return nil, apis.NewBadRequestError(err.Error(), nil)
 	}
-	rows, err := s.adoptionRows(app, project.Id, record.GetString("purpose"))
+	rows, err := adoptionRows(app, project.Id, record.GetString("purpose"))
 	if err != nil {
 		return nil, apis.NewBadRequestError("计算编选范围失败。", err)
 	}
@@ -1076,7 +1076,7 @@ func (s *importService) exportAdoptionManifest(c *core.RequestEvent) error {
 	if err != nil {
 		return apis.NewBadRequestError(err.Error(), nil)
 	}
-	computation, err := s.computeAdoption(s.app, project.Id, record.GetString("purpose"), record.Id, rule)
+	computation, err := computeAdoption(s.app, project.Id, record.GetString("purpose"), record.Id, rule)
 	if err != nil {
 		return apis.NewBadRequestError("计算编选范围失败。", err)
 	}
@@ -1143,7 +1143,7 @@ func adoptionEntryIncluded(entry adoptionEntry, include string) bool {
 	}
 }
 
-func (s *importService) adoptionExceptions(app recordReader, batchID string) (map[string]adoptionExceptionRecord, error) {
+func adoptionExceptions(app recordReader, batchID string) (map[string]adoptionExceptionRecord, error) {
 	records, err := app.FindRecordsByFilter(
 		"adoption_exceptions", "batch = {:batch}", "", 0, 0,
 		dbx.Params{"batch": batchID},
@@ -1189,7 +1189,7 @@ LEFT JOIN source_usages su
 WHERE p.project = {:project}
 ORDER BY p.page_number, p.id`
 
-func (s *importService) adoptionRows(app recordReader, projectID, purpose string) ([]adoptionRow, error) {
+func adoptionRows(app recordReader, projectID, purpose string) ([]adoptionRow, error) {
 	rows := []adoptionRow{}
 	if err := app.DB().NewQuery(adoptionRowsSQL).
 		Bind(dbx.Params{"project": projectID, "purpose": purpose}).
@@ -1199,12 +1199,12 @@ func (s *importService) adoptionRows(app recordReader, projectID, purpose string
 	return rows, nil
 }
 
-func (s *importService) computeAdoption(app recordReader, projectID, purpose, batchID string, rule adoptionRule) (adoptionComputation, error) {
-	rows, err := s.adoptionRows(app, projectID, purpose)
+func computeAdoption(app recordReader, projectID, purpose, batchID string, rule adoptionRule) (adoptionComputation, error) {
+	rows, err := adoptionRows(app, projectID, purpose)
 	if err != nil {
 		return adoptionComputation{}, err
 	}
-	exceptions, err := s.adoptionExceptions(app, batchID)
+	exceptions, err := adoptionExceptions(app, batchID)
 	if err != nil {
 		return adoptionComputation{}, err
 	}

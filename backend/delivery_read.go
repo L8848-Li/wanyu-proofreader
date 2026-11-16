@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-func (s *importService) getDelivery(c *core.RequestEvent) error {
+func (s *deliveryService) getDelivery(c *core.RequestEvent) error {
 	record, err := s.loadManagedDelivery(c)
 	if err != nil {
 		return err
@@ -42,7 +42,7 @@ func (s *importService) getDelivery(c *core.RequestEvent) error {
 	return c.JSON(http.StatusOK, view)
 }
 
-func (s *importService) listDeliveryEvents(c *core.RequestEvent) error {
+func (s *deliveryService) listDeliveryEvents(c *core.RequestEvent) error {
 	record, err := s.loadManagedDelivery(c)
 	if err != nil {
 		return err
@@ -82,7 +82,7 @@ func (s *importService) listDeliveryEvents(c *core.RequestEvent) error {
 // Global counters use small cached reconciliation results and event metadata.
 // Legacy archives remain byte-for-byte unchanged; missing caches are read from
 // their snapshot, never silently rewritten as a migration side effect.
-func (s *importService) listPagedDeliveries(c *core.RequestEvent) error {
+func (s *deliveryService) listPagedDeliveries(c *core.RequestEvent) error {
 	projectID := c.Request.PathValue("projectId")
 	page := pageArgument(c.Request.URL.Query().Get("page"), 1, 1000000)
 	perPage := pageArgument(c.Request.URL.Query().Get("perPage"), 25, 100)

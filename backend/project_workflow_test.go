@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -74,9 +73,8 @@ func TestProjectWorkflowUsesCurrentEvidenceAndAuthorizedStageIsolation(t *testin
 	if err := app.SaveNoValidate(resolved); err != nil {
 		t.Fatal(err)
 	}
-	service := newImportService(app.(*pocketbase.PocketBase))
-	defer service.imageCancel()
-	service.deliveryHooksDir, _ = filepath.Abs("pb_hooks")
+	service := newProjectQueryService(app, "pb_hooks")
+	service.hooksDir, _ = filepath.Abs("pb_hooks")
 	service.registerProjectWorkflow()
 	router, err := apis.NewRouter(app)
 	if err != nil {
@@ -131,7 +129,7 @@ func TestProjectWorkflowUsesCurrentEvidenceAndAuthorizedStageIsolation(t *testin
 	if *metric(result.Stages[5], "awaiting_receipt") != 0 || *metric(result.Stages[5], "successful_receipt") != 0 || *metric(result.Stages[5], "returned_resolved") != 1 {
 		t.Fatal("resolved return became successful acceptance or awaiting receipt")
 	}
-	service.deliveryHooksDir = t.TempDir()
+	service.hooksDir = t.TempDir()
 	unknown := get(token, 200)
 	if unknown.Stages[2].State != "unknown" || metric(unknown.Stages[2], "source_review") != nil || unknown.Stages[0].State == "unknown" || unknown.Stages[5].State == "unknown" {
 		t.Fatal("source read failure became zero or disabled unrelated stages")

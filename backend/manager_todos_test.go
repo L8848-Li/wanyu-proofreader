@@ -98,7 +98,7 @@ func TestManagerTodoProblemsExcludeClosedAndUnreportedIssues(t *testing.T) {
 	active := addIssue("in_progress", true)
 	addIssue("resolved", true)
 	addIssue("new", false)
-	service := &importService{}
+	service := &projectQueryService{}
 	check := func(want int) {
 		row := newManagerTodo(todoProject{ID: page.GetString("project")}, "source_problems")
 		if err := service.fillManagerTodo(app, &row, time.Now(), nil, nil); err != nil {

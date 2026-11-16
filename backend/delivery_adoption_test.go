@@ -197,7 +197,7 @@ func TestLegacyDeliveryRechecksQueuedActorInTransaction(t *testing.T) {
 			if err := app.Save(current); err != nil {
 				t.Fatal(err)
 			}
-			s := newImportService(app)
+			s := newDeliveryService(app, "pb_hooks")
 			app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 				e.Router.POST("/test-queued/{action}", func(c *core.RequestEvent) error {
 					// Model a request authenticated before the actor's state changed.
@@ -246,8 +246,8 @@ func TestDeliveryPagedReadsUseSmallSummariesAndLegacyFallback(t *testing.T) {
 	if _, err := saveDeliveryArchive(app, snap, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	s := newImportService(app)
-	s.registerDeliveries("pb_hooks")
+	s := newDeliveryService(app, "pb_hooks")
+	s.registerDeliveries()
 	router, err := apis.NewRouter(app)
 	if err != nil {
 		t.Fatal(err)

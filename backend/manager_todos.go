@@ -99,14 +99,14 @@ func (row *managerTodo) setWaiting(raw string, missing bool, now time.Time, note
 	row.WaitingNote = note
 }
 
-func (s *importService) registerManagerTodos() {
+func (s *projectQueryService) registerManagerTodos() {
 	s.app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/api/fangji/manager-todos", s.managerTodos).Bind(apis.RequireAuth("users"))
 		return e.Next()
 	})
 }
 
-func (s *importService) managerTodos(e *core.RequestEvent) error {
+func (s *projectQueryService) managerTodos(e *core.RequestEvent) error {
 	if e.Auth.GetBool("must_change_password") {
 		return apis.NewForbiddenError("请先修改初始密码。", nil)
 	}
@@ -141,7 +141,7 @@ func (s *importService) managerTodos(e *core.RequestEvent) error {
 		}
 		now := time.Now().UTC()
 		items := []managerTodo{}
-		sourceReview, sourceErr := newTodoSourceReview(app, s.deliveryHooksDir)
+		sourceReview, sourceErr := newTodoSourceReview(app, s.hooksDir)
 		for _, project := range projects {
 			if selected != "" && selected != project.ID {
 				continue
@@ -216,7 +216,7 @@ func (s *importService) managerTodos(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, response)
 }
 
-func (s *importService) fillManagerTodo(app recordReader, row *managerTodo, now time.Time, review func([]*core.Record) (int, error), reviewErr error) error {
+func (s *projectQueryService) fillManagerTodo(app recordReader, row *managerTodo, now time.Time, review func([]*core.Record) (int, error), reviewErr error) error {
 	project := row.Project.ID
 	params := dbx.Params{"project": project}
 	switch row.Stage {
@@ -299,7 +299,7 @@ func (s *importService) fillManagerTodo(app recordReader, row *managerTodo, now 
 			if err != nil {
 				return err
 			}
-			current, err := s.computeAdoption(app, project, batch.GetString("purpose"), batch.Id, rule)
+			current, err := computeAdoption(app, project, batch.GetString("purpose"), batch.Id, rule)
 			if err != nil {
 				return err
 			}

@@ -84,13 +84,13 @@ func newWorkflowStage(key, title, role, note string) workflowStage {
 	return workflowStage{Key: key, Title: title, Role: role, State: "not_started", StateLabel: "尚无记录", Metrics: []workflowMetric{}, Blockers: []workflowBlocker{}, Actions: []workflowAction{}, Note: note}
 }
 
-func (s *importService) registerProjectWorkflow() {
+func (s *projectQueryService) registerProjectWorkflow() {
 	s.app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/api/fangji/projects/{projectId}/workflow", s.getProjectWorkflow).Bind(apis.RequireAuth("users"))
 		return e.Next()
 	})
 }
-func (s *importService) getProjectWorkflow(e *core.RequestEvent) error {
+func (s *projectQueryService) getProjectWorkflow(e *core.RequestEvent) error {
 	projectID := e.Request.PathValue("projectId")
 	if _, _, err := s.requireProjectManager(e, projectID); err != nil {
 		return err
@@ -152,7 +152,7 @@ func readWorkflowPages(app recordReader, project string, required int) (workflow
  FROM pages p LEFT JOIN submissions s ON s.page=p.id WHERE p.project={:project} AND p.status!='importing'`).Bind(dbx.Params{"project": project, "required": required}).One(&counts)
 	return counts, err
 }
-func (s *importService) buildProjectWorkflow(app recordReader, project *core.Record, now time.Time) projectWorkflow {
+func (s *projectQueryService) buildProjectWorkflow(app recordReader, project *core.Record, now time.Time) projectWorkflow {
 	id := project.Id
 	out := projectWorkflow{GeneratedAt: now.Format(time.RFC3339Nano), Project: todoProject{ID: id, Name: project.GetString("name")}, Summary: map[string]*int{"entries": nil, "proofreading_completed": nil, "arbitration": nil}, Stages: []workflowStage{}}
 	required := max(2, project.GetInt("required_proofreads"))
@@ -162,7 +162,7 @@ func (s *importService) buildProjectWorkflow(app recordReader, project *core.Rec
 		out.Summary["proofreading_completed"] = workflowNumber(pages.Approved)
 		out.Summary["arbitration"] = workflowNumber(pages.Arbitration)
 	}
-	review, reviewErr := newTodoSourceReview(app, s.deliveryHooksDir)
+	review, reviewErr := newTodoSourceReview(app, s.hooksDir)
 	todo := func(kind string) (managerTodo, error) {
 		row := newManagerTodo(out.Project, kind)
 		err := s.fillManagerTodo(app, &row, now, review, reviewErr)
@@ -199,7 +199,7 @@ func (s *importService) buildProjectWorkflow(app recordReader, project *core.Rec
 	}
 	return out
 }
-func (s *importService) workflowMaterials(app recordReader, id string, pages workflowPages, pageErr error) workflowStage {
+func (s *projectQueryService) workflowMaterials(app recordReader, id string, pages workflowPages, pageErr error) workflowStage {
 	stage := newWorkflowStage("materials", "资料准备", "项目管理员", "入册只统计已发布条目。历史失败批次不等于当前仍被阻塞，已入册也不代表原文对应关系已核实。")
 	stage.Actions = []workflowAction{workflowWorkspace(id, "imports", "查看导入记录", "materials", "batches"), workflowWorkspace(id, "prepare", "准备材料", "materials", "import")}
 	var counts struct {
@@ -260,7 +260,7 @@ func workflowProofreading(id string, required int, p workflowPages, err error) w
 	}
 	return stage
 }
-func (s *importService) workflowVerification(id string, p workflowPages, pageErr error, todo func(string) (managerTodo, error)) workflowStage {
+func (s *projectQueryService) workflowVerification(id string, p workflowPages, pageErr error, todo func(string) (managerTodo, error)) workflowStage {
 	stage := newWorkflowStage("verification", "仲裁与来源核验", "项目管理员", "仲裁、来源核验与成员问题可能重叠，数量不能相加。暂无待办不表示所有字段已判正确，来源完整判断和未记录情况请在核验页查看。")
 	arbitration, e1 := todo("arbitration")
 	review, e2 := todo("source_review")
@@ -298,7 +298,7 @@ func (s *importService) workflowVerification(id string, p workflowPages, pageErr
 	}
 	return stage
 }
-func (s *importService) workflowAdoption(app recordReader, id string, todo func(string) (managerTodo, error)) workflowStage {
+func (s *projectQueryService) workflowAdoption(app recordReader, id string, todo func(string) (managerTodo, error)) workflowStage {
 	stage := newWorkflowStage("adoption", "用途编选", "项目管理员", "编选按用途与接收方分别确认；已确认数量属于确认时的范围，不表示目前仍可交付。重评与交付检查会核对变化。")
 	stage.Actions = []workflowAction{workflowTarget(id, "adoption", "查看编选批次", "/adoption", nil)}
 	var counts struct {

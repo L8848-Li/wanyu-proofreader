@@ -290,7 +290,7 @@ func (s *importService) reevaluateAdoptionBatchInApp(app core.App, c *core.Reque
 	if err != nil {
 		return nil, apis.NewBadRequestError(err.Error(), nil)
 	}
-	computation, err := s.computeAdoption(app, project.Id, record.GetString("purpose"), record.Id, rule)
+	computation, err := computeAdoption(app, project.Id, record.GetString("purpose"), record.Id, rule)
 	if err != nil {
 		return nil, apis.NewBadRequestError("重算编选范围失败。", err)
 	}

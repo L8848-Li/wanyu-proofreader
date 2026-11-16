@@ -84,12 +84,13 @@ func TestProjectReadEndpointsDoNotWaitForWriter(t *testing.T) {
 	}
 	s := newImportService(app.(*pocketbase.PocketBase))
 	t.Cleanup(s.imageCancel)
-	s.deliveryHooksDir, _ = filepath.Abs("pb_hooks")
-	s.registerManagerTodos()
-	s.registerProjectWorkflow()
+	hooksDir, _ := filepath.Abs("pb_hooks")
+	queries := newProjectQueryService(app, hooksDir)
+	queries.registerManagerTodos()
+	queries.registerProjectWorkflow()
 	s.registerBatchReports()
 	s.registerAdoption()
-	s.registerDeliveries(s.deliveryHooksDir)
+	newDeliveryService(app, hooksDir).registerDeliveries()
 	h := accountTestRouter(t, app)
 	token, _ := owner.NewAuthToken()
 	// Any record read escaping the snapshot would also deadlock this reader pool.

@@ -199,7 +199,7 @@ func TestManagerTodoQueriesAreBatched(t *testing.T) {
 				}
 			}
 			row := newManagerTodo(todoProject{ID: project}, fixture.stage)
-			if err := (&importService{}).fillManagerTodo(app, &row, time.Now(), review, nil); err != nil {
+			if err := (&projectQueryService{}).fillManagerTodo(app, &row, time.Now(), review, nil); err != nil {
 				t.Fatal(err)
 			}
 			if *row.Count != fixture.count || len(queries) > fixture.limit {

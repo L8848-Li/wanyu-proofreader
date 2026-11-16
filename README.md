@@ -598,7 +598,11 @@ wanyu-proofreader/
 └── backend/
     ├── Dockerfile
     ├── main.go                     # 自定义 PocketBase 启动入口
-    ├── import_service.go           # PDF 校验和持久化 CSV 导入队列
+    ├── import_service.go           # 导入入口、权限与 PDF 校验
+    ├── csv_import.go               # CSV 编码、预检、校验与分批写入
+    ├── import_queue.go             # 串行作业、失败收尾与重启恢复
+    ├── project_queries.go          # 独立的项目待办与进度读取服务
+    ├── delivery_service.go         # 独立的交付包、回执与权限服务
     ├── external_identity.go        # 外部身份 provider、映射、登录和绑定
     ├── hinghwa_identity.go         # 兴化语记 /login 安全适配器
     ├── docker-entrypoint.sh
