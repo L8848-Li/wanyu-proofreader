@@ -101,7 +101,7 @@
 
 ## PocketBase 0.40 重建升级
 
-当前后端使用 PocketBase 0.40（补丁版本以 `backend/go.mod` 为准）/ Go 1.27.4（最低安全补丁），前端使用 Node 24 LTS / PocketBase SDK 0.28.2。
+当前后端使用 PocketBase 0.40（补丁版本以 `backend/go.mod` 为准）/ Go 1.27.4（最低安全补丁），前端使用 Node 24 LTS / PocketBase SDK 0.29.0。
 旧版本尚无正式运营数据，本次采用新目录重建；不要直接复用旧 pb_data。
 部署切换、回滚及验证证据见 [升级决策](docs/dependency-upgrades.md)。
 
