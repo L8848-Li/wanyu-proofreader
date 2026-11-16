@@ -75,24 +75,29 @@ func snapshotRecords(ctx context.Context, tx *dbx.Tx, collection *core.Collectio
 		if err = rows.ScanMap(values); err != nil {
 			return nil, err
 		}
-		record := core.NewRecord(collection)
-		for _, field := range collection.Fields {
-			var raw any
-			if value, ok := values[field.GetName()]; ok && value.Valid {
-				raw = value.String
-			}
-			value, prepareErr := field.PrepareValue(record, raw)
-			if prepareErr != nil {
-				return nil, prepareErr
-			}
-			record.SetRaw(field.GetName(), value)
-		}
-		if err = record.PostScan(); err != nil {
+		record, err := decodeSnapshotRecord(collection, values)
+		if err != nil {
 			return nil, err
 		}
 		result = append(result, record)
 	}
 	return result, rows.Err()
+}
+
+func decodeSnapshotRecord(collection *core.Collection, values dbx.NullStringMap) (*core.Record, error) {
+	record := core.NewRecord(collection)
+	for _, field := range collection.Fields {
+		var raw any
+		if value, ok := values[field.GetName()]; ok && value.Valid {
+			raw = value.String
+		}
+		value, err := field.PrepareValue(record, raw)
+		if err != nil {
+			return nil, err
+		}
+		record.SetRaw(field.GetName(), value)
+	}
+	return record, record.PostScan()
 }
 
 func toAnyStrings(values []string) []any {

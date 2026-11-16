@@ -107,7 +107,7 @@ func (s *importService) registerBatchReports() {
 	})
 }
 
-func batchImport(app core.App, project, id string) (*core.Record, error) {
+func batchImport(app recordReader, project, id string) (*core.Record, error) {
 	job, err := app.FindRecordById("import_jobs", id)
 	if err != nil || job.GetString("project") != project {
 		return nil, apis.NewNotFoundError("导入批次不存在。", nil)
@@ -120,7 +120,10 @@ func (s *importService) getBatchReport(c *core.RequestEvent) error {
 		return err
 	}
 	var report batchReport
-	err := s.app.RunInTransaction(func(app core.App) error {
+	err := withRecordReadSnapshot(c.Request.Context(), s.app, func(app recordReader) error {
+		if _, _, err := requireProjectManagerInApp(app, c, project); err != nil {
+			return err
+		}
 		var err error
 		report, _, err = s.buildBatchReport(app, project, c.Request.PathValue("importJobId"), time.Now().UTC())
 		return err
@@ -141,7 +144,7 @@ func parseBatchTime(raw string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func (s *importService) buildBatchReport(app core.App, projectID, jobID string, now time.Time) (batchReport, []batchReportEntry, error) {
+func (s *importService) buildBatchReport(app recordReader, projectID, jobID string, now time.Time) (batchReport, []batchReportEntry, error) {
 	report := batchReport{Schema: batchReportSchema, GeneratedAt: now.Format(time.RFC3339Nano), ProjectID: projectID, Metrics: map[string]map[string]batchMetric{}, Adoptions: []map[string]any{}, Deliveries: []map[string]any{}, Unknowns: []string{}}
 	job, err := batchImport(app, projectID, jobID)
 	if err != nil {
@@ -254,7 +257,7 @@ func (s *importService) buildBatchReport(app core.App, projectID, jobID string, 
 	return report, rows, nil
 }
 
-func (s *importService) addBatchReportWorkflow(app core.App, report *batchReport, jobID string, now time.Time) error {
+func (s *importService) addBatchReportWorkflow(app recordReader, report *batchReport, jobID string, now time.Time) error {
 	adoptions, err := app.FindRecordsByFilter("adoption_batches", "project={:project}", "created,id", 0, 0, dbx.Params{"project": report.ProjectID})
 	if err != nil {
 		return err

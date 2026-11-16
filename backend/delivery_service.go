@@ -103,7 +103,7 @@ func (s *importService) deliveryManager(c *core.RequestEvent, projectID string) 
 	return auth, err
 }
 
-func deliveryRights(app core.App, ref, purpose string) error {
+func deliveryRights(app recordReader, ref, purpose string) error {
 	// Read the purpose vocabulary from the registry schema, not a second enum.
 	c, err := app.FindCollectionByNameOrId("source_usages")
 	if err != nil {
@@ -132,7 +132,7 @@ func deliveryImportJob(app core.App, projectID, importID string) (*core.Record, 
 	return job, nil
 }
 
-func deliverySourceRightsProblem(app core.App, source *core.Record, purpose string) *router.ApiError {
+func deliverySourceRightsProblem(app recordReader, source *core.Record, purpose string) *router.ApiError {
 	ref := source.GetString("logical_id")
 	err := deliveryRights(app, ref, purpose)
 	message := ""
@@ -507,7 +507,7 @@ func deliveryPendingActions(events []*core.Record) []string {
 	return pending
 }
 
-func deliveryEvents(app core.App, id string) ([]*core.Record, error) {
+func deliveryEvents(app recordReader, id string) ([]*core.Record, error) {
 	return app.FindRecordsByFilter("release_events", "delivery = {:id}", "sequence", 0, 0, dbx.Params{"id": id})
 }
 

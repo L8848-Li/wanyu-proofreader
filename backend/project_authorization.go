@@ -8,7 +8,7 @@ import (
 
 // Sensitive writes call this inside their write transaction. Both the account
 // generation and project authority must still match when the write takes place.
-func requireProjectManagerInApp(app core.App, c *core.RequestEvent, projectID string) (*core.Record, *core.Record, error) {
+func requireProjectManagerInApp(app recordReader, c *core.RequestEvent, projectID string) (*core.Record, *core.Record, error) {
 	if c.Auth == nil {
 		return nil, nil, apis.NewUnauthorizedError("登录状态已失效，请重新登录。", nil)
 	}

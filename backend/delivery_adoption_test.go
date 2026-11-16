@@ -262,7 +262,7 @@ func TestDeliveryPagedReadsUseSmallSummariesAndLegacyFallback(t *testing.T) {
 	owner, _ := app.FindRecordById("users", snap.Operator)
 	token, _ := owner.NewAuthToken()
 	var queries []string
-	db := app.NonconcurrentDB().(*dbx.DB)
+	db := app.ConcurrentDB().(*dbx.DB)
 	old := db.QueryLogFunc
 	db.QueryLogFunc = func(_ context.Context, _ time.Duration, query string, _ *sql.Rows, _ error) {
 		queries = append(queries, query)

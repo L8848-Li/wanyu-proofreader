@@ -49,7 +49,10 @@ func (s *importService) listDeliveryEvents(c *core.RequestEvent) error {
 	}
 	page, perPage := pageArgument(c.Request.URL.Query().Get("page"), 1, 1000000), pageArgument(c.Request.URL.Query().Get("perPage"), 25, 100)
 	var result map[string]any
-	err = s.app.RunInTransaction(func(app core.App) error {
+	err = withRecordReadSnapshot(c.Request.Context(), s.app, func(app recordReader) error {
+		if _, _, err := requireProjectManagerInApp(app, c, record.GetString("project")); err != nil {
+			return err
+		}
 		total, err := app.CountRecords("release_events", dbx.HashExp{"delivery": record.Id})
 		if err != nil {
 			return err
@@ -84,7 +87,10 @@ func (s *importService) listPagedDeliveries(c *core.RequestEvent) error {
 	page := pageArgument(c.Request.URL.Query().Get("page"), 1, 1000000)
 	perPage := pageArgument(c.Request.URL.Query().Get("perPage"), 25, 100)
 	var result map[string]any
-	err := s.app.RunInTransaction(func(app core.App) error {
+	err := withRecordReadSnapshot(c.Request.Context(), s.app, func(app recordReader) error {
+		if _, _, err := requireProjectManagerInApp(app, c, projectID); err != nil {
+			return err
+		}
 		metadata := []*core.Record{}
 		if err := app.RecordQuery("release_deliveries").Select("id", "source_ref", "purpose", "reconciliation_json").AndWhere(dbx.HashExp{"project": projectID}).All(&metadata); err != nil {
 			return err

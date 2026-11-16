@@ -31,7 +31,7 @@ func TestProjectWritesRecheckAuthorityBeforeSaving(t *testing.T) {
 	for _, endpoint := range []string{"content", "normalization"} {
 		for _, change := range []string{"remove_manager", "demote_manager", "transfer_owner", "demote_admin", "logout", "password", "initial_password"} {
 			t.Run(endpoint+"/"+change, func(t *testing.T) {
-				app, owner, page := newAssistVisibilityFixture(t, newAssistVisibilityApp(t))
+				app, owner, page := newAssistVisibilityFixture(t, newSchemaTestApp(t))
 				users, _ := app.FindCollectionByNameOrId("users")
 				actor := core.NewRecord(users)
 				actor.Set("name", "Synthetic project manager")

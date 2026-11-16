@@ -121,7 +121,7 @@ func (s *importService) managerTodos(e *core.RequestEvent) error {
 	}
 	page, size := pageArgument(query.Get("page"), 1, 1000000), pageArgument(query.Get("perPage"), 20, 100)
 	var response map[string]any
-	err := s.app.RunInTransaction(func(app core.App) error {
+	err := withRecordReadSnapshot(e.Request.Context(), s.app, func(app recordReader) error {
 		actor, err := app.FindRecordById("users", e.Auth.Id)
 		if err != nil || actor.TokenKey() != e.Auth.TokenKey() || actor.GetBool("must_change_password") {
 			return apis.NewUnauthorizedError("登录状态已变化，请重新登录。", nil)
@@ -216,7 +216,7 @@ func (s *importService) managerTodos(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, response)
 }
 
-func (s *importService) fillManagerTodo(app core.App, row *managerTodo, now time.Time, review func(*core.Record) (bool, error), reviewErr error) error {
+func (s *importService) fillManagerTodo(app recordReader, row *managerTodo, now time.Time, review func(*core.Record) (bool, error), reviewErr error) error {
 	project := row.Project.ID
 	params := dbx.Params{"project": project}
 	switch row.Stage {
@@ -318,7 +318,7 @@ func (s *importService) fillManagerTodo(app core.App, row *managerTodo, now time
 	return nil
 }
 
-func fillDeliveryTodos(app core.App, row *managerTodo, now time.Time) error {
+func fillDeliveryTodos(app recordReader, row *managerTodo, now time.Time) error {
 	records, err := app.FindRecordsByFilter("release_deliveries", "project={:project}", "created,id", 0, 0, dbx.Params{"project": row.Project.ID})
 	if err != nil {
 		return err

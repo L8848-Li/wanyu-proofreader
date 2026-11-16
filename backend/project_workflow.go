@@ -96,7 +96,7 @@ func (s *importService) getProjectWorkflow(e *core.RequestEvent) error {
 		return err
 	}
 	var result projectWorkflow
-	err := s.app.RunInTransaction(func(app core.App) error {
+	err := withRecordReadSnapshot(e.Request.Context(), s.app, func(app recordReader) error {
 		actor, err := app.FindRecordById("users", e.Auth.Id)
 		if err != nil || actor.TokenKey() != e.Auth.TokenKey() || actor.GetBool("must_change_password") {
 			return apis.NewUnauthorizedError("登录状态已变化，请重新登录。", nil)
@@ -136,7 +136,7 @@ type workflowPages struct {
 	Empty       int `db:"empty"`
 }
 
-func readWorkflowPages(app core.App, project string, required int) (workflowPages, error) {
+func readWorkflowPages(app recordReader, project string, required int) (workflowPages, error) {
 	var counts workflowPages
 	err := app.DB().NewQuery(`WITH submissions AS (
  SELECT a.page,COUNT(DISTINCT NULLIF(a.proofreader,'')) submitted FROM proofreading_attempts a
@@ -152,7 +152,7 @@ func readWorkflowPages(app core.App, project string, required int) (workflowPage
  FROM pages p LEFT JOIN submissions s ON s.page=p.id WHERE p.project={:project} AND p.status!='importing'`).Bind(dbx.Params{"project": project, "required": required}).One(&counts)
 	return counts, err
 }
-func (s *importService) buildProjectWorkflow(app core.App, project *core.Record, now time.Time) projectWorkflow {
+func (s *importService) buildProjectWorkflow(app recordReader, project *core.Record, now time.Time) projectWorkflow {
 	id := project.Id
 	out := projectWorkflow{GeneratedAt: now.Format(time.RFC3339Nano), Project: todoProject{ID: id, Name: project.GetString("name")}, Summary: map[string]*int{"entries": nil, "proofreading_completed": nil, "arbitration": nil}, Stages: []workflowStage{}}
 	required := max(2, project.GetInt("required_proofreads"))
@@ -199,7 +199,7 @@ func (s *importService) buildProjectWorkflow(app core.App, project *core.Record,
 	}
 	return out
 }
-func (s *importService) workflowMaterials(app core.App, id string, pages workflowPages, pageErr error) workflowStage {
+func (s *importService) workflowMaterials(app recordReader, id string, pages workflowPages, pageErr error) workflowStage {
 	stage := newWorkflowStage("materials", "资料准备", "项目管理员", "入册只统计已发布条目。历史失败批次不等于当前仍被阻塞，已入册也不代表原文对应关系已核实。")
 	stage.Actions = []workflowAction{workflowWorkspace(id, "imports", "查看导入记录", "materials", "batches"), workflowWorkspace(id, "prepare", "准备材料", "materials", "import")}
 	var counts struct {
@@ -298,7 +298,7 @@ func (s *importService) workflowVerification(id string, p workflowPages, pageErr
 	}
 	return stage
 }
-func (s *importService) workflowAdoption(app core.App, id string, todo func(string) (managerTodo, error)) workflowStage {
+func (s *importService) workflowAdoption(app recordReader, id string, todo func(string) (managerTodo, error)) workflowStage {
 	stage := newWorkflowStage("adoption", "用途编选", "项目管理员", "编选按用途与接收方分别确认；已确认数量属于确认时的范围，不表示目前仍可交付。重评与交付检查会核对变化。")
 	stage.Actions = []workflowAction{workflowTarget(id, "adoption", "查看编选批次", "/adoption", nil)}
 	var counts struct {
@@ -334,7 +334,7 @@ type workflowDeliveries struct {
 	BundleImports                                                                    int
 }
 
-func readWorkflowDeliveries(app core.App, id string) (workflowDeliveries, error) {
+func readWorkflowDeliveries(app recordReader, id string) (workflowDeliveries, error) {
 	var facts workflowDeliveries
 	rows, err := app.FindRecordsByFilter("release_deliveries", "project={:project}", "created,id", 0, 0, dbx.Params{"project": id})
 	if err != nil {

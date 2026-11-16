@@ -13,7 +13,7 @@ import (
 // Reuse the source-review screen's authoritative completion calculation. In
 // particular, source/policy changes can invalidate a basis without setting a
 // convenient page flag. Do not replace this with a count of those flags.
-func newTodoSourceReview(app core.App, hooksDir string) (func(*core.Record) (bool, error), error) {
+func newTodoSourceReview(app recordReader, hooksDir string) (func(*core.Record) (bool, error), error) {
 	if hooksDir == "" {
 		hooksDir = filepath.Join(app.DataDir(), "..", "pb_hooks")
 	}

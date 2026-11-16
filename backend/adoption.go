@@ -666,7 +666,10 @@ func (s *importService) listAdoptionBatches(c *core.RequestEvent) error {
 	var result map[string]any
 	// Count and page share one snapshot, including when a draft is deleted
 	// while the user is browsing the last page.
-	err := s.app.RunInTransaction(func(app core.App) error {
+	err := withRecordReadSnapshot(c.Request.Context(), s.app, func(app recordReader) error {
+		if _, _, err := requireProjectManagerInApp(app, c, projectID); err != nil {
+			return err
+		}
 		params := dbx.Params{"project": projectID}
 		totalItems, err := app.CountRecords("adoption_batches", dbx.HashExp{"project": projectID})
 		if err != nil {
@@ -691,6 +694,10 @@ func (s *importService) listAdoptionBatches(c *core.RequestEvent) error {
 		return nil
 	})
 	if err != nil {
+		var apiError *router.ApiError
+		if errors.As(err, &apiError) {
+			return apiError
+		}
 		return apis.NewBadRequestError("读取编选批次失败。", err)
 	}
 	return c.JSON(http.StatusOK, result)
@@ -1136,7 +1143,7 @@ func adoptionEntryIncluded(entry adoptionEntry, include string) bool {
 	}
 }
 
-func (s *importService) adoptionExceptions(app core.App, batchID string) (map[string]adoptionExceptionRecord, error) {
+func (s *importService) adoptionExceptions(app recordReader, batchID string) (map[string]adoptionExceptionRecord, error) {
 	records, err := app.FindRecordsByFilter(
 		"adoption_exceptions", "batch = {:batch}", "", 0, 0,
 		dbx.Params{"batch": batchID},
@@ -1182,7 +1189,7 @@ LEFT JOIN source_usages su
 WHERE p.project = {:project}
 ORDER BY p.page_number, p.id`
 
-func (s *importService) adoptionRows(app core.App, projectID, purpose string) ([]adoptionRow, error) {
+func (s *importService) adoptionRows(app recordReader, projectID, purpose string) ([]adoptionRow, error) {
 	rows := []adoptionRow{}
 	if err := app.DB().NewQuery(adoptionRowsSQL).
 		Bind(dbx.Params{"project": projectID, "purpose": purpose}).
@@ -1192,7 +1199,7 @@ func (s *importService) adoptionRows(app core.App, projectID, purpose string) ([
 	return rows, nil
 }
 
-func (s *importService) computeAdoption(app core.App, projectID, purpose, batchID string, rule adoptionRule) (adoptionComputation, error) {
+func (s *importService) computeAdoption(app recordReader, projectID, purpose, batchID string, rule adoptionRule) (adoptionComputation, error) {
 	rows, err := s.adoptionRows(app, projectID, purpose)
 	if err != nil {
 		return adoptionComputation{}, err
