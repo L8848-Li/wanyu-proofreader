@@ -326,11 +326,19 @@ async function load() {
   if (!pageId) return
   loading.value = true
   try {
-    const result = await getVerification(pageId).catch((error) => {
-      // Research events can advance the verification revision during this read.
-      if (getPbStatus(error) !== 409 || token !== generation) throw error
-      return getVerification(pageId)
-    })
+    let result
+    for (let attempt = 0; ; attempt++) {
+      if (token !== generation) return
+      try {
+        result = await getVerification(pageId)
+        break
+      } catch (error) {
+        // Several startup research events can advance the revision in a row.
+        // Back off between bounded retries instead of immediately racing them.
+        if (getPbStatus(error) !== 409 || attempt >= 3 || token !== generation) throw error
+        await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt))
+      }
+    }
     if (token !== generation) return
     restoring = true
     for (const field of Object.keys(result.context.input))

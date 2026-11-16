@@ -290,11 +290,12 @@ func (s *importService) addBatchReportWorkflow(app recordReader, report *batchRe
 		return err
 	}
 	var awaiting, missingWait, maxWait int64
+	byDelivery, err := deliveryEventIndex(app, deliveries)
+	if err != nil {
+		return err
+	}
 	for _, record := range deliveries {
-		events, err := deliveryEvents(app, record.Id)
-		if err != nil {
-			return err
-		}
+		events := byDelivery[record.Id]
 		view := deliveryView(record, events)
 		if view["awaiting_receipt"] == true {
 			awaiting++

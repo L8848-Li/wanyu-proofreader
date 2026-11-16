@@ -55,12 +55,12 @@ function machineSnapshot(dao, page) {
     keyboards
   }
 }
-function contextFor(dao, page, withMachine = true) {
+function contextFor(dao, page, withMachine = true, shared = null) {
   const projectId = page.getString("project")
-  const policy = policyFor(dao, projectId)
-  const source = fileSnapshot(sourceFile(dao, page))
+  const policy = shared ? shared.policy : policyFor(dao, projectId)
+  const source = fileSnapshot(shared ? (page.getString("project_file") ? shared.files.get(page.getString("project_file")) : shared.primary) : sourceFile(dao, page))
   const input = importedRow(page)
-  const roles = require(`${__hooks}/lib/column_roles.js`).loadProjectRoles(dao, projectId)
+  const roles = shared ? shared.roles : require(`${__hooks}/lib/column_roles.js`).loadProjectRoles(dao, projectId)
   const roleVersion = hash(JSON.stringify(roles))
   const policyCompatible = !policy || policy.reading_fields.every(field => roles[field] === "reading")
   const sourceApproved = Boolean(source && policy?.sources?.some(item => item.id === source.id && item.hash === source.hash && item.file === source.file))
@@ -235,12 +235,14 @@ function reportView(dao, report, current, managerView = false) {
 function reportsFor(dao, projectId, user = "") {
   return list(dao, "problem_reports", `project = "${projectId}"${user ? ` && reporter = "${user}"` : ""}`).map(row => reportView(dao, row, null, !user))
 }
-function blockingReports(dao, pageId, user = "") {
-  return list(dao, "problem_reports", `page = "${pageId}" && blocking = true${user ? ` && reporter = "${user}"` : ""}`).filter(row => {
-    const issue = dao.findRecordById("problem_issues", row.getString("issue"))
+function blockingReports(dao, pageId, user = "", prepared = null) {
+  const reports = prepared ? prepared.reports : list(dao, "problem_reports", `page = "${pageId}" && blocking = true${user ? ` && reporter = "${user}"` : ""}`)
+  return reports.filter(row => {
+    const issue = prepared ? prepared.issues.get(row.getString("issue")) : dao.findRecordById("problem_issues", row.getString("issue"))
+    if (!issue) throw new Error("Problem issue missing")
     if (issue.getString("status") !== "resolved") return true
     const resolved = parse(issue.getString("resolution_json"))[row.id]
-    const current = contextFor(dao, dao.findRecordById("pages", pageId))
+    const current = prepared ? prepared.machineContext() : contextFor(dao, dao.findRecordById("pages", pageId))
     return !resolved || resolved.scope_key !== current.scope_key
   })
 }
@@ -317,9 +319,9 @@ function recordSubmission(dao, page, attempt, actor, body) {
   research.recordSubmission(dao, page, actor, attempt, body)
   return context
 }
-function latestJudgments(dao, page, context) {
+function latestJudgments(dao, page, context, prepared = null) {
   const latest = new Map()
-  for (const event of eventsFor(dao, page.id, "judgment")) {
+  for (const event of prepared || eventsFor(dao, page.id, "judgment")) {
     const key = `${event.ref}\u0000${event.field}`
     if ((event.payload.revision || 0) >= (latest.get(key)?.payload.revision || 0)) latest.set(key, event)
   }
@@ -430,23 +432,23 @@ function recordAdoption(dao, page, actor, row, selections, automaticAttempt = ""
   }
   appendEvent(dao, { project: context.project, page: page.id, kind: "final_adoption", actor, context, payload: { row, by_field: byField, selections: selections || {}, automatic: Boolean(automaticAttempt), revision: (previous?.payload.revision || 0) + 1 } })
 }
-function completion(dao, page, current) {
+function completion(dao, page, current, prepared = null) {
   const context = current || contextFor(dao, page, false)
-  const judgments = latestJudgments(dao, page, context)
+  const judgments = latestJudgments(dao, page, context, prepared?.judgments)
   const required = Object.keys(context.input)
   const finalRow = parse(page.getString("proofread_row_json"), null)
   const covered = judgments.filter(event => event.ref === "final" && !event.stale && ["correct", "incorrect"].includes(event.payload.state) && finalRow && event.payload.value === String(finalRow[event.field]))
   const finalComplete = required.length > 0 && required.every(field => covered.some(event => event.field === field))
   const basis = page.getString("verification_basis")
-  const attempts = require(`${__hooks}/lib/proofreading_workflow.js`).proofreadAttempts(dao, page)
-  const revalidated = eventsFor(dao, page.id, "review_completed").some(event => event.context.basis === context.basis && event.payload.source_checked === true)
+  const attempts = prepared ? prepared.attempts : require(`${__hooks}/lib/proofreading_workflow.js`).proofreadAttempts(dao, page)
+  const revalidated = (prepared ? prepared.reviews : eventsFor(dao, page.id, "review_completed")).some(event => event.context.basis === context.basis && event.payload.source_checked === true)
   const staleAttempts = attempts.some(attempt => {
     const previous = parse(attempt.getString("verification_context_json"))
     return previous.basis && previous.basis !== context.basis
   })
   const stale = Boolean(page.getBool("verification_needs_recheck") || (basis && basis !== context.basis) || (staleAttempts && !revalidated))
   const declared = attempts.length > 0 && attempts.every(attempt => attempt.getBool("source_checked"))
-  const blocking = blockingReports(dao, page.id).length
+  const blocking = blockingReports(dao, page.id, "", prepared).length
   const hold = page.getBool("verification_hold")
   return { business_complete: page.getString("status") === "approved" && !page.getBool("source_empty") && !stale && !blocking && !hold,
     workflow_status: page.getString("status"), source_empty: page.getBool("source_empty"), needs_review: stale,
@@ -456,4 +458,80 @@ function completion(dao, page, current) {
     field_denominator: covered.length, required_fields: required.length, independent_reference: "separate_research_record" }
 }
 
-module.exports = { comparison, DEFAULT_INSTRUCTIONS, ISSUE_STATES, REPORT_TYPES, parse, hash, list, policyFor, fileSnapshot, contextFor, proofreaderContext, assertContext, appendEvent, eventView, eventsFor, savePolicy, ownDraft, draftView, validateRow, saveDraft, reportIssue, issueView, reportView, reportsFor, blockingReports, updateIssue, moveReports, recordSubmission, latestJudgments, activeReviewProgress, saveJudgments, assertArbitration, recordAdoption, completion }
+// The caller supplies at most 250 pages from one read snapshot. Reuse the same
+// completion predicate with batched evidence; never substitute cached page flags
+// for source/policy versions, current-round attempts or resolved report bases.
+function countPendingReviews(dao, pages) {
+  let count = 0
+  const detailed = []
+  for (const page of pages) {
+    if (!["approved", "proofread", "arbitration"].includes(page.getString("status"))) continue
+    if ((page.getString("status") !== "approved" && !page.getBool("source_empty"))
+      || page.getBool("verification_hold") || page.getBool("verification_needs_recheck")) count++
+    else detailed.push(page)
+  }
+  if (!detailed.length) return count
+  const project = detailed[0].getString("project")
+  if (detailed.length > 250 || detailed.some(page => page.getString("project") !== project)) throw new Error("Invalid source review batch")
+  const byPage = rows => {
+    const index = new Map()
+    for (const row of rows) {
+      const id = row.getString("page")
+      if (!index.has(id)) index.set(id, [])
+      index.get(id).push(row)
+    }
+    return index
+  }
+  const read = (collection, field, ids, where = null, sort = "created,id", columns = null) => {
+    const rows = []
+    for (let offset = 0; offset < ids.length; offset += 200) {
+      const query = dao.recordQuery(collection).andWhere($dbx.in(field, ...ids.slice(offset, offset + 200)))
+      if (columns) query.select(...columns)
+      if (where) query.andWhere(where)
+      for (const field of sort.split(",").filter(Boolean)) query.andOrderBy(field)
+      const result = arrayOf(new Record)
+      query.all(result)
+      rows.push(...result)
+    }
+    return rows
+  }
+  const ids = detailed.map(page => page.id)
+  const currentRound = $dbx.exp("kind='proofread' AND round=COALESCE(NULLIF((SELECT p.proofread_round FROM pages p WHERE p.id=proofreading_attempts.page),0),1)")
+  const attempts = byPage(read("proofreading_attempts", "page", ids, currentRound, "pass_no,created", ["id", "page", "round", "verification_context_json", "source_checked"]))
+  const reports = byPage(read("problem_reports", "page", ids, $dbx.exp("blocking=1"), "created,id", ["id", "page", "issue"]))
+  const issueIds = [...new Set([...reports.values()].flat().map(row => row.getString("issue")))]
+  const issues = new Map(read("problem_issues", "id", issueIds).map(row => [row.id, row]))
+  const visibility = require(`${__hooks}/lib/assist_visibility.js`)
+  const events = new Map()
+  for (let offset = 0; offset < ids.length; offset += 200) {
+    const where = $dbx.and($dbx.in("page", ...ids.slice(offset, offset + 200)), $dbx.exp("kind IN ('judgment','review_completed')"))
+    for (const event of visibility.list(dao, "verification_events", where, "created,id", "events")) {
+      const id = event.getString("page")
+      if (!events.has(id)) events.set(id, [])
+      events.get(id).push(eventView(event))
+    }
+  }
+  const fileIds = [...new Set(detailed.map(page => page.getString("project_file")).filter(Boolean))]
+  const shared = {
+    policy: policyFor(dao, project),
+    roles: require(`${__hooks}/lib/column_roles.js`).loadProjectRoles(dao, project),
+    files: new Map(read("project_files", "id", fileIds).map(file => [file.id, file])),
+    primary: dao.findRecordsByFilter("project_files", "project={:project} && is_primary=true && status='ready'", "", 1, 0, { project })[0] || null
+  }
+  for (const page of detailed) {
+    const history = events.get(page.id) || []
+    let machineContext = null
+    const prepared = {
+      attempts: (attempts.get(page.id) || []).filter(row => row.getInt("round") === (page.getInt("proofread_round") || 1)).slice(0, 1000),
+      judgments: history.filter(event => event.kind === "judgment"),
+      reviews: history.filter(event => event.kind === "review_completed"),
+      reports: reports.get(page.id) || [], issues,
+      machineContext: () => machineContext || (machineContext = contextFor(dao, page, true, shared))
+    }
+    const item = completion(dao, page, contextFor(dao, page, false, shared), prepared)
+    if ((!item.business_complete && !item.source_empty) || item.needs_review || item.pending_review) count++
+  }
+  return count
+}
+
+module.exports = { comparison, DEFAULT_INSTRUCTIONS, ISSUE_STATES, REPORT_TYPES, parse, hash, list, policyFor, fileSnapshot, contextFor, proofreaderContext, assertContext, appendEvent, eventView, eventsFor, savePolicy, ownDraft, draftView, validateRow, saveDraft, reportIssue, issueView, reportView, reportsFor, blockingReports, updateIssue, moveReports, recordSubmission, latestJudgments, activeReviewProgress, saveJudgments, assertArbitration, recordAdoption, completion, countPendingReviews }

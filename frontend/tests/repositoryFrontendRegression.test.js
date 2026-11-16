@@ -208,6 +208,7 @@ function verificationFixture(overrides = {}) {
       defineEmits: () => () => {},
       defineExpose: () => {},
       nextTick: async () => {},
+      getPbStatus: (error) => Number(error.status),
       getVerification: async (id) => ({ context: { basis: id, input: { 词: '新' } }, reports: [] }),
       saveVerificationDraft: async (...args) => {
         calls.drafts.push(args)
@@ -221,6 +222,62 @@ function verificationFixture(overrides = {}) {
   )
   return { api, props, calls }
 }
+
+regression(
+  'verification read backs off through consecutive conflicts and remains bounded',
+  async () => {
+    let reads = 0
+    const delays = []
+    const f = verificationFixture({
+      getVerification: async () => {
+        if (++reads <= 2) throw Object.assign(new Error('changed'), { status: 409 })
+        return { context: { basis: 'a', input: { 词: '新' } }, reports: [] }
+      },
+      setTimeout: (callback, delay) => {
+        delays.push(delay)
+        callback()
+      }
+    })
+    await f.api.load()
+    assert.equal(reads, 3)
+    assert.deepEqual(delays, [100, 200])
+    assert.equal(f.api.data.value.context.basis, 'a')
+    for (const status of [409, 403, 500]) {
+      let attempts = 0
+      const g = verificationFixture({
+        getVerification: async () => {
+          attempts++
+          throw Object.assign(new Error('unavailable'), { status })
+        },
+        setTimeout: (callback) => callback()
+      })
+      await g.api.load()
+      assert.equal(attempts, status === 409 ? 4 : 1)
+      assert.equal(g.api.data.value, null)
+    }
+  }
+)
+
+regression('verification read stops retrying when its task unmounts during backoff', async () => {
+  let reads = 0
+  let resume
+  const f = verificationFixture({
+    getVerification: async () => {
+      reads++
+      throw Object.assign(new Error('changed'), { status: 409 })
+    },
+    setTimeout: (callback) => {
+      resume = callback
+    }
+  })
+  const loading = f.api.load()
+  await Promise.resolve()
+  f.api.dispose()
+  resume()
+  await loading
+  assert.equal(reads, 1)
+  assert.equal(f.api.data.value, null)
+})
 
 regression(
   'verification report from a previous task cannot attach to the new task and old draft failure cannot replace its error',

@@ -121,12 +121,12 @@ func TestManagerTodoProblemsExcludeClosedAndUnreportedIssues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending, err := review(page); err != nil || pending {
+	if pending, err := review([]*core.Record{page}); err != nil || pending != 0 {
 		t.Fatalf("row without review entry point must wait for proofreading: %v %v", pending, err)
 	}
 	page.Set("status", "approved")
 	page.Set("verification_basis", "old-source-version")
-	if pending, err := review(page); err != nil || !pending {
+	if pending, err := review([]*core.Record{page}); err != nil || pending != 1 {
 		t.Fatalf("changed source basis must require review: %v %v", pending, err)
 	}
 }

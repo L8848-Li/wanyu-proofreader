@@ -13,7 +13,7 @@ import (
 // Reuse the source-review screen's authoritative completion calculation. In
 // particular, source/policy changes can invalidate a basis without setting a
 // convenient page flag. Do not replace this with a count of those flags.
-func newTodoSourceReview(app recordReader, hooksDir string) (func(*core.Record) (bool, error), error) {
+func newTodoSourceReview(app recordReader, hooksDir string) (func([]*core.Record) (int, error), error) {
 	if hooksDir == "" {
 		hooksDir = filepath.Join(app.DataDir(), "..", "pb_hooks")
 	}
@@ -29,14 +29,8 @@ func newTodoSourceReview(app recordReader, hooksDir string) (func(*core.Record) 
 	if err = vm.Set("__hooks", dir); err != nil {
 		return nil, err
 	}
-	value, err := vm.RunString(`(function(dao,page){
-  if(!["approved","proofread","arbitration"].includes(page.getString("status"))) return false;
-  // These conditions already make the existing review predicate true; avoid
-  // reading text and historical judgments for rows awaiting approval.
-  if(page.getString("status")!=="approved"&&!page.getBool("source_empty")) return true;
-  if(page.getBool("verification_hold")||page.getBool("verification_needs_recheck")) return true;
-  const item=require(__hooks+"/lib/source_fidelity.js").completion(dao,page);
-  return (!item.business_complete&&!item.source_empty)||item.needs_review||item.pending_review;
+	value, err := vm.RunString(`(function(dao,pages){
+  return require(__hooks+"/lib/source_fidelity.js").countPendingReviews(dao,pages);
  })`)
 	if err != nil {
 		return nil, err
@@ -45,11 +39,11 @@ func newTodoSourceReview(app recordReader, hooksDir string) (func(*core.Record) 
 	if !ok {
 		return nil, fmt.Errorf("source review evaluator unavailable")
 	}
-	return func(page *core.Record) (bool, error) {
-		value, err := evaluate(goja.Undefined(), vm.ToValue(app), vm.ToValue(page))
+	return func(pages []*core.Record) (int, error) {
+		value, err := evaluate(goja.Undefined(), vm.ToValue(app), vm.ToValue(pages))
 		if err != nil {
-			return false, err
+			return 0, err
 		}
-		return value.ToBoolean(), nil
+		return int(value.ToInteger()), nil
 	}, nil
 }

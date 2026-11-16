@@ -26,7 +26,9 @@ async function session(browser, auth, verificationPage) {
   page.expectVerificationLoaded = async () => {
     await page.getByRole('region', { name: '来源与核验记录' })
       .getByText('来源与约定', { exact: true }).waitFor()
-    assert.deepEqual(verificationStatuses, verificationStatuses[0] === 409 ? [409, 200] : [200])
+    assert.ok(verificationStatuses.length >= 1 && verificationStatuses.length <= 4)
+    assert.equal(verificationStatuses.at(-1), 200)
+    assert.ok(verificationStatuses.slice(0, -1).every(status => status === 409))
   }
   page.on('pageerror', error => page.__errors.push(error.message))
   page.on('console', message => {

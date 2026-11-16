@@ -341,11 +341,12 @@ func readWorkflowDeliveries(app recordReader, id string) (workflowDeliveries, er
 		return facts, err
 	}
 	facts.Total = len(rows)
+	byDelivery, err := deliveryEventIndex(app, rows)
+	if err != nil {
+		return facts, err
+	}
 	for _, record := range rows {
-		events, err := deliveryEvents(app, record.Id)
-		if err != nil {
-			return facts, err
-		}
+		events := byDelivery[record.Id]
 		view := deliveryView(record, events)
 		pending := len(deliveryPendingActions(events)) > 0
 		notice := view["notice_state"] == "pending_consumer_notice"

@@ -216,7 +216,7 @@ func (s *importService) managerTodos(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, response)
 }
 
-func (s *importService) fillManagerTodo(app recordReader, row *managerTodo, now time.Time, review func(*core.Record) (bool, error), reviewErr error) error {
+func (s *importService) fillManagerTodo(app recordReader, row *managerTodo, now time.Time, review func([]*core.Record) (int, error), reviewErr error) error {
 	project := row.Project.ID
 	params := dbx.Params{"project": project}
 	switch row.Stage {
@@ -244,20 +244,17 @@ func (s *importService) fillManagerTodo(app recordReader, row *managerTodo, now 
 			row.setWaiting(data.Oldest, data.Missing > 0, now, "自最早一次尚待处理的分歧记录起")
 		}
 	case "source_problems":
-		issues, err := app.FindRecordsByFilter("problem_issues", "project={:project} && status!='resolved'", "created,id", 0, 0, params)
+		issues := []*core.Record{}
+		err := app.RecordQuery("problem_issues").Select("id", "created", "status").
+			AndWhere(dbx.HashExp{"project": project}).
+			AndWhere(dbx.NewExp("status!='resolved' AND EXISTS (SELECT 1 FROM problem_reports r WHERE r.issue=problem_issues.id AND r.project=problem_issues.project)")).
+			OrderBy("created", "id").All(&issues)
 		if err != nil {
 			return err
 		}
 		oldest := ""
 		missing := false
 		for _, issue := range issues {
-			count, err := app.CountRecords("problem_reports", dbx.HashExp{"project": project, "issue": issue.Id})
-			if err != nil {
-				return err
-			}
-			if count == 0 {
-				continue
-			}
 			*row.Count++
 			if *row.Count == 1 {
 				row.Target.Query["issue"] = issue.Id
@@ -275,18 +272,21 @@ func (s *importService) fillManagerTodo(app recordReader, row *managerTodo, now 
 		if reviewErr != nil {
 			return reviewErr
 		}
-		pages, err := app.FindRecordsByFilter("pages", "project={:project} && status!='importing'", "page_number,id", 0, 0, params)
-		if err != nil {
-			return err
-		}
-		for _, page := range pages {
-			todo, err := review(page)
+		params["after"] = ""
+		for {
+			pages, err := app.FindRecordsByFilter("pages", "project={:project} && (status='approved' || status='proofread' || status='arbitration') && id>{:after}", "id", 250, 0, params)
 			if err != nil {
 				return err
 			}
-			if todo {
-				*row.Count++
+			if len(pages) == 0 {
+				break
 			}
+			count, err := review(pages)
+			if err != nil {
+				return err
+			}
+			*row.Count += count
+			params["after"] = pages[len(pages)-1].Id
 		}
 	case "adoption":
 		batches, err := app.FindRecordsByFilter("adoption_batches", "project={:project} && (status='draft' || status='previewed')", "created,id", 0, 0, params)
@@ -326,11 +326,12 @@ func fillDeliveryTodos(app recordReader, row *managerTodo, now time.Time) error 
 	oldest := ""
 	missing := false
 	actionCount := 0
+	byDelivery, err := deliveryEventIndex(app, records)
+	if err != nil {
+		return err
+	}
 	for _, record := range records {
-		events, err := deliveryEvents(app, record.Id)
-		if err != nil {
-			return err
-		}
+		events := byDelivery[record.Id]
 		state := todoDeliveryState(record, events)
 		include := state.Awaiting
 		if row.Stage == "delivery_return" {
