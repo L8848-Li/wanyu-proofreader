@@ -636,6 +636,8 @@ npm run preview
 
 `npm test` 运行前端单元测试，覆盖光标/选区插入、本地草稿、跨任务反馈、角色工作台状态汇总、管理员条目筛选/分页/范围解析，以及仲裁差异确认门槛。
 
+认证会话测试直接导入 `services/createAuthService.js`，生产入口绑定同一个实现与 PocketBase。交付工作区测试直接导入 `composables/createDeliveryWorkspace.js`，使用真实 Vue 响应式对象，只替换网络、身份范围和路由调度；另有用生产路由观察器验证切换与清理的用例。不通过截取页面源码或 `new Function` 执行业务逻辑。页面的显示、具名表单模型、焦点和卸载行为另由实际挂载的浏览器流程覆盖：`python3 backend/tests/run_frontend_quality_browser.py --only startup delivery components`（使用临时测试数据）。
+
 ### 键盘定义与同步
 
 内置定义位于 `backend/keyboards/*.json`，格式见 `backend/keyboards/README.md`。后端二进制通过 Go `embed` 打包定义，并在每次启动时先严格校验 `schemaVersion`、ID、分区和按键，再按键盘 ID 幂等同步。仓库中不再存在的旧预置只会标记为停用，既有项目关系不会被删除；未来上传自定义键盘应复用同一 JSON 结构与校验器。

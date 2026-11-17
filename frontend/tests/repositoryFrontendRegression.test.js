@@ -1,3 +1,4 @@
+import { createAuthService } from '../src/services/createAuthService.js'
 import { jobObserverScope } from './helpers/jobObserverScope.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -411,42 +412,26 @@ function sessionFixture(send) {
       this.save('', null)
     }
   }
-  const api = evaluate(
-    'services/authService.js',
-    [
-      'bindExternalIdentity',
-      'loginWithPassword',
-      'loginWithExternalProvider',
-      'refreshStoredAuth',
-      'updateProfile',
-      'logoutAllDevices',
-      'changeAccountPassword',
-      'requestEmailChange',
-      'requestEmailVerification'
-    ],
-    {
-      pb: {
-        authStore: store,
-        send,
-        collection: () => ({
-          requestEmailChange: send,
-          requestVerification: send,
-          // PocketBase SDK methods publish auth responses before their promise resolves.
-          authWithPassword: async () => {
-            const result = await send()
-            store.save(result.token, result.record)
-            return result
-          },
-          authRefresh: async () => {
-            const result = await send()
-            store.save(result.token, result.record)
-            return result
-          }
-        })
+  const api = createAuthService({
+    authStore: store,
+    send,
+    collection: () => ({
+      requestEmailChange: send,
+      requestVerification: send,
+      // SDK publication is deliberately hostile: using these auth helpers would
+      // publish a late token before the session guard can reject the response.
+      authWithPassword: async () => {
+        const result = await send()
+        store.save(result.token, result.record)
+        return result
       },
-      shouldClearAuthAfterRefreshError: (error) => [401, 403].includes(error.status)
-    }
-  )
+      authRefresh: async () => {
+        const result = await send()
+        store.save(result.token, result.record)
+        return result
+      }
+    })
+  })
   return { api, store, listeners }
 }
 

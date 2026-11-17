@@ -36,8 +36,7 @@ test('操作错误不参与加载态门禁', () => {
   assert.match(sources, /const operationError = ref\(''\)/)
 
   const deliveries = view('admin/DeliveriesView.vue')
-  assert.match(deliveries, /(?:const loadError = ref\(''\)|error: loadError)/)
-  assert.match(deliveries, /const operationError = ref\(''\)/)
+  // State transitions run against createDeliveryWorkspace in deliveriesView.test.js.
   assert.match(deliveries, /v-if="loadError"/)
   assert.doesNotMatch(deliveries, /const error = ref\(''\)/)
   assert.doesNotMatch(deliveries, /v-if="error"/)

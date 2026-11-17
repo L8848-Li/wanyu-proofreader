@@ -26,3 +26,9 @@ export const receiptLabel = (item) => {
   if (item.receipt_channel === 'manual') return `${label}（人工回执，对方自动回传未接入）`
   return label
 }
+
+export const receiptEventNote = (event) => {
+  const payload = event?.payload || {}
+  const channel = payload.channel || 'manual'
+  return `影响 ${payload.affected} 条 · ${channel === 'manual' ? '人工回执' : channel}`
+}

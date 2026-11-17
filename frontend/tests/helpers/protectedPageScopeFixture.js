@@ -1,15 +1,7 @@
-import { readFileSync } from 'node:fs'
-import { createProtectedPageScope } from '../../src/lib/protectedPageScope.js'
+import { createIdentityPageScope } from '../../src/lib/identityPageScope.js'
 
-const composable = readFileSync(
-  new URL('../../src/composables/useProtectedPageScope.js', import.meta.url),
-  'utf8'
-)
-  .replace(/^import .*\n/gm, '')
-  .replace('export function useProtectedPageScope', 'function useProtectedPageScope')
-
-// Execute the production composable and controller; mock only Vue lifecycle
-// registration and PocketBase's synchronous auth-store change notification.
+// Use the same identity scope as the Vue composable; replace only disposal
+// registration and the auth-store change source.
 export function protectedPageScopeFixture(registerDispose = () => {}) {
   const listeners = new Set()
   const authStore = {
@@ -23,13 +15,8 @@ export function protectedPageScopeFixture(registerDispose = () => {}) {
       return () => listeners.delete(listener)
     }
   }
-  const useProtectedPageScope = new Function(
-    'onBeforeUnmount',
-    'ref',
-    'pb',
-    'createProtectedPageScope',
-    `${composable}\nreturn useProtectedPageScope`
-  )(registerDispose, (value) => ({ value }), { authStore }, createProtectedPageScope)
+  const useProtectedPageScope = (clear) =>
+    createIdentityPageScope({ authStore }, clear, registerDispose)
   return {
     useProtectedPageScope,
     authStore,

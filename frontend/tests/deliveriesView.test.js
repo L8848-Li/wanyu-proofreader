@@ -1,108 +1,75 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import * as pbErrors from '../src/utils/pbErrors.js'
-import { USAGE_PURPOSE_LABELS } from '../src/constants/sourceRegistry.js'
-import { receiptLabel } from '../src/lib/deliveryPresentation.js'
-import * as batchReportContext from '../src/lib/batchReportContext.js'
+import { afterEach } from 'node:test'
+import { effectScope, nextTick, reactive } from 'vue'
+import { createDeliveryWorkspace } from '../src/composables/createDeliveryWorkspace.js'
+import { receiptLabel, receiptEventNote } from '../src/lib/deliveryPresentation.js'
 import { protectedPageScopeFixture } from './helpers/protectedPageScopeFixture.js'
 
-// Execute the shipped SFC callbacks with mocked refs and network, so the
-// assertions cover the component's own code rather than a rewritten copy.
-const source = readFileSync(
-  new URL('../src/views/admin/DeliveriesView.vue', import.meta.url),
-  'utf8'
-).replace(/\r\n/g, '\n')
+const disposals = new Set()
+afterEach(() => {
+  for (const dispose of disposals) dispose()
+})
 
-function extract(pattern, label) {
-  const match = source.match(pattern)
-  assert.ok(match, `component must declare ${label}`)
-  return match[1]
-}
-
-const receiptEventNoteSource = extract(
-  /\nconst receiptEventNote = (\(event\) => \{[\s\S]*?\n\})\n/,
-  'receiptEventNote'
-)
-const errorImports = source.match(/import \{([^}]+)\} from '@\/utils\/pbErrors'/)
-assert.ok(errorImports, 'component must declare its error helper imports')
-const helpers = Object.fromEntries(
-  errorImports[1].split(',').map((name) => [name.trim(), pbErrors[name.trim()]])
-)
-
-const receiptEventNote = new Function(`return (${receiptEventNoteSource})`)()
-
-function fixture(services = {}) {
-  const route = {
+function fixture(services = {}, { automaticRoute = false } = {}) {
+  const route = reactive({
     params: { id: 'project-1' },
     query: {},
     fullPath: '/projects/project-1/deliveries'
-  }
-  const unmount = []
-  const protectedScope = protectedPageScopeFixture((callback) => unmount.push(callback))
+  })
+  const cleanup = []
+  const protectedScope = protectedPageScopeFixture((callback) => cleanup.push(callback))
   let routeChanged
-  const bindings = {
-    ...helpers,
-    ...batchReportContext,
-    USAGE_PURPOSE_LABELS,
-    receiptLabel,
-    useProtectedPageScope: protectedScope.useProtectedPageScope,
-    ref: (value) => ({ value }),
-    reactive: (value) => value,
-    computed: (getter) => ({
-      get value() {
-        return getter()
-      }
-    }),
-    nextTick: (callback) => Promise.resolve().then(() => callback?.()),
-    useRoute: () => route,
-    useRouter: () => ({
-      push: async ({ query }) => {
-        route.query = query
-        route.fullPath = '/projects/project-1/deliveries?' + new URLSearchParams(query)
-        return routeChanged()
-      }
-    }),
-    watch: (getter, callback) => {
-      if (typeof getter === 'function' && getter.toString().includes('route.fullPath'))
-        routeChanged = callback
-    },
-    onBeforeUnmount: (callback) => unmount.push(callback),
-    listDeliveries: async () => ({ items: [], metrics: {}, page: 1, totalPages: 1 }),
-    getDelivery: async (id) => ({
-      id,
-      project: route.params.id,
-      recipient: 'synthetic',
-      reconciliation: { payload_count: 1 }
-    }),
-    listDeliveryEvents: async () => ({ events: [], page: 1, totalPages: 1 }),
-    batchReportNavigationQuery: () => ({}),
-    readBatchReportContext: () => null,
-    listAdoptionBatches: async () => ({ batches: [], page: 1, totalPages: 1 }),
-    getAdoptionBatch: async (id) => ({ id, project: route.params.id, status: 'confirmed' }),
-    ...services
+  const router = {
+    push: async ({ query }) => {
+      route.query = query
+      route.fullPath = '/projects/' + route.params.id + '/deliveries?' + new URLSearchParams(query)
+      if (routeChanged) routeChanged()
+      await nextTick()
+    }
   }
-  const script = source
-    .match(/<script setup>([\s\S]*?)<\/script>/)[1]
-    .replace(/^import[\s\S]*? from ['"][^'"]+['"]\r?$/gm, '')
-  const state = new Function(
-    ...Object.keys(bindings),
-    `${script}\nreturn {
-      load, loadAdoptions, action, navigate, pageScope, accessLost, unavailable, projectUnavailable,
-      projectId, view, selectedPackageId, currentDelivery, nativeBatch, adoptionChoices,
-      adoptionPage, adoptionPages, loading, busy, loadError, operationError, success,
-      items, metrics, handoff, handoffFilename, handoffInput, reviewer, previous,
-      changeReason, preview, confirmed, requestId, selected, eventForm, eventBaseline,
-      impacts, sourceRef, visibleDeliveries, dirty, clearProtectedData, handleFailure,
-      listPage, openDelivery, selectEvent
-    }`
-  )(...Object.values(bindings))
-  return {
-    ...state,
-    route,
-    changeIdentity: protectedScope.changeIdentity,
-    unmount: () => unmount.forEach((callback) => callback())
+  const scope = effectScope()
+  const state = scope.run(() =>
+    createDeliveryWorkspace({
+      route,
+      router,
+      useProtectedPageScope: protectedScope.useProtectedPageScope,
+      onBeforeUnmount: (callback) => cleanup.push(callback),
+      // Most tests control route delivery to isolate a request race. The automatic
+      // route test below uses the production Vue watcher, including its initial load.
+      ...(automaticRoute
+        ? {}
+        : {
+            observeRoute: (callback) => {
+              routeChanged = callback
+              return () => {
+                routeChanged = null
+              }
+            }
+          }),
+      services: {
+        listDeliveries: async () => ({ items: [], metrics: {}, page: 1, totalPages: 1 }),
+        getDelivery: async (id) => ({
+          id,
+          project: route.params.id,
+          recipient: 'synthetic',
+          reconciliation: { payload_count: 1 }
+        }),
+        listDeliveryEvents: async () => ({ events: [], page: 1, totalPages: 1 }),
+        listAdoptionBatches: async () => ({ batches: [], page: 1, totalPages: 1 }),
+        getAdoptionBatch: async (id) => ({ id, project: route.params.id, status: 'confirmed' }),
+        ...services
+      }
+    })
+  )
+  const unmount = () => {
+    if (!disposals.delete(unmount)) return
+    cleanup.forEach((callback) => callback())
+    scope.stop()
   }
+  disposals.add(unmount)
+  return { ...state, route, changeIdentity: protectedScope.changeIdentity, unmount }
 }
 
 async function runLoad(listDeliveries, initial = {}) {
@@ -642,22 +609,89 @@ test('unmount prevents old delivery data and errors from publishing', async () =
   assert.equal(state.items.value[0].id, 'preserved-package')
 })
 
-test('impact selection navigates directly by ID without depending on the current list page', async () => {
-  const body = extract(/function openImpact\(item\) \{([^}]+)\}/, 'openImpact')
-  const opened = []
-  const open = new Function('openDelivery', `return function(item) {${body}}`)((item) =>
-    opened.push(item.id)
-  )
-  open({ id: 'off-page-package' })
-  assert.deepEqual(opened, ['off-page-package'])
-  assert.match(source, /getDelivery\(selectedPackageId.value, \{ signal: request.signal \}\)/)
-  assert.match(source, /detail.project !== id/)
-  assert.match(source, /<WorkspaceLeaveGuard[\s\S]*?:dirty="dirty"[\s\S]*?:preserve-query="false"/)
+test('impact selection loads the off-page ID and rejects a detail from another project', async () => {
+  const requested = []
+  const state = fixture({
+    getDelivery: async (id) => {
+      requested.push(id)
+      return { id, project: 'another-project' }
+    }
+  })
+  await state.openImpact({ id: 'off-page-package' })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(requested, ['off-page-package'])
+  assert.equal(state.currentDelivery.value, null)
+  assert.equal(state.unavailable.value, true)
+  assert.match(state.loadError.value, /不可用/)
 })
 
-test('native retry keeps its UUID until a preview or input changes', () => {
-  assert.match(source, /request_id: requestId.value/)
-  assert.match(source, /createAdoptionDelivery/)
-  assert.match(source, /adoption_batch_id: nativeBatch.value\?\.id/)
-  assert.match(source, /expected_scope_digest: nativeBatch.value\?\.scope_digest/)
+test('native generation retry reuses its UUID and complete scope until input changes', async () => {
+  const attempts = []
+  const state = fixture({
+    checkAdoptionDelivery: async () => ({ can_generate: true, preview_sha256: 'preview-hash' }),
+    createAdoptionDelivery: async (_id, body) => {
+      attempts.push(body)
+      throw new Error('response lost')
+    }
+  })
+  state.view.value = 'prepare'
+  state.nativeBatch.value = { id: 'adoption-one', scope_digest: 'scope-hash' }
+  state.reviewer.value = 'Synthetic reviewer'
+  await nextTick()
+  await state.preflight()
+  const requestId = state.requestId.value
+  assert.ok(requestId)
+  state.confirmed.value = true
+  await state.generate()
+  await state.generate()
+  assert.equal(attempts.length, 2)
+  assert.deepEqual(attempts[0], {
+    adoption_batch_id: 'adoption-one',
+    expected_scope_digest: 'scope-hash',
+    reviewer: 'Synthetic reviewer',
+    previous: '',
+    change_reason: '',
+    preview_sha256: 'preview-hash',
+    request_id: requestId
+  })
+  assert.deepEqual(attempts[1], attempts[0])
+  assert.equal(state.requestId.value, requestId)
+  state.changeReason.value = 'Changed input'
+  await nextTick()
+  assert.equal(state.preview.value, null)
+  assert.equal(state.confirmed.value, false)
+  assert.equal(state.requestId.value, '')
+  await state.generate()
+  assert.equal(attempts.length, 2, 'changed scope cannot generate without another preflight')
+})
+
+test('production route watcher clears old drafts, loads the new route and stops on disposal', async () => {
+  const reads = []
+  const state = fixture(
+    {
+      listDeliveries: async (id, { page }) => {
+        reads.push([id, page])
+        return { items: [{ id }], metrics: {}, page, totalPages: 3 }
+      }
+    },
+    { automaticRoute: true }
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  state.selected.value = { id: 'private' }
+  state.eventForm.reason = 'private note'
+  state.route.params.id = 'project-2'
+  state.route.query = { page: '2' }
+  state.route.fullPath = '/projects/project-2/deliveries?page=2'
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(reads, [
+    ['project-1', 1],
+    ['project-2', 2]
+  ])
+  assert.equal(state.selected.value, null)
+  assert.equal(state.eventForm.reason, '')
+  assert.equal(state.items.value[0].id, 'project-2')
+  state.unmount()
+  state.route.fullPath = '/projects/project-3/deliveries'
+  await nextTick()
+  assert.equal(reads.length, 2)
 })

@@ -1,7 +1,7 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><div id="app"></div><script type="module">
 // Mounted production components with entirely synthetic responses. This fixture
 // deliberately supports transports that ignore AbortSignal to exercise epochs.
-import { createApp, h, ref, nextTick } from 'vue'
+import { createApp, h, ref, nextTick, proxyRefs } from 'vue'
 import { createPinia } from 'pinia'
 import { createRouter, createMemoryHistory, RouterView } from 'vue-router'
 import Adoption from '../../src/views/admin/AdoptionView.vue'
@@ -62,7 +62,7 @@ if(params.has('baseline')) {
 }
 const router=createRouter({history:createMemoryHistory(),routes:[{path:'/projects/:id/adoption',name:'ProjectAdoption',component:AdoptionComponent},{path:'/projects/:id/deliveries',component:DeliveryComponent},{path:'/:pathMatch(.*)*',component:{render:()=>h('main','安全目标页')}}]})
 const view=ref(null)
-const api={scenario,router,call:(name,...args)=>view.value.$.setupState[name](...args),state:()=>view.value?.$?.setupState,
+const api={scenario,router,call:(name,...args)=>api.state()[name](...args),state:()=>{const s=view.value?.$?.setupState;return s?.workspace?proxyRefs(s.workspace):s},
  resolve:(key)=>{pending.get(key).resolve();pending.delete(key)},
  reject:(key,status)=>{pending.get(key).reject(Object.assign(new Error('合成延迟失败'),{status}));pending.delete(key)},
  identity:(id)=>id?pb.authStore.save(token,user(id)):pb.authStore.clear(),
