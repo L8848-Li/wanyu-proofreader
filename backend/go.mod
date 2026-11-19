@@ -5,7 +5,7 @@ go 1.27.4
 require (
 	github.com/dop251/goja v0.0.0-20261021140635-64adc8bb4d51
 	github.com/dop251/goja_nodejs v0.0.0-20260212111938-1f56ff5bcf14
-	github.com/labstack/echo/v5 v5.4.5
+	github.com/labstack/echo/v5 v5.4.6
 	github.com/pdfcpu/pdfcpu v0.16.4
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/ozzo-validation/v4 v4.3.0
