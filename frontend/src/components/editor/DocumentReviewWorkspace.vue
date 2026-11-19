@@ -48,6 +48,7 @@
         <div v-else-if="pdfError" class="alert alert-error editor-inline-alert" role="alert">
           <p>{{ pdfError }}</p>
           <button
+            ref="sourceRetry"
             type="button"
             class="btn btn-secondary btn-sm"
             :disabled="!canReloadSource"
@@ -95,16 +96,18 @@
           <template #navigation>
             <div class="editor-toolbar pdf-page-navigation" aria-label="PDF 页码导航">
               <button
+                ref="previousPage"
                 class="pdf-tool"
                 :disabled="currentPdfPage <= allowedPdfPages[0]"
                 aria-label="上一页原文"
-                @click="switchPdfPage(-1)"
+                @click="navigatePdfPage(currentPdfPage - 1, 'previousPage')"
               >
                 ‹
               </button>
               <label class="pdf-page-control"
                 ><span class="sr-only">PDF 页码</span
                 ><input
+                  ref="pageNumber"
                   v-model.number="pdfPageInput"
                   type="number"
                   class="form-control pdf-page-input"
@@ -115,10 +118,11 @@
                   @keydown.enter.prevent="applyPdfPageInput"
               /></label>
               <button
+                ref="nextPage"
                 class="pdf-tool"
                 :disabled="currentPdfPage >= allowedPdfPages[1]"
                 aria-label="下一页原文"
-                @click="switchPdfPage(1)"
+                @click="navigatePdfPage(currentPdfPage + 1, 'nextPage')"
               >
                 ›
               </button>
@@ -130,6 +134,7 @@
               aria-label="原文显示范围"
             >
               <button
+                ref="localSource"
                 type="button"
                 class="pdf-tool"
                 :aria-pressed="Boolean(visibleSourceRegion)"
@@ -240,7 +245,16 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, toRef, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+  ref,
+  toRef,
+  useTemplateRef,
+  watch
+} from 'vue'
 import '@/editor-experience.css'
 import { clampSourceWidth, editorPreferenceKey, readEditorPreference } from '@/lib/editorExperience'
 import { currentUserId } from '@/services/authService'
@@ -423,11 +437,18 @@ const {
   totalPdfPages,
   resetPdf,
   resolveProjectPdf,
-  clampPdfPage,
-  switchPdfPage
+  clampPdfPage
 } = useProjectPdf(pageRef)
 
 const sourcePanel = ref(null)
+const sourceRetry = useTemplateRef('sourceRetry')
+const pdfNavigationControls = {
+  previousPage: useTemplateRef('previousPage'),
+  pageNumber: useTemplateRef('pageNumber'),
+  nextPage: useTemplateRef('nextPage'),
+  localSource: useTemplateRef('localSource')
+}
+let pendingPdfFocus = null
 const canReloadSource = computed(() =>
   Boolean(props.page?.id && props.pdfEnabled && !props.loading && !pdfLoading.value)
 )
@@ -482,8 +503,46 @@ defineExpose({ revealEntrySource, clearFindingSource })
 function showLocalSource() {
   if (!hasSourceRegion.value) return
   preferLocalSource.value = true
-  currentPdfPage.value = clampPdfPage(entryRegion.value.physicalPage)
+  navigatePdfPage(entryRegion.value.physicalPage, 'localSource')
 }
+
+function navigatePdfPage(number, controlName) {
+  const target = clampPdfPage(number)
+  // On the same page, the source view updates in place without moving focus.
+  if (target === currentPdfPage.value) return
+  const control = pdfNavigationControls[controlName]?.value
+  currentPdfPage.value = target
+  if (control && document.activeElement === control) {
+    // Loading a different page image detaches the viewer and its toolbar.
+    pendingPdfFocus = { controlName, entryId: props.page?.id }
+    sourcePanel.value?.focus({ preventScroll: true })
+  }
+}
+
+watch(
+  [currentPdfPage, pdfLoading],
+  ([, loading]) => {
+    if (loading || !pendingPdfFocus) return
+    const { controlName, entryId } = pendingPdfFocus
+    pendingPdfFocus = null
+    if (
+      entryId !== props.page?.id ||
+      !canReloadSource.value ||
+      sourceCollapsed.value ||
+      document.activeElement !== sourcePanel.value
+    )
+      return
+    const control = pdfNavigationControls[controlName].value
+    const restoredControl = pdfError.value
+      ? sourceRetry.value
+      : control && !control.disabled
+        ? control
+        : pdfNavigationControls.pageNumber.value
+    const destination = restoredControl ?? sourcePanel.value
+    destination?.focus({ preventScroll: true })
+  },
+  { flush: 'post' }
+)
 
 watch(currentPdfPage, (value) => {
   pdfPageInput.value = value
@@ -510,7 +569,7 @@ watch(
 onBeforeUnmount(resetPdf)
 
 function applyPdfPageInput() {
-  currentPdfPage.value = clampPdfPage(pdfPageInput.value)
+  navigatePdfPage(pdfPageInput.value, 'pageNumber')
   pdfPageInput.value = currentPdfPage.value
 }
 </script>

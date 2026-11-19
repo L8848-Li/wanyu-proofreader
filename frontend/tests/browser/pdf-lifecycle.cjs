@@ -164,6 +164,71 @@ async function configurePreviewExpiry(page, outcome) {
   return { release }
 }
 
+async function configurePageImages(page) {
+  const expiresAt = '2099-01-01T00:00:00Z'
+  const region = {
+    entryId: 'page1',
+    physicalPage: 5,
+    rect: { x: 0.1, y: 0.12, width: 0.8, height: 0.12 }
+  }
+  const image = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 480
+    canvas.height = 640
+    const context = canvas.getContext('2d')
+    context.fillStyle = '#faf5e8'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.fillStyle = '#222'
+    context.font = '20px sans-serif'
+    context.fillText('Synthetic source entry', 60, 118)
+    return canvas.toDataURL('image/webp').split(',')[1]
+  })
+  let held
+  let release
+  await page.route('**/api/fangji/pages/*/pdf/descriptor', (route) =>
+    route.fulfill({
+      json: {
+        key: 'fixture-pdf',
+        expiresAt,
+        start: 5,
+        end: 6,
+        total: 10,
+        sourceRegion: { ...region, assetKey: 'fixture-pdf' }
+      }
+    })
+  )
+  await page.route('**/api/fangji/pages/*/images/*/descriptor', async (route) => {
+    const url = new URL(route.request().url())
+    const isEntryPage = url.pathname.endsWith('/5/descriptor')
+    if (!isEntryPage && held) await held
+    const assetId = isEntryPage ? 'fixture-image-5' : 'fixture-image-6'
+    return route.fulfill({
+      json: {
+        url: url.pathname.replace(/descriptor$/, 'asset'),
+        assetId,
+        expiresAt,
+        width: 480,
+        height: 640,
+        sourceRegion: isEntryPage ? { ...region, assetKey: assetId } : null
+      }
+    })
+  })
+  await page.route('**/api/fangji/pages/*/images/*/asset', (route) =>
+    route.fulfill({ contentType: 'image/webp', body: Buffer.from(image, 'base64') })
+  )
+  return {
+    holdNextPage() {
+      held = new Promise((resolve) => {
+        release = resolve
+      })
+    },
+    release() {
+      release?.()
+      held = null
+    }
+  }
+}
+
 async function waitForRenderedPdf(page) {
   await page.waitForFunction(
     () =>
@@ -529,6 +594,61 @@ async function main() {
       await slider.press('ArrowRight')
       assert.equal(await input.inputValue(), '189')
     })
+    await scenario(
+      'page-image-navigation-focus',
+      async (page, _barrier, images) => {
+        const local = page.getByRole('button', { name: '本条局部' })
+        const next = page.getByRole('button', { name: '下一页原文' })
+        const pageNumber = page.getByRole('spinbutton', { name: 'PDF 页码' })
+        const source = page.getByRole('region', { name: '来源原文' })
+        const field = page.locator('.proofread-textarea').first()
+        await page.getByRole('img', { name: '本条原文局部' }).waitFor()
+
+        await page.getByRole('button', { name: '整页', exact: true }).press('Enter')
+        await page.getByRole('img', { name: '原文页面', exact: true }).waitFor()
+        await local.press('Enter')
+        await page.getByRole('img', { name: '本条原文局部' }).waitFor()
+        assert.equal(await pageNumber.inputValue(), '5')
+        assert.equal(await local.evaluate((el) => el === document.activeElement), true)
+
+        await next.press('Enter')
+        await page.getByRole('img', { name: '原文页面', exact: true }).waitFor()
+        assert.equal(await pageNumber.inputValue(), '6')
+        assert.equal(await pageNumber.evaluate((el) => el === document.activeElement), true)
+
+        await page.keyboard.press('Tab')
+        assert.equal(await local.evaluate((el) => el === document.activeElement), true)
+        await page.keyboard.press('Enter')
+        await page.getByRole('img', { name: '本条原文局部' }).waitFor()
+        assert.equal(await pageNumber.inputValue(), '5')
+        assert.equal(await local.evaluate((el) => el === document.activeElement), true)
+
+        images.holdNextPage()
+        await pageNumber.fill('6')
+        await pageNumber.press('Enter')
+        await page.getByText('正在加载原文…', { exact: true }).waitFor()
+        assert.equal(await source.evaluate((el) => el === document.activeElement), true)
+        assert.equal(await page.locator('.pdf-page-image').count(), 0)
+        await field.focus()
+        images.release()
+        await page.getByRole('img', { name: '原文页面', exact: true }).waitFor()
+        assert.equal(await field.evaluate((el) => el === document.activeElement), true)
+
+        await local.press('Enter')
+        await page.getByRole('img', { name: '本条原文局部' }).waitFor()
+        assert.equal(await local.evaluate((el) => el === document.activeElement), true)
+
+        await pageNumber.press('ArrowUp')
+        await page.getByRole('img', { name: '原文页面', exact: true }).waitFor()
+        assert.equal(await pageNumber.inputValue(), '6')
+        assert.equal(await pageNumber.evaluate((el) => el === document.activeElement), true)
+
+        await local.press('Enter')
+        await page.getByRole('img', { name: '本条原文局部' }).waitFor()
+      },
+      false,
+      configurePageImages
+    )
     await scenario(
       'source-read-failure',
       async (page, barrier) => {
