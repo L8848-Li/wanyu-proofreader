@@ -309,6 +309,7 @@ func (s *importService) registerSchemeConversion() error {
 		e.Router.GET("/api/fangji/projects/{projectId}/conversions", s.listConversions).Bind(apis.RequireAuth("users"))
 		e.Router.GET("/api/fangji/projects/{projectId}/conversions/{jobId}", s.getConversion).Bind(apis.RequireAuth("users"))
 		e.Router.GET("/api/fangji/projects/{projectId}/normalizations", s.listNormalizations).Bind(apis.RequireAuth("users"))
+		e.Router.GET("/api/fangji/projects/{projectId}/normalization-report", s.exportNormalizationReport).Bind(apis.RequireAuth("users"))
 		e.Router.GET("/api/fangji/projects/{projectId}/normalization-exceptions", s.exportNormalizationExceptions).Bind(apis.RequireAuth("users"))
 		e.Router.POST("/api/fangji/pages/{pageId}/normalization", s.decideNormalization).Bind(apis.RequireAuth("users"))
 		return e.Next()

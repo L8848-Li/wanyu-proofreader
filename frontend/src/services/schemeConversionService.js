@@ -41,6 +41,14 @@ export async function listNormalizations(
   })
 }
 
+export async function getNormalizationReport(projectId, status, signal) {
+  const query = new URLSearchParams({ status })
+  return pb.send(
+    `/api/fangji/projects/${encodeURIComponent(projectId)}/normalization-report?${query}`,
+    { requestKey: null, signal }
+  )
+}
+
 export async function decideNormalization(pageId, { canonical, basis, expectedBasis }) {
   return pb.send(`/api/fangji/pages/${encodeURIComponent(pageId)}/normalization`, {
     method: 'POST',

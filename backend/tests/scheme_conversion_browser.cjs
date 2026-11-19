@@ -154,6 +154,12 @@ async function openProject (page, projectId) {
     for (const label of secondPageRows) {
       assert.ok(!firstPageRows.includes(label), `第二页不得重复第一页的条目：${label}`)
     }
+    const exported = manager.waitForEvent('download')
+    await schemeSection(manager).getByRole('button', { name: '导出筛选异常清单' }).click()
+    const report = JSON.parse(fs.readFileSync(await (await exported).path(), 'utf8'))
+    assert.equal(report.count, 13)
+    assert.equal(new Set(report.items.map(item => item.id)).size, 13)
+    await schemeSection(manager).getByText('已导出当前筛选的全部 13 条异常。').waitFor()
     await shoot(manager, 'scheme-review-page-two')
     await pager.getByRole('button', { name: '上一页' }).click()
     await manager.waitForTimeout(1500)
@@ -188,7 +194,9 @@ async function openProject (page, projectId) {
     const leftover = await api(
       `/api/fangji/projects/${fixture.project.id}/normalizations?status=AMBIGUOUS&perPage=100`)
     assert.equal(leftover.items.length, 11, `界面复核掉一条后应剩 11 条 AMBIGUOUS：${leftover.items.length}`)
+    const snapshots = []
     for (const item of leftover.items) {
+      snapshots.push(api(`/api/fangji/projects/${fixture.project.id}/normalization-report?status=AMBIGUOUS`))
       assert.ok(typeof item.expected_basis === 'string' && item.expected_basis,
         `真实复核队列必须提供当前依据凭据：${item.id}`)
       const tone = (item.source_pronunciation.match(/\d+/) || ['533'])[0]
@@ -200,6 +208,13 @@ async function openProject (page, projectId) {
           expected_basis: item.expected_basis
         }
       })
+    }
+
+    // Each concurrent report must equal a complete queue before or after a decision.
+    for (const snapshot of await Promise.all(snapshots)) {
+      const expected = leftover.items.slice(leftover.items.length - snapshot.count)
+      assert.deepEqual(snapshot.items.map(item => item.id), expected.map(item => item.id))
+      assert.equal(snapshot.count, snapshot.items.length)
     }
 
     await manager.reload()
@@ -220,6 +235,12 @@ async function openProject (page, projectId) {
     // 「没有待复核」把「暂未支持」也一起说没了。
     await schemeSection(manager).getByRole('button', { name: '需人工确认', exact: true }).click()
     await manager.waitForTimeout(1500)
+    const emptyDownload = manager.waitForEvent('download')
+    await schemeSection(manager).getByRole('button', { name: '导出筛选异常清单' }).click()
+    const empty = JSON.parse(fs.readFileSync(await (await emptyDownload).path(), 'utf8'))
+    assert.equal(empty.count, 0)
+    assert.deepEqual(empty.items, [])
+    assert.deepEqual(empty.scope.statuses, ['AMBIGUOUS'])
     const ambiguousEmpty = await schemeSection(manager).innerText()
     assert.match(ambiguousEmpty, /当前没有「需人工确认」的条目/, `筛选空态要说清是哪一种空：${ambiguousEmpty.slice(0, 300)}`)
     await schemeSection(manager).getByRole('button', { name: '全部待复核' }).click()

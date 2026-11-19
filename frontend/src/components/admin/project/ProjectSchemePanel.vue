@@ -169,6 +169,20 @@
             暂未支持
           </AppButton>
         </div>
+        <AppButton
+          type="button"
+          size="sm"
+          variant="secondary"
+          :loading="reportBusy"
+          loading-label="正在导出…"
+          :disabled="reportBusy || reviewLoading || !!reviewError"
+          @click="exportReport"
+        >
+          导出筛选异常清单
+        </AppButton>
+        <p class="text-sm text-muted">清单包含当前筛选的所有页，供项目内部核对。</p>
+        <p v-if="reportError" class="alert alert-error" role="alert">{{ reportError }}</p>
+        <p v-else-if="reportNotice" role="status">{{ reportNotice }}</p>
         <details v-if="offPageDrafts.length" class="mb-3">
           <summary>查看暂不在本页的工作区草稿（{{ offPageDrafts.length }}）</summary>
           <div v-for="old in offPageDrafts" :key="old.id">
@@ -355,6 +369,7 @@ import {
   listConversions,
   getConversion,
   listNormalizations,
+  getNormalizationReport,
   listSchemeAdapters,
   startConversion
 } from '@/services/schemeConversionService'
@@ -366,6 +381,8 @@ import {
   normalizationStatusLabel,
   schemeOptionLabel
 } from '@/lib/schemeConversion'
+import { downloadText } from '@/lib/downloadText'
+import { currentUserId } from '@/services/authService'
 import { getPbMessage } from '@/utils/pbErrors'
 import {
   reconcileNormalizationDraft,
@@ -471,6 +488,52 @@ const reviewEmptyMessage = computed(() => {
   return '当前没有待复核的条目。'
 })
 
+const reportBusy = ref(false)
+const reportError = ref('')
+const reportNotice = ref('')
+let reportController
+function reviewStatuses() {
+  return reviewStatusFilter.value === 'all' ? 'AMBIGUOUS,UNSUPPORTED' : reviewStatusFilter.value
+}
+
+async function exportReport() {
+  if (reportBusy.value) return
+  const status = reviewStatuses()
+  const user = currentUserId()
+  const controller = new AbortController()
+  reportController = controller
+  reportBusy.value = true
+  reportNotice.value = ''
+  reportError.value = ''
+  try {
+    const report = await getNormalizationReport(projectId, status, controller.signal)
+    if (controller.signal.aborted || user !== currentUserId() || props.projectId !== projectId)
+      return
+    if (
+      report?.scope?.project_id !== projectId ||
+      report.scope.statuses?.join(',') !== status ||
+      !Array.isArray(report.items) ||
+      report.count !== report.items.length
+    ) {
+      throw new Error('清单范围或条数不一致，请重新导出。')
+    }
+    downloadText(
+      JSON.stringify(report),
+      `归一异常-${projectId}-${status}.json`,
+      'application/json;charset=utf-8'
+    )
+    reportNotice.value = `已导出当前筛选的全部 ${report.count} 条异常。`
+  } catch (error) {
+    if (!controller.signal.aborted && user === currentUserId())
+      reportError.value = getPbMessage(error, '导出失败，请重试。')
+  } finally {
+    if (reportController === controller) {
+      reportBusy.value = false
+      reportController = undefined
+    }
+  }
+}
+
 let reviewGeneration = 0
 let disposed = false
 
@@ -491,8 +554,7 @@ watch(
 
 async function loadReviews() {
   const generation = ++reviewGeneration
-  const status =
-    reviewStatusFilter.value === 'all' ? 'AMBIGUOUS,UNSUPPORTED' : reviewStatusFilter.value
+  const status = reviewStatuses()
   reviewLoading.value = true
   reviewError.value = ''
   try {
@@ -524,6 +586,9 @@ async function loadReviews() {
 
 async function setReviewFilter(value) {
   if (reviewStatusFilter.value === value) return
+  reportController?.abort()
+  reportNotice.value = ''
+  reportError.value = ''
   reviewStatusFilter.value = value
   // 换了筛选条件就是换了一份清单，页码必须从头开始。
   reviewPage.value = 1
@@ -658,6 +723,7 @@ async function saveReview(row) {
 
 onBeforeUnmount(() => {
   disposed = true
+  reportController?.abort()
   reviewGeneration += 1
   schemeObserver?.disconnect()
 })

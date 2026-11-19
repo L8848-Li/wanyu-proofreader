@@ -86,7 +86,11 @@ const rows = [
 ]
 // 18 条：自动确定 5（4 EXACT + 1 REVIEWED 的例外）、需人工确认 12、暂未支持 1。
 const EXPECTED_SUMMARY = { total: 18, exact: 4, reviewed: 1, ambiguous: 12, unsupported: 1 }
+const source = await api('/api/fangji/sources', {
+  method: 'POST', token, expected: 201, body: { title: '合成归一异常清单', logical_id: 'scheme-report-fixture', status: 'confirmed' }
+})
 const form = new FormData()
+form.set('source_id', source.logical_id)
 form.set('file', new Blob([`词头,读音,PDF页码\n${rows.map((row) => row.join(',')).join('\n')}\n`]), 'scheme-browser.csv')
 form.set('inspect_only', 'true')
 const csvJob = await api(`/api/fangji/projects/${project.id}/imports/csv`, { method: 'POST', token, body: form, expected: 202 })
@@ -118,6 +122,41 @@ for (const [key, want] of Object.entries(EXPECTED_SUMMARY)) {
   assert.equal(finished[`${key}_count`], want, `${key}: 实得 ${finished[`${key}_count`]}，手算 ${want}——截图上的汇总就是这些数`)
 }
 assert.ok(finished.ambiguous_count > 10, `复核队列要翻得出第二页：${JSON.stringify(finished)}`)
+
+const reportPath = `/api/fangji/projects/${project.id}/normalization-report`
+await api(reportPath, { expected: 401 })
+const credentials = { email: 'report-reader@example.com', password: 'SchemeTest12345!' }
+const reader = await api('/api/collections/users/records', { method: 'POST',
+  body: { ...credentials, name: 'Report Reader', passwordConfirm: credentials.password }
+})
+await api(`/api/fangji/projects/${project.id}/members/${reader.id}`, {
+  method: 'PUT', token, body: { role: 'proofreader' }
+})
+const readerAuth = await api('/api/collections/users/auth-with-password', {
+  method: 'POST', body: { identity: credentials.email, password: credentials.password }
+})
+await api(reportPath, { token: readerAuth.token, expected: 403 })
+await api(reportPath, { token, expected: 403 })
+await api(`${reportPath}?status=REVIEWED`, { token, expected: 400 })
+await api(`${reportPath}?page=1`, { token, expected: 400 })
+await api(`/api/fangji/sources/${source.id}/usages/internal_research`, {
+  token, method: 'PUT', body: { decision: 'allow', evidence_ref: 'synthetic-report-fixture' }
+})
+for (const status of ['AMBIGUOUS', 'UNSUPPORTED', 'AMBIGUOUS,UNSUPPORTED']) {
+  const report = await api(`${reportPath}?status=${status}`, { token })
+  const queue = await api(`/api/fangji/projects/${project.id}/normalizations?status=${status}&perPage=100`, { token })
+  assert.deepEqual(report.scope, { project_id: project.id, statuses: status.split(',') })
+  assert.equal(report.count, queue.totalItems)
+  assert.deepEqual(report.items.map(item => item.id), queue.items.map(item => item.id))
+  for (const [index, item] of report.items.entries()) {
+    const row = queue.items[index]
+    assert.equal(item.source_ref, source.logical_id)
+    assert.equal(item.normalization_source_snapshot, row.source_pronunciation)
+    for (const field of ['page_number', 'pdf_page', 'normalization_status', 'normalization_source_column', 'source_scheme_id', 'canonical_scheme_id', 'normalization_rule_version', 'normalization_trace', 'candidates', 'normalization_basis']) {
+      assert.deepEqual(item[field], row[field], `${row.id} ${field}`)
+    }
+  }
+}
 
 const fixture = path.resolve(process.env.SCHEME_BROWSER_FIXTURE || 'scheme-browser-fixture.json')
 mkdirSync(path.dirname(fixture), { recursive: true })
