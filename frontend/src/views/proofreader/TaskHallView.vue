@@ -234,6 +234,17 @@
           </dl>
 
           <AppDisclosure
+            v-if="taskView === 'available'"
+            label="查看项目键盘说明"
+            :default-open="route.query.guide === 'keyboard' && selectedProject === queue.project.id"
+            lazy
+          >
+            <ProjectKeyboardPreview
+              :key="currentUserId(auth.user)"
+              :project-id="queue.project.id"
+            />
+          </AppDisclosure>
+          <AppDisclosure
             v-if="taskView !== 'reviewed' && (tierRows(queue).length || queue.missingGlyph)"
             class="task-options"
             label="按难度选择任务"
@@ -322,6 +333,7 @@
 </template>
 
 <script setup>
+import ProjectKeyboardPreview from '@/components/editor/ProjectKeyboardPreview.vue'
 import ProjectPurposeBadge from '@/components/ProjectPurposeBadge.vue'
 import { computed, ref, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useAsyncResource } from '@/composables/useAsyncResource'

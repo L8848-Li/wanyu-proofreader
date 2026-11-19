@@ -54,6 +54,14 @@
             <p class="workbench-context">{{ primaryWork.context }}</p>
             <h2 id="workbench-start-title">{{ primaryWork.projectName }}</h2>
             <p class="workbench-start__detail">{{ primaryWork.detail }}</p>
+            <RouterLink
+              v-if="primaryWork.kind === 'claim'"
+              :to="{
+                path: '/tasks',
+                query: { view: 'available', project: primaryWork.projectId, guide: 'keyboard' }
+              }"
+              >查看项目键盘说明</RouterLink
+            >
             <AppStatusPanel
               v-if="primaryWork.kind === 'resume' && resumeNameError"
               state="error"

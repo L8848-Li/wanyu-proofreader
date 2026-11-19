@@ -4,9 +4,10 @@ export async function listKeyboardLibrary() {
   return pb.send('/api/fangji/keyboards', { requestKey: null })
 }
 
-export async function getProjectKeyboards(projectId) {
+export async function getProjectKeyboards(projectId, { signal } = {}) {
   return pb.send(`/api/fangji/projects/${encodeURIComponent(projectId)}/keyboards`, {
-    requestKey: null
+    requestKey: null,
+    signal
   })
 }
 
