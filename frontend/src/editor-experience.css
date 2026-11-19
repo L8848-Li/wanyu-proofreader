@@ -103,27 +103,10 @@
 .editor-layout.experience-workspace .pdf-toolbar-group,
 .editor-layout.experience-workspace .pdf-page-navigation {
   gap: var(--space-1);
-}
-.editor-layout.experience-workspace .pdf-page-navigation {
-  width: auto;
   flex-wrap: nowrap;
 }
-.pdf-preview-help {
-  position: relative;
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-}
-.pdf-preview-help summary {
-  cursor: pointer;
-  white-space: nowrap;
-  padding: var(--space-2);
-}
-.pdf-preview-help p {
-  padding: var(--space-2);
-  width: 160px;
-}
-.editor-layout.experience-workspace .pdf-toolbar-group:last-child {
-  margin-left: auto;
+.editor-layout.experience-workspace .pdf-display-controls .pdf-toolbar-group {
+  flex-wrap: wrap;
 }
 .editor-layout.experience-workspace .pdf-tool {
   font-size: var(--text-xs);
@@ -372,6 +355,13 @@
 .editor-layout.experience-workspace .proofread-field--active h2 {
   color: var(--primary);
 }
+.editor-layout.experience-workspace .proofread-field:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: var(--space-1);
+}
+.editor-layout.experience-workspace .proofread-field--active .proofread-textarea {
+  border-color: var(--primary);
+}
 .editor-layout.experience-workspace .proofread-field__header {
   margin-bottom: var(--space-2);
   padding: 0;
@@ -447,6 +437,11 @@
     transform: none;
   }
 }
+@media (max-width: 1100px) and (prefers-reduced-motion: no-preference) {
+  .editor-layout.experience-workspace:not(.pdf-collapsed) .source-panel {
+    animation: editor-surface-enter var(--motion-normal) var(--ease-out);
+  }
+}
 .editor-layout.experience-workspace .pdf-page-navigation .pdf-tool {
   min-width: 32px;
   min-height: 32px;
@@ -455,7 +450,6 @@
 @media (max-width: 768px) {
   .editor-layout.experience-workspace .pdf-tool,
   .editor-layout.experience-workspace .pdf-page-navigation .pdf-tool,
-  .editor-layout.experience-workspace .pdf-preview-help > summary,
   .editor-layout.experience-workspace .task-actions-menu > summary {
     min-width: 44px;
     min-height: 44px;

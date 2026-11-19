@@ -81,6 +81,13 @@ async function setup(browser, viewport, { admin = false, readOnly = false } = {}
       )
       await nav.getByRole('button', { name: '下一字段', exact: true }).click()
       assert.equal(await nav.getByRole('combobox').inputValue(), '1')
+      assert.equal(
+        await page
+          .locator('.proofread-field:visible')
+          .evaluate((el) => el === document.activeElement),
+        true,
+        'Field navigation focuses the new field region without opening an input method'
+      )
       await nav.getByRole('combobox').selectOption('0')
       assert.equal(await first.evaluate((el) => el === window.__flowInput), true)
       const controls = await nav.boundingBox()

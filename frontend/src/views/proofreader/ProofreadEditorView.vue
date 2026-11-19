@@ -115,7 +115,7 @@
             @close="closeFinding"
           />
         </div>
-        <div class="proofread-fields">
+        <div ref="fields" class="proofread-fields">
           <ProofreadFieldCard
             v-for="(header, index) in rowHeaders"
             v-show="!mobile || overview || currentField === header"
@@ -173,7 +173,7 @@
         :read-only="ownReview"
         :workflow-label="ownReview ? '结果回看' : '校对'"
         @select="selectField"
-        @next="nextField"
+        @next="advanceField"
         @overview="overview = true"
         ><template v-if="!ownReview" #submit
           ><AppButton
@@ -236,7 +236,7 @@
 import { RouterLink } from 'vue-router'
 import AppButton from '@/components/AppButton.vue'
 import AppStatusPanel from '@/components/AppStatusPanel.vue'
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 import DocumentReviewWorkspace from '@/components/editor/DocumentReviewWorkspace.vue'
 import FieldNavigation from '@/components/editor/FieldNavigation.vue'
 import ProjectKeyboard from '@/components/editor/ProjectKeyboard.vue'
@@ -349,6 +349,7 @@ const {
 } = useProofreadEditor()
 
 const workspace = ref(null)
+const fields = useTemplateRef('fields')
 const findingsPanel = ref(null)
 const entryFinding = ref(null)
 const findingsExpanded = ref(false)
@@ -390,6 +391,16 @@ watch(
 watch(findingsExpanded, (expanded) => {
   if (expanded) researchTelemetry.value?.expandFindings()
 })
+
+async function advanceField() {
+  const pageId = page.value?.id
+  nextField()
+  if (overview.value) return
+  await nextTick()
+  if (page.value?.id !== pageId) return
+  // Focus the field region without summoning the system keyboard on touch screens.
+  fields.value?.querySelector('.proofread-field--active')?.focus({ preventScroll: true })
+}
 
 async function locateFinding(hint) {
   const pageId = page.value?.id

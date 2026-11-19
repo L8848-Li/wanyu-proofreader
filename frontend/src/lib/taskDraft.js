@@ -123,14 +123,23 @@ export function clearTaskDraft(storage, { userId, pageId, savedAt }) {
   storage.removeItem(key)
 }
 
-export function setTaskFlash(storage, message) {
+export function setTaskFlash(storage, message, { userId, pageId, kind = 'notice' }) {
   if (!storage || !message) return
-  storage.setItem(FLASH_KEY, String(message))
+  storage.setItem(FLASH_KEY, JSON.stringify({ message: String(message), userId, pageId, kind }))
 }
 
-export function takeTaskFlash(storage) {
-  if (!storage) return ''
-  const message = storage.getItem(FLASH_KEY) || ''
+export function takeTaskFlash(storage, { userId, pageId }) {
+  if (!storage) return null
+  const raw = storage.getItem(FLASH_KEY)
   storage.removeItem(FLASH_KEY)
-  return message
+  if (!raw) return null
+  try {
+    const flash = JSON.parse(raw)
+    if (flash?.userId === userId && flash?.pageId === pageId && typeof flash?.message === 'string')
+      return flash
+  } catch {
+    // Older tabs stored a plain notice. It does not establish a submission.
+    return { kind: 'notice', message: raw }
+  }
+  return null
 }

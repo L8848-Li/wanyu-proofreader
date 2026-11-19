@@ -74,6 +74,7 @@ const csp = fs.readFileSync(path.resolve(__dirname, '../../frontend/nginx.conf')
    await dialog.getByRole('button',{name:'确认提交',exact:true}).click()
    await page.waitForURL(`**/tasks/${id}/edit`)
    await rendered()
+   await page.locator('.editor-task-feedback').getByText('上一条已提交 · 当前条目尚未提交',{exact:true}).waitFor()
   }
   for(const next of [fixture.pages[2],fixture.pages[3]]) {
    await submitTo(next.id)
@@ -94,6 +95,7 @@ const csp = fs.readFileSync(path.resolve(__dirname, '../../frontend/nginx.conf')
 
   await zoom.fill('200')
   await zoom.press('Enter')
+  await page.locator('.pdf-display-options > summary').click()
   await page.getByRole('button',{name:'旋转 90°',exact:true}).click()
   await rendered()
   await page.waitForFunction(() => {

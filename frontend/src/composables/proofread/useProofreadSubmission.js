@@ -111,7 +111,11 @@ export function useProofreadSubmission({
         if (!isCurrentCase(scope)) return
         if (nextPage?.id) {
           saveClaimedLease(nextPage)
-          setTaskFlash(window.sessionStorage, saved.value)
+          setTaskFlash(window.sessionStorage, saved.value, {
+            userId,
+            pageId: nextPage.id,
+            kind: 'submission'
+          })
           leaseNavigationAllowed.value = true
           await router.push(taskEditTarget(nextPage.id))
           return
@@ -165,7 +169,11 @@ export function useProofreadSubmission({
       if (!isCurrentCase(scope)) return
       if (nextPage?.id) {
         saveClaimedLease(nextPage)
-        setTaskFlash(window.sessionStorage, saved.value)
+        setTaskFlash(window.sessionStorage, saved.value, {
+          userId: currentUserId.value,
+          pageId: nextPage.id,
+          kind: 'submission'
+        })
         claimNextFailure.value = false
         leaseNavigationAllowed.value = true
         await router.push(taskEditTarget(nextPage.id))

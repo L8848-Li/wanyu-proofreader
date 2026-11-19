@@ -80,6 +80,7 @@ export function useProofreadEditor() {
   const releasing = ref(false)
   const reclaiming = ref(false)
   const saved = ref('')
+  const previousSubmission = ref('')
   const saveError = ref('')
   const initialRowJson = ref('')
   const draftStatus = ref('')
@@ -234,6 +235,7 @@ export function useProofreadEditor() {
       retryingClaim: retryingClaim.value,
       draftStatus: draftStatus.value,
       saved: saved.value,
+      previousSubmission: previousSubmission.value,
       online: connectionOnline.value
     })
   )
@@ -633,6 +635,7 @@ export function useProofreadEditor() {
     resetNeighbors()
     saveError.value = ''
     saved.value = ''
+    previousSubmission.value = ''
     initialRowJson.value = ''
     draftStatus.value = ''
     activeSelection.value = { field: '', start: null, end: null }
@@ -672,8 +675,11 @@ export function useProofreadEditor() {
         await loadNeighbors()
       }
       if (version !== caseVersion) return
-      const flash = takeTaskFlash(window.sessionStorage)
-      if (flash) saved.value = flash
+      const flash = takeTaskFlash(window.sessionStorage, { userId: currentUserId.value, pageId })
+      if (flash) {
+        saved.value = flash.message
+        if (flash.kind === 'submission') previousSubmission.value = flash.message
+      }
       await nextTick()
       if (version !== caseVersion) return
       onboardingRef.value?.startIfUnseen()

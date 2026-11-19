@@ -146,7 +146,8 @@ export function useProofreadLease({
       if (claimedPage.id !== page.value.id) {
         setTaskFlash(
           window.sessionStorage,
-          '原任务已被重新领取；本地草稿仍保留，已为你打开另一条任务。'
+          '原任务已被重新领取；本地草稿仍保留，已为你打开另一条任务。',
+          { userId: currentUserId.value, pageId: claimedPage.id }
         )
         leaseNavigationAllowed.value = true
         await router.push(taskEditTarget(claimedPage.id))

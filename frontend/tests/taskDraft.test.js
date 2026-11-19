@@ -76,9 +76,20 @@ test('guarded draft clearing preserves a newer or unreadable entry', () => {
 
 test('moves task feedback through session storage exactly once', () => {
   const storage = memoryStorage()
-  setTaskFlash(storage, '上一条已提交')
-  assert.equal(takeTaskFlash(storage), '上一条已提交')
-  assert.equal(takeTaskFlash(storage), '')
+  const scope = { userId: 'alice', pageId: 'next' }
+  setTaskFlash(storage, '已提交', { ...scope, kind: 'submission' })
+  assert.deepEqual(takeTaskFlash(storage, scope), {
+    ...scope,
+    kind: 'submission',
+    message: '已提交'
+  })
+  assert.equal(takeTaskFlash(storage, scope), null)
+  setTaskFlash(storage, '已提交', { ...scope, kind: 'submission' })
+  assert.equal(takeTaskFlash(storage, { ...scope, userId: 'bob' }), null)
+  setTaskFlash(storage, '已提交', { ...scope, kind: 'submission' })
+  assert.equal(takeTaskFlash(storage, { ...scope, pageId: 'other' }), null)
+  storage.setItem('fangji:task-flash:v1', '旧版提示')
+  assert.deepEqual(takeTaskFlash(storage, scope), { kind: 'notice', message: '旧版提示' })
 })
 
 test('keeps old context drafts and refuses to overwrite them when archival storage fails', () => {

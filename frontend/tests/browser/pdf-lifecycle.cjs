@@ -352,6 +352,7 @@ async function main() {
         `expired-preview-${outcome}`,
         async (page, _barrier, { release }) => {
           await waitForRenderedPdf(page)
+          await page.locator('.pdf-display-options > summary').click()
           await page.getByRole('button', { name: '旋转 90°', exact: true }).click()
           for (let step = 0; step < 5; step++) {
             await page.getByRole('button', { name: '放大', exact: true }).click()
@@ -439,6 +440,8 @@ async function main() {
       const slider = page.getByRole('slider', { name: '原文缩放滑块' })
       await input.fill('173')
       await input.press('Enter')
+      const options = page.locator('.pdf-display-options > summary')
+      await options.click()
       assert.equal(await slider.inputValue(), '173')
       await slider.press('ArrowRight')
       assert.equal(await input.inputValue(), '174')
@@ -616,7 +619,8 @@ async function main() {
         assert.equal(await pageNumber.inputValue(), '6')
         assert.equal(await pageNumber.evaluate((el) => el === document.activeElement), true)
 
-        await page.keyboard.press('Tab')
+        // The range selector is before page navigation in tab order.
+        for (let step = 0; step < 3; step++) await page.keyboard.press('Shift+Tab')
         assert.equal(await local.evaluate((el) => el === document.activeElement), true)
         await page.keyboard.press('Enter')
         await page.getByRole('img', { name: '本条原文局部' }).waitFor()
@@ -627,6 +631,7 @@ async function main() {
         await pageNumber.fill('6')
         await pageNumber.press('Enter')
         await page.getByText('正在加载原文…', { exact: true }).waitFor()
+        await page.getByText('PDF 第 6 页', { exact: true }).waitFor()
         assert.equal(await source.evaluate((el) => el === document.activeElement), true)
         assert.equal(await page.locator('.pdf-page-image').count(), 0)
         await field.focus()

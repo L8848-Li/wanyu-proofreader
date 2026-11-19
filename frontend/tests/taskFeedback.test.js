@@ -29,6 +29,10 @@ test('only an acknowledged submission is presented as submitted; local drafts an
   assert.equal(newTask.label, '待提交')
   assert.match(newTask.text, /当前条目尚未提交/)
   assert.doesNotMatch(newTask.text, /校对已提交/)
+  const continued = proofreadTaskFeedback({ previousSubmission: '该条目将由管理员继续处理。' })
+  assert.equal(continued.kind, 'editing')
+  assert.equal(continued.text, '上一条已提交 · 当前条目尚未提交')
+  assert.equal(continued.detail, '该条目将由管理员继续处理。')
   for (const state of [{ saving: true }, { retryingClaim: true, claimNextFailure: true }]) {
     const claiming = proofreadTaskFeedback({
       submittedHere: true,

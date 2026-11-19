@@ -7,7 +7,14 @@
       role="toolbar"
       aria-label="原文工具"
     >
-      <slot name="navigation" />
+      <slot name="range" />
+      <div class="pdf-toolbar-group pdf-page-tools">
+        <slot name="navigation" />
+        <span class="pdf-page-label" aria-live="polite"
+          >第 {{ sourcePageNumber || safePageLabel }} /
+          {{ sourceTotalPages || totalPages || '—' }} 页</span
+        >
+      </div>
       <div class="pdf-toolbar-group">
         <button
           type="button"
@@ -43,28 +50,33 @@
         >
           ＋
         </button>
-        <input
-          class="pdf-zoom-range"
-          type="range"
-          :min="minZoom"
-          :max="maxZoom"
-          :value="zoomPercent"
-          aria-label="原文缩放滑块"
-          :aria-valuetext="`${zoomPercent}%`"
-          @input="setZoom($event.target.valueAsNumber / 100)"
-        />
-      </div>
-      <div class="pdf-toolbar-group">
         <button type="button" class="pdf-tool" @click="resetView">适合宽度</button>
-        <span class="pdf-page-label" aria-live="polite"
-          >第 {{ sourcePageNumber || safePageLabel }} /
-          {{ sourceTotalPages || totalPages || '—' }} 页</span
-        >
-        <button type="button" class="pdf-tool" @click="rotateClockwise">旋转 90°</button>
-        <button type="button" class="pdf-tool" @click="toggleFullscreen">
-          {{ isFullscreen ? '退出全屏' : '全屏' }}
-        </button>
       </div>
+      <details class="pdf-display-options" @keydown.esc="closeDisplayOptions">
+        <summary class="pdf-tool">显示选项</summary>
+        <div class="pdf-display-controls">
+          <div class="pdf-toolbar-group">
+            <button type="button" class="pdf-tool" @click="rotateClockwise">旋转 90°</button>
+            <button type="button" class="pdf-tool" @click="toggleFullscreen">
+              {{ isFullscreen ? '退出全屏' : '全屏' }}
+            </button>
+            <label class="pdf-zoom-slider">
+              <span>缩放</span>
+              <input
+                class="pdf-zoom-range"
+                type="range"
+                :min="minZoom"
+                :max="maxZoom"
+                :value="zoomPercent"
+                aria-label="原文缩放滑块"
+                :aria-valuetext="`${zoomPercent}%`"
+                @input="setZoom($event.target.valueAsNumber / 100)"
+              />
+            </label>
+          </div>
+          <slot name="display-help" />
+        </div>
+      </details>
     </div>
 
     <div v-if="fullscreenError" class="alert alert-warning pdf-fullscreen-notice" role="status">
@@ -591,6 +603,15 @@ function applyZoomInput(event) {
   input.value = zoomPercent.value
 }
 
+function closeDisplayOptions(event) {
+  const disclosure = event.currentTarget
+  if (!disclosure.open) return
+  event.preventDefault()
+  event.stopPropagation()
+  disclosure.open = false
+  disclosure.querySelector('summary')?.focus()
+}
+
 function zoomWithWheel(event) {
   if (!event.ctrlKey || !event.deltaY || !event.cancelable || canvasCssWidth.value <= 1) return
   event.preventDefault()
@@ -765,6 +786,7 @@ onBeforeUnmount(async () => {
 }
 
 .pdf-toolbar {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -783,16 +805,69 @@ onBeforeUnmount(async () => {
   gap: 0.4rem;
 }
 
-.pdf-tool {
+.pdf-toolbar :deep(.pdf-tool) {
+  min-height: var(--control-height-sm);
   padding: 0.3rem 0.6rem;
   border: 1px solid var(--pdf-track-strong);
   border-radius: var(--radius-nav);
   background: var(--surface);
   color: var(--pdf-ink);
   cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
 }
 
-.pdf-tool:disabled {
+.pdf-toolbar :deep(.pdf-tool:hover:not(:disabled)),
+.pdf-display-options[open] > summary {
+  border-color: var(--primary);
+  background: var(--primary-glow-soft);
+}
+
+.pdf-display-options {
+  margin-inline-start: auto;
+}
+
+.pdf-display-options > summary {
+  align-content: center;
+}
+
+.pdf-display-controls {
+  position: absolute;
+  z-index: var(--z-dropdown);
+  top: 100%;
+  inset-inline-end: 0;
+  width: min(100%, 22rem);
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  background: var(--surface);
+  animation: pdf-display-enter var(--motion-normal) var(--ease-out);
+}
+
+.pdf-display-controls :slotted(p) {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-muted);
+}
+
+@keyframes pdf-display-enter {
+  from {
+    opacity: 0.78;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdf-toolbar :deep(.pdf-tool) {
+    transition: none;
+  }
+  .pdf-display-controls {
+    animation: none;
+  }
+}
+
+.pdf-toolbar :deep(.pdf-tool:disabled) {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -802,6 +877,7 @@ onBeforeUnmount(async () => {
   color: var(--ink-muted);
   font-size: 0.8rem;
   text-align: center;
+  white-space: nowrap;
 }
 
 .pdf-zoom-control {
@@ -815,6 +891,15 @@ onBeforeUnmount(async () => {
 .pdf-zoom-input {
   width: 4.2rem;
   padding: 0.25rem 0.4rem;
+}
+
+.pdf-zoom-slider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-height-sm);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
 }
 
 .pdf-zoom-range {
@@ -893,12 +978,19 @@ onBeforeUnmount(async () => {
   pointer-events: none;
 }
 
+@media (max-width: 768px) {
+  .pdf-toolbar :deep(.pdf-tool) {
+    min-height: var(--control-height-touch);
+  }
+}
+
 @media (max-width: 700px) {
   .pdf-toolbar {
     align-items: flex-start;
     padding: 0.25rem;
   }
-  .pdf-tool {
+  .pdf-tool,
+  .pdf-zoom-slider {
     white-space: nowrap;
   }
 }

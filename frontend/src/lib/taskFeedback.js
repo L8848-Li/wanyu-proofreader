@@ -11,6 +11,7 @@ export function proofreadTaskFeedback({
   retryingClaim,
   draftStatus,
   saved,
+  previousSubmission,
   online = true
 } = {}) {
   if (loading) return { kind: 'loading', label: '准备中', text: '正在读取当前任务' }
@@ -61,7 +62,12 @@ export function proofreadTaskFeedback({
   return {
     kind: 'editing',
     label: '待提交',
-    text: saved ? '当前条目尚未提交' : '核对完成后检查并提交'
+    text: previousSubmission
+      ? '上一条已提交 · 当前条目尚未提交'
+      : saved
+        ? '当前条目尚未提交'
+        : '核对完成后检查并提交',
+    ...(previousSubmission && { detail: previousSubmission })
   }
 }
 

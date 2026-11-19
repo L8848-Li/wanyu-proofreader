@@ -30,9 +30,18 @@ const output =
     })
     await page.screenshot({ path: path.join(output, 'desktop-default.png') })
     assert.equal(await page.getByRole('toolbar', { name: '原文工具' }).count(), 1)
-    await page.locator('.pdf-preview-help > summary').click()
+    const displayOptions = page.locator('.pdf-display-options > summary')
+    const rotate = page.getByRole('button', { name: '旋转 90°', exact: true })
+    assert.equal(await rotate.isVisible(), false)
+    await displayOptions.press('Enter')
     await page.getByText('已经下载的副本无法收回。', { exact: true }).waitFor()
-    await page.locator('.pdf-preview-help > summary').click()
+    await rotate.focus()
+    await page.keyboard.press('Escape')
+    assert.equal(await rotate.isVisible(), false)
+    assert.equal(
+      await displayOptions.evaluate((element) => element === document.activeElement),
+      true
+    )
     const desktopSource = await page.locator('.source-panel').boundingBox()
     assert.ok(desktopSource.height > 800)
     const divider = page.getByRole('separator', { name: '调整原文与编辑区宽度' })
