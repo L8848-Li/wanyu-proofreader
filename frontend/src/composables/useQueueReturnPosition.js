@@ -5,7 +5,7 @@ import { browserSessionStorage, takeQueuePosition } from '@/lib/queueReturn'
 
 // Restore only after the current list has rendered, so a slow request cannot
 // clamp the saved position against an empty loading page.
-export function useQueueReturnPosition(ready) {
+export function useQueueReturnPosition(ready, restoreFocus) {
   const route = useRoute(),
     auth = useAuthStore()
   watch(
@@ -16,7 +16,15 @@ export function useQueueReturnPosition(ready) {
       await nextTick()
       if (route.fullPath !== path || auth.user?.id !== userId) return
       const position = takeQueuePosition(browserSessionStorage(), userId, path)
-      if (position) window.scrollTo({ ...position, behavior: 'instant' })
+      if (position) {
+        window.scrollTo({ left: position.left, top: position.top, behavior: 'instant' })
+        const focused = document.activeElement
+        if (
+          position.focusId !== undefined &&
+          (focused === document.body || focused?.id === 'main-content')
+        )
+          restoreFocus?.(position.focusId)
+      }
     },
     { immediate: true, flush: 'post' }
   )

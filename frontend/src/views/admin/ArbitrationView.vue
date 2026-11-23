@@ -38,7 +38,7 @@
             >{{ sourceCollapsed ? '查看原文' : '收起原文' }}</AppButton
           >
           <span v-if="submitted" class="task-position">本条已保存</span>
-          <span v-else-if="casePage" class="task-position"
+          <span v-else-if="casePage && (verificationMode || loading)" class="task-position"
             >{{ resolvedCount }} / {{ differingHeaders.length }} 项差异</span
           >
           <AppButton
@@ -96,6 +96,24 @@
           重试加载队列
         </button>
       </nav>
+      <div
+        v-if="caseData && !loading && !submitted && !verificationMode"
+        class="arbitration-progress-note"
+      >
+        <p role="status" aria-atomic="true">
+          <strong>差异已确认 {{ resolvedCount }} / {{ differingHeaders.length }}</strong>
+          <span v-if="unresolvedHeaders.length"> · 剩余 {{ unresolvedHeaders.length }} 处</span>
+        </p>
+        <AppButton
+          v-if="!mobile && differingHeaders.length"
+          type="button"
+          size="sm"
+          :disabled="!unresolvedHeaders.length || submitting"
+          aria-keyshortcuts="Control+Enter Meta+Enter"
+          @click="goToUnresolved()"
+          >下一处待确认字段</AppButton
+        >
+      </div>
       <p v-if="!verificationMode && queueError" class="alert alert-error" role="alert">
         {{ queueError }}
       </p>
@@ -180,27 +198,6 @@
         <p v-if="progressMessage" class="alert alert-success" role="status">
           {{ progressMessage }}
         </p>
-        <div class="arbitration-progress-note">
-          <span role="status">
-            <strong>差异已确认 {{ resolvedCount }} / {{ differingHeaders.length }}</strong>
-            <span v-if="unresolvedHeaders.length">
-              · 还需确认：{{ unresolvedHeaders.join('、') }}</span
-            >
-            <span v-else> · 采用已明确；来源判断分别记录。</span>
-          </span>
-          <AppButton
-            v-if="!mobile && !verificationMode && differingHeaders.length"
-            type="button"
-            size="sm"
-            :disabled="!unresolvedHeaders.length || submitting"
-            @click="goToUnresolved()"
-            >下一处待确认字段</AppButton
-          >
-          <span v-if="!mobile && !verificationMode" class="arbitration-shortcut">
-            Ctrl / ⌘ + Enter 检查并完成仲裁
-          </span>
-        </div>
-
         <RareCharacterNotice
           :texts="[
             ...Object.values(originalRow),
@@ -329,6 +326,7 @@
                   <AppButton
                     size="sm"
                     :disabled="submitting"
+                    :aria-pressed="sourceIs(header, source.key)"
                     @click="pickValue(header, source.key)"
                     >{{ source.key === 'original' ? '采用导入值' : '采用此结果' }}</AppButton
                   >
@@ -351,7 +349,9 @@
               <div class="final-value" :class="{ selected: sourceIs(header, 'custom') }">
                 <div class="arbitration-final-heading">
                   <h4>最终采用值</h4>
-                  <span>{{ isResolved(header) ? resolutionLabel(header) : '待确认采用' }}</span>
+                  <span class="arbitration-adoption-status" :key="resolutionSource[header]">{{
+                    isResolved(header) ? resolutionLabel(header) : '待确认采用'
+                  }}</span>
                 </div>
                 <textarea
                   :inputmode="inputMode"

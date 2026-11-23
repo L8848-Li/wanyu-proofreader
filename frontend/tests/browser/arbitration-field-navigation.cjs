@@ -97,6 +97,7 @@ async function main() {
         name
       )
     assert.equal(await next.isEnabled(), true)
+    const progressTop = (await next.boundingBox()).y
     await page.getByRole('img', { name: 'PDF 页面图像' }).waitFor()
     const zoom = page.getByRole('spinbutton', { name: '原文缩放百分比' })
     await zoom.fill('200')
@@ -114,11 +115,22 @@ async function main() {
     assert.ok(sourceScroll > 0)
     await page.keyboard.press('ControlOrMeta+Enter')
     await focusField('释义')
+    assert.equal(
+      (await next.boundingBox()).y,
+      progressTop,
+      'Progress stays above the field scroller'
+    )
     assert.equal(await page.getByRole('dialog').count(), 0)
     await next.click()
     await focusField('词条')
     assert.equal(await source.evaluate((el) => el.scrollTop), sourceScroll)
     await entry.getByRole('button', { name: '采用导入值', exact: true }).click()
+    assert.equal(
+      await entry
+        .getByRole('button', { name: '采用导入值', exact: true })
+        .getAttribute('aria-pressed'),
+      'true'
+    )
     await entry.getByRole('button', { name: '下一处待确认', exact: true }).click()
     await focusField('释义')
     await page.screenshot({ path: path.join(output, 'next-unresolved.png') })

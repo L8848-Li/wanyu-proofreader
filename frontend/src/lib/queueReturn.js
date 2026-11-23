@@ -1,4 +1,5 @@
 import { importJobScope, validImportJob } from './adminPageList.js'
+import { todoReturnRow, todoReturnTarget } from './unifiedTodos.js'
 
 const prefix = 'wanyu:queue-return:v1'
 const key = (userId, kind) => `${prefix}:${encodeURIComponent(userId || '')}:${kind}`
@@ -19,16 +20,17 @@ export function browserSessionStorage() {
 
 function safeQueuePath(path, kind) {
   if (typeof path !== 'string' || path.length > 2048 || /[\\\r\n]/.test(path)) return false
+  if (kind === 'todo') return /^\/admin\/todos(?:[?#].*)?$/.test(path)
   return kind === 'proofread'
     ? /^\/tasks(?:[?#].*)?$/.test(path)
     : /^\/admin(?:\/projects\/[a-z0-9]+(?:\/verification)?)?(?:[?#].*)?$/.test(path)
 }
 
-function read(storage, userId, kind) {
+function read(storage, userId, kind, pathKind = kind) {
   if (!storage || !userId || !kind) return null
   try {
     const value = JSON.parse(storage.getItem(key(userId, kind)) || 'null')
-    return safeQueuePath(value?.path, kind) ? value : null
+    return safeQueuePath(value?.path, pathKind) ? value : null
   } catch {
     return null
   }
@@ -61,6 +63,26 @@ export function rememberQueueTransition(storage, userId, to, from, position = {}
   const next = kindOf(to),
     previous = kindOf(from)
   try {
+    if (from?.name === 'AdminTodos' && to.name !== 'AdminTodos') {
+      if (safeQueuePath(from.fullPath, 'todo') && safeQueuePath(position.todoPath, 'todo'))
+        storage.setItem(
+          key(userId, 'todo'),
+          JSON.stringify({
+            path: from.fullPath,
+            returnPath: position.todoPath,
+            focusId: todoReturnRow(to),
+            left: Number(position.left) || 0,
+            top: Number(position.top) || 0
+          })
+        )
+      else storage.removeItem(key(userId, 'todo'))
+    }
+    if (todoReturnTarget(from) && !todoReturnTarget(to)) {
+      const context = read(storage, userId, 'todo')
+      storage.removeItem(key(userId, 'todo'))
+      if (context && (context.path === to.fullPath || context.returnPath === to.fullPath))
+        storage.setItem(key(userId, 'pending'), JSON.stringify({ ...context, path: to.fullPath }))
+    }
     if (next && next !== previous) {
       if (safeQueuePath(from?.fullPath, next))
         storage.setItem(
@@ -84,6 +106,16 @@ export function rememberQueueTransition(storage, userId, to, from, position = {}
   }
 }
 
+export function retargetTodoPosition(storage, userId, from, to) {
+  const context = read(storage, userId, 'pending', 'todo')
+  if (!context || context.path !== from || !safeQueuePath(to, 'todo')) return
+  try {
+    storage.setItem(key(userId, 'pending'), JSON.stringify({ ...context, path: to }))
+  } catch {
+    /* The browser can still restore its native scroll position. */
+  }
+}
+
 export function takeQueuePosition(storage, userId, path) {
   if (!storage || !userId) return null
   try {
@@ -92,7 +124,8 @@ export function takeQueuePosition(storage, userId, path) {
     storage.removeItem(key(userId, 'pending'))
     return {
       left: Math.max(0, Math.min(10000000, Number(value.left) || 0)),
-      top: Math.max(0, Math.min(10000000, Number(value.top) || 0))
+      top: Math.max(0, Math.min(10000000, Number(value.top) || 0)),
+      ...(typeof value.focusId === 'string' && { focusId: value.focusId })
     }
   } catch {
     return null

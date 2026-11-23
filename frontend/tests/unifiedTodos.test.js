@@ -4,6 +4,7 @@ import {
   carryTodoReturn,
   todoActionTarget,
   todoFilterError,
+  todoReturnRow,
   todoReturnTarget
 } from '../src/lib/unifiedTodos.js'
 
@@ -13,9 +14,12 @@ test('return to a filtered todo follows the same project workflow and never cros
   const target = { path, query: { package: 'practicepack001', tab: 'events' } }
   const resolve = (location) => ({ ...location, name: 'ProjectDeliveries', params: { id } })
   const filters = { project: id, stage: 'delivery_return', page: 3 }
-  const detail = resolve(todoActionTarget({ project: { id }, target }, resolve, filters))
+  const detail = resolve(
+    todoActionTarget({ project: { id }, target, stage: 'delivery_return' }, resolve, filters)
+  )
   const expectedReturn = { path: '/admin/todos', query: { ...filters, page: '3' } }
   assert.deepEqual(todoReturnTarget(detail), expectedReturn)
+  assert.equal(todoReturnRow(detail), id + ':delivery_return')
   const summary = resolve({ path, query: { package: target.query.package, tab: 'summary' } })
   const continued = carryTodoReturn(summary, detail)
   assert.deepEqual(todoReturnTarget(resolve(continued)), expectedReturn)

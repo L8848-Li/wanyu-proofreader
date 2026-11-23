@@ -38,17 +38,15 @@
 }
 .arbitration-studio .arbitration-progress-note {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-3);
-  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
   font-size: var(--text-xs);
   color: var(--ink-muted);
-}
-.arbitration-studio .arbitration-progress-note {
-  align-items: center;
-}
-.arbitration-studio .arbitration-shortcut {
-  margin-inline-start: auto;
 }
 .arbitration-studio .arbitration-field:focus-visible {
   outline: 2px solid var(--focus-ring);
@@ -137,6 +135,26 @@
   grid-column: auto;
   background: transparent;
   box-shadow: none;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+.editor-layout.experience-workspace.arbitration-studio .comparison-option.selected {
+  background: var(--primary-glow-soft);
+}
+.arbitration-studio .arbitration-adoption-status {
+  animation: arbitration-adoption-enter var(--motion-fast) var(--ease-out);
+}
+@keyframes arbitration-adoption-enter {
+  from {
+    opacity: 0.7;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .editor-layout.experience-workspace.arbitration-studio .comparison-option {
+    transition: none;
+  }
+  .arbitration-studio .arbitration-adoption-status {
+    animation: none;
+  }
 }
 .arbitration-studio .comparison-option > span {
   font-size: var(--text-xs);
@@ -294,9 +312,6 @@
     width: auto;
   }
   .arbitration-studio .editor-toolbar > .task-position {
-    display: none;
-  }
-  .arbitration-studio .arbitration-progress-note > span {
     display: none;
   }
   .editor-layout.experience-workspace.arbitration-studio .comparison-option {

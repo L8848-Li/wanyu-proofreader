@@ -65,24 +65,37 @@ function todoFlow(route) {
   return flows[route.name] ? `${project}:${flows[route.name]}` : ''
 }
 
-function withTodoReturn(target, resolved, filters) {
+function withTodoReturn(target, resolved, filters, stage) {
   const flow = todoFlow(resolved)
   if (!flow) return target
-  const query = new URLSearchParams(todoListQuery(filters)).toString()
+  const params = new URLSearchParams(todoListQuery(filters))
+  if (typeof stage === 'string' && Object.hasOwn(TODO_STAGES, stage)) params.set('row', stage)
+  const query = params.toString()
   return {
     ...target,
     query: { ...target.query, todoFrom: query ? `${flow}?${query}` : flow }
   }
 }
 
-export function todoReturnTarget(route) {
-  const value = route.query?.todoFrom
-  if (typeof value !== 'string' || value.length > 180) return ''
+function readTodoReturn(route) {
+  const value = route?.query?.todoFrom
+  if (typeof value !== 'string' || value.length > 180) return null
   const [flow, encoded = '', ...extra] = value.split('?')
-  if (!flow || flow !== todoFlow(route) || extra.length) return ''
+  if (!flow || flow !== todoFlow(route) || extra.length) return null
   const query = Object.fromEntries(new URLSearchParams(encoded))
-  if (todoFilterError(query)) return ''
-  return { path: TODOS_PATH, query: todoListQuery(todoFilters(query)) }
+  if (todoFilterError(query)) return null
+  return { flow, query }
+}
+
+export function todoReturnTarget(route) {
+  const context = readTodoReturn(route)
+  return context ? { path: TODOS_PATH, query: todoListQuery(todoFilters(context.query)) } : ''
+}
+
+export function todoReturnRow(route) {
+  const context = readTodoReturn(route)
+  if (!context || !Object.hasOwn(TODO_STAGES, context.query.row)) return ''
+  return `${context.flow.split(':')[0]}:${context.query.row}`
 }
 
 // Keep the return link on detail/tab changes inside the same project workflow.
@@ -126,5 +139,5 @@ export function todoActionTarget(row, resolve, filters) {
   if (target.path !== base && !target.path.startsWith(`${base}/`)) return null
   const resolved = resolve(target)
   if (!todoFlow(resolved)) return null
-  return withTodoReturn(target, resolved, filters)
+  return withTodoReturn(target, resolved, filters, row.stage)
 }

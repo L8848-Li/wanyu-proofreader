@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import pb from '@/lib/pocketbase'
 import { authState, homePath, resolveNavigation } from '../lib/access.js'
 import { browserSessionStorage, rememberQueueTransition } from '@/lib/queueReturn'
-import { carryTodoReturn } from '@/lib/unifiedTodos'
+import { carryTodoReturn, todoReturnTarget } from '@/lib/unifiedTodos'
 
 function getAuthState() {
   return authState({ isValid: pb.authStore.isValid, model: pb.authStore.model })
@@ -186,9 +186,11 @@ router.beforeEach((to, from) => {
   if (destination) return destination
   const withReturn = carryTodoReturn(to, from)
   if (withReturn) return withReturn
+  const todoReturn = from.name === 'AdminTodos' && todoReturnTarget(to)
   rememberQueueTransition(browserSessionStorage(), pb.authStore.model?.id, to, from, {
     left: window.scrollX,
-    top: window.scrollY
+    top: window.scrollY,
+    todoPath: todoReturn ? router.resolve(todoReturn).fullPath : undefined
   })
   return null
 })
