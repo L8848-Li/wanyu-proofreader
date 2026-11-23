@@ -61,7 +61,11 @@
         来源变更影响
       </button>
     </nav>
-    <div v-if="loadError" class="alert alert-error" role="alert">
+    <div
+      v-if="loadError && (view !== 'records' || accessLost || projectUnavailable)"
+      class="alert alert-error"
+      role="alert"
+    >
       {{ loadError }}
       <button type="button" class="btn btn-secondary btn-sm" :disabled="loading" @click="load">
         重新加载
@@ -377,13 +381,15 @@
               </strong>
             </p>
           </div>
-          <button
-            class="btn btn-primary"
+          <AppButton
+            variant="primary"
+            :loading="operationKind === 'download'"
+            loading-label="正在获取交付包…"
             :disabled="busy || item.withdrawn || item.rights_blocked"
             @click="download(item)"
           >
             下载交付包
-          </button>
+          </AppButton>
         </div>
         <p
           v-if="
@@ -608,6 +614,7 @@ const {
   view,
   projectUnavailable,
   busy,
+  operationKind,
   navigate,
   loadError,
   loading,

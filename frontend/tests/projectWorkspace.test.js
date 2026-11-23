@@ -319,7 +319,7 @@ test('temporary queue read failures preserve prior counts and allow retry', asyn
     queue.items.value.map((item) => item.count),
     [3, 1, 1, 4]
   )
-  assert.ok(queue.items.value.every((item) => item.stale))
+  assert.ok(queue.items.value.every((item) => item.error && !item.pending))
   assert.equal(queue.priority.value, null)
   fail = false
   await queue.reload()

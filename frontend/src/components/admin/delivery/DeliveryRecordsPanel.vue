@@ -11,15 +11,27 @@
           · 已停用 {{ metrics.withdrawn_packages }} 包
         </p>
       </div>
-      <button class="btn btn-secondary btn-sm" :disabled="busy || loading" @click="load">
-        刷新
-      </button>
+      <AppButton
+        size="sm"
+        :disabled="busy"
+        :loading="loading"
+        loading-label="正在读取…"
+        @click="load"
+      >
+        {{ loadError ? '重试读取' : '刷新记录' }}
+      </AppButton>
     </div>
     <p v-if="batchReportContext" class="text-sm text-muted">显示此项目的全部交付包。</p>
-    <p v-if="loading" role="status">正在加载交付记录…</p>
-    <div v-else-if="loadError" class="text-muted">
-      交付记录暂时无法读取，请用上方「重新加载」重试。
-    </div>
+    <AppStatusPanel v-if="loadError" state="error" title="交付记录暂不可用">
+      <p>{{ loadError }}</p>
+      <p v-if="items.length">下方保留上次读取的记录。</p>
+    </AppStatusPanel>
+    <AppStatusPanel
+      v-else-if="loading && !items.length"
+      state="pending"
+      message="正在读取交付记录…"
+    />
+    <p v-else-if="loading" role="status">正在更新交付记录…</p>
     <div v-else-if="!items.length" class="empty-state">
       <div class="empty-state-text">还没有交付包</div>
       <p>检查通过并经人工确认后，首个包会显示在这里。</p>
@@ -63,6 +75,8 @@
 
 <script setup>
 import AppPagination from '@/components/AppPagination.vue'
+import AppButton from '@/components/AppButton.vue'
+import AppStatusPanel from '@/components/AppStatusPanel.vue'
 import { USAGE_PURPOSE_LABELS } from '@/constants/sourceRegistry'
 import { receiptLabel } from '@/lib/deliveryPresentation'
 const purposeLabel = (value) => USAGE_PURPOSE_LABELS[value] || value

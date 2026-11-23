@@ -36,7 +36,7 @@ async function main() {
     page.on('pageerror', (error) => errors.push(error.message))
     await page.addInitScript(({ token, record }) => { globalThis.__FANGJI_BACKEND_URL__ = window.location.origin; localStorage.setItem('pocketbase_auth', JSON.stringify({ token, record })) }, fixture.admin)
     const origin = `http://127.0.0.1:${server.address().port}`
-    const open = async (id) => { await page.goto(`${origin}/admin/projects/${id}/deliveries`); await page.getByRole('heading', { name: '交付包与回执', exact: true }).waitFor(); await page.getByRole('button', { name: '刷新', exact: true }).waitFor({ state: 'visible' }) }
+    const open = async (id) => { await page.goto(`${origin}/admin/projects/${id}/deliveries`); await page.getByRole('heading', { name: '交付包与回执', exact: true }).waitFor(); await page.getByRole('button', { name: '刷新记录', exact: true }).waitFor({ state: 'visible' }) }
     const shot = (name) => page.screenshot({ path: path.join(out, name), fullPage: true })
     await open(fixture.emptyProject.id)
     await page.getByText('还没有交付包', { exact: true }).waitFor()

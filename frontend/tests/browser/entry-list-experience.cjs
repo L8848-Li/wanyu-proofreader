@@ -393,6 +393,28 @@ async function api(endpoint, token, body, method = 'POST') {
     await section.getByRole('button', { name: '第 1 条的更多操作', exact: true }).click()
     await page.getByRole('menuitem', { name: '设置质量状态', exact: true }).waitFor()
     await page.keyboard.press('Escape')
+    const summaryUrl = `**/api/fangji/projects/${project.id}/verification-summary`
+    await page.route(summaryUrl, (route) =>
+      route.fulfill({ status: 503, json: { message: '合成来源复核统计读取失败' } })
+    )
+    await page.goto(`${base}/admin/projects/${project.id}?section=work&view=queue`)
+    const queue = page.getByRole('region', { name: '选择待办队列' })
+    const reviewRow = queue.getByRole('listitem').filter({
+      has: page.getByRole('heading', { name: '来源复核', exact: true })
+    })
+    const errorPanel = reviewRow.getByRole('alert')
+    await errorPanel.getByText('合成来源复核统计读取失败').waitFor()
+    await queue.getByRole('link', { name: '处理仲裁', exact: true }).first().waitFor()
+    await page.screenshot({ path: path.join(output, 'mobile-queue-retry.png'), fullPage: true })
+    await page.unroute(summaryUrl)
+    await errorPanel.getByRole('button', { name: '重试读取', exact: true }).press('Enter')
+    await errorPanel.waitFor({ state: 'hidden' })
+    assert.equal(
+      await reviewRow
+        .getByRole('link', { name: '打开复核队列', exact: true })
+        .evaluate((el) => el === document.activeElement),
+      true
+    )
     assert.deepEqual(errors, [])
     await fs.writeFile(
       path.join(output, 'result.json'),

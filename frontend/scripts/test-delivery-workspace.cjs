@@ -124,7 +124,30 @@ const { chromium } = require('playwright')
     const generatedPackage = generatedURL.searchParams.get('package')
     assert.notEqual(generatedPackage, delivery.id, '生成后应打开新交付包，而不是前一版本')
     await page.reload()
-    await page.getByRole('button', { name: '下载交付包', exact: true }).waitFor()
+    const downloadButton = page.getByRole('button', { name: '下载交付包', exact: true })
+    await downloadButton.waitFor()
+    const receiptState = page.locator('.delivery-workspace article .section-heading strong')
+    const beforeDownload = await receiptState.innerText()
+    let allowDownload
+    const downloadGate = new Promise((resolve) => {
+      allowDownload = resolve
+    })
+    await page.route('**/api/fangji/deliveries/*/download', async (route) => {
+      await downloadGate
+      await route.continue()
+    })
+    try {
+      const download = page.waitForEvent('download')
+      await downloadButton.click()
+      await page.getByRole('button', { name: '正在获取交付包…', exact: true }).waitFor()
+      allowDownload()
+      await download
+      await page.getByRole('status').filter({ hasText: '已发起浏览器下载' }).waitFor()
+      assert.equal(await receiptState.innerText(), beforeDownload)
+    } finally {
+      allowDownload()
+      await page.unroute('**/api/fangji/deliveries/*/download')
+    }
     await page.getByRole('button', { name: '回执与处置', exact: true }).click()
     await page.waitForURL(
       (url) =>

@@ -108,6 +108,7 @@ export function createDeliveryWorkspace({
   const selectedPackageId = ref('')
   const loading = ref(true)
   const busy = ref(false)
+  const operationKind = ref('')
   const loadError = ref('')
   const operationError = ref('')
   const preflightProblem = ref(null)
@@ -135,6 +136,7 @@ export function createDeliveryWorkspace({
   let disposed = false
   let loadGeneration = 0
   let operationGeneration = 0
+  let downloadNoticeScope = null
   onBeforeUnmount(() => {
     disposed = true
     ++loadGeneration
@@ -214,12 +216,14 @@ export function createDeliveryWorkspace({
     ++operationGeneration
     ++adoptionGeneration
     loading.value = busy.value = false
+    operationKind.value = ''
     items.value = adoptionChoices.value = []
     currentDelivery.value = nativeBatch.value = metrics.value = impacts.value = null
     sourceRef.value = ''
     listPage.value = listPages.value = eventsPage.value = eventPages.value = 1
     adoptionPage.value = adoptionPages.value = 1
     operationError.value = success.value = ''
+    downloadNoticeScope = null
     clearEditor()
   }
   function projectRead(promise) {
@@ -243,6 +247,7 @@ export function createDeliveryWorkspace({
       ++operationGeneration
       ++adoptionGeneration
       loading.value = busy.value = false
+      operationKind.value = ''
       items.value = items.value.filter((item) => item.id !== selectedPackageId.value)
       currentDelivery.value = nativeBatch.value = null
       unavailable.value = true
@@ -290,14 +295,16 @@ export function createDeliveryWorkspace({
     confirmed.value = false
     requestId.value = ''
   }
-  async function action(fn, onError) {
+  async function action(fn, onError, kind = '') {
     if (accessLost.value || unavailable.value) return
     const request = pageScope.capture()
     const generation = ++operationGeneration
     const isCurrent = () => request.isCurrent() && !disposed && generation === operationGeneration
     busy.value = true
+    operationKind.value = kind
     operationError.value = ''
     success.value = ''
+    downloadNoticeScope = null
     try {
       await fn(isCurrent, request.signal)
     } catch (e) {
@@ -306,7 +313,10 @@ export function createDeliveryWorkspace({
         operationError.value = getPbMessage(e, e?.message || '处理失败，请重试')
       }
     } finally {
-      if (isCurrent()) busy.value = false
+      if (isCurrent()) {
+        busy.value = false
+        operationKind.value = ''
+      }
       request.finish()
     }
   }
@@ -452,7 +462,17 @@ export function createDeliveryWorkspace({
     })
   }
   async function download(item) {
-    await action((isCurrent, signal) => downloadDelivery(item.id, { signal, isCurrent }))
+    await action(
+      async (isCurrent, signal) => {
+        await downloadDelivery(item.id, { signal, isCurrent })
+        if (isCurrent()) {
+          downloadNoticeScope = { projectId: projectId.value, packageId: item.id }
+          success.value = '已发起浏览器下载。接收方核对后可登记回执。'
+        }
+      },
+      undefined,
+      'download'
+    )
   }
   function selectEvent(item) {
     if (selected.value?.id === item.id) {
@@ -497,10 +517,17 @@ export function createDeliveryWorkspace({
     })
   }
   const stopRoute = observeRoute(() => {
-    const completedMessage = success.value
+    const completedDownloadScope = downloadNoticeScope
+    const completedMessage =
+      !completedDownloadScope ||
+      (completedDownloadScope.projectId === projectId.value &&
+        completedDownloadScope.packageId === route.query.package)
+        ? success.value
+        : ''
     pageScope.cancel()
     clearProtectedData()
     success.value = completedMessage
+    if (completedMessage) downloadNoticeScope = completedDownloadScope
     projectUnavailable.value = unavailable.value = false
     selectedPackageId.value = typeof route.query.package === 'string' ? route.query.package : ''
     view.value = selectedPackageId.value
@@ -520,6 +547,7 @@ export function createDeliveryWorkspace({
     view,
     projectUnavailable,
     busy,
+    operationKind,
     navigate,
     loadError,
     loading,

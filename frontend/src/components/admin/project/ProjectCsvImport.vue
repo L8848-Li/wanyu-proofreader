@@ -122,6 +122,12 @@
       {{ csvError }}
     </div>
     <div v-if="csvJob" class="csv-inspection mt-3">
+      <template v-if="csvJob.status === 'validated'">
+        <h5 class="csv-inspection-title">检查完成，待确认</h5>
+        <p class="text-sm text-muted mt-2" role="status">
+          尚未写入校对条目。请核对页码列、来源和样本，再确认导入。
+        </p>
+      </template>
       <p v-if="csvJob.original_filename" class="csv-selected-file text-sm mt-2">
         CSV 文件：<strong>{{ csvJob.original_filename }}</strong>
       </p>
@@ -132,12 +138,6 @@
       <p v-else-if="csvJob.pdf_snapshot_captured" class="text-sm text-muted mt-2">
         检查时未绑定原文 PDF。
       </p>
-      <template v-if="csvJob.status === 'validated'">
-        <h5 class="csv-inspection-title">检查完成，待确认</h5>
-        <p class="text-sm text-muted mt-2" role="status">
-          尚未写入校对条目。请核对页码列、来源和样本，再确认导入。
-        </p>
-      </template>
       <div
         v-if="csvSuccess && csvJob.status !== 'validated'"
         class="alert mt-2"

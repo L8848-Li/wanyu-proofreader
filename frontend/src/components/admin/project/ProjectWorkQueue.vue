@@ -23,45 +23,6 @@
       /></RouterLink>
     </template>
     <template v-else>
-      <AppStatusPanel
-        v-if="statsError"
-        state="error"
-        title="仲裁数量暂不可用"
-        :message="statsError"
-        retry-label="重试"
-        :busy="statsPending"
-        @retry="loadStats"
-      />
-      <AppStatusPanel
-        v-if="reviewError"
-        state="error"
-        title="来源复核数量暂不可用"
-        :message="reviewError"
-        retry-label="重试"
-        :busy="reviewPending"
-        @retry="loadReviews"
-      />
-      <AppStatusPanel
-        v-if="problemError"
-        state="error"
-        title="成员问题数量暂不可用"
-        :message="problemError"
-        retry-label="重试"
-        :busy="problemPending"
-        @retry="loadProblems"
-      />
-      <AppStatusPanel
-        v-if="normalizationError"
-        state="error"
-        title="归一复核数量暂不可用"
-        :message="normalizationError"
-        retry-label="重试"
-        :busy="normalizationPending"
-        @retry="loadNormalizations"
-      />
-      <p v-if="busy" class="project-todo__read-status" role="status">
-        正在更新队列数量，仍可打开事项处理。
-      </p>
       <div v-if="priority" class="project-todo__next">
         <AppIcon name="task" />
         <p>{{ priority.message }}</p>
@@ -83,8 +44,9 @@
             <strong v-if="item.count !== null"
               >{{ item.count }}<span> {{ item.unit || '条' }}</span></strong
             >
-            <span v-else>未读取</span>
-            <small v-if="item.stale && item.count !== null">上次读取</small>
+            <span v-else>{{ item.pending ? '读取中…' : item.error ? '读取失败' : '未读取' }}</span>
+            <small v-if="item.count !== null && item.pending">正在更新…</small>
+            <small v-else-if="item.error && item.count !== null">上次读取</small>
             <small v-else-if="item.count === 0">{{ item.emptyLabel }}</small>
             <small v-else-if="item.count === null">打开队列查看</small>
             <small v-else>{{ item.countLabel }}</small>
@@ -92,6 +54,15 @@
           <RouterLink :to="link(item.key)" class="project-todo__action"
             >{{ item.label }}<AppIcon name="arrow"
           /></RouterLink>
+          <AppStatusPanel
+            v-if="item.error"
+            class="project-todo__row-error"
+            state="error"
+            :title="`${item.title}数量暂不可用`"
+            :message="item.error"
+            retry-label="重试读取"
+            @retry="retryItem(item)"
+          />
         </li>
       </ul>
       <p class="project-todo__note">
@@ -227,7 +198,9 @@ const items = computed(() => [
     count: arbitrationCount.value,
     countLabel: '等待仲裁',
     emptyLabel: '暂无待仲裁',
-    stale: !!statsError.value,
+    pending: statsPending.value,
+    error: statsError.value,
+    retry: loadStats,
     label: '处理仲裁'
   },
   {
@@ -238,7 +211,9 @@ const items = computed(() => [
     count: reviewCount.value,
     countLabel: '可核验或仲裁',
     emptyLabel: '当前范围无待办',
-    stale: !!reviewError.value,
+    pending: reviewPending.value,
+    error: reviewError.value,
+    retry: loadReviews,
     label: '打开复核队列'
   },
   {
@@ -250,7 +225,9 @@ const items = computed(() => [
     unit: '项',
     countLabel: '尚未处理完成',
     emptyLabel: '暂无未处理事项',
-    stale: !!problemError.value,
+    pending: problemPending.value,
+    error: problemError.value,
+    retry: loadProblems,
     label: '处理问题'
   },
   {
@@ -261,11 +238,20 @@ const items = computed(() => [
     count: normalizationCount.value,
     countLabel: '等待复核',
     emptyLabel: '暂无待复核',
-    stale: !!normalizationError.value,
+    pending: normalizationPending.value,
+    error: normalizationError.value,
+    retry: loadNormalizations,
     label: '打开归一复核'
   }
 ])
 const link = (action) => projectWorkflowTarget(props.projectId, action, props.query)
+function retryItem(item) {
+  document.activeElement
+    ?.closest('li')
+    ?.querySelector('.project-todo__action')
+    ?.focus({ preventScroll: true })
+  void item.retry()
+}
 const reload = () =>
   Promise.allSettled([loadStats(), loadNormalizations(), loadReviews(), loadProblems()])
 onMounted(reload)
@@ -373,6 +359,10 @@ defineExpose({ reload })
 .project-todo__action .app-icon {
   width: 16px;
   height: 16px;
+}
+.project-todo__row-error {
+  grid-column: 2 / -1;
+  margin: 0;
 }
 .project-todo__note {
   max-width: 78ch;
