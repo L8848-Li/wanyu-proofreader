@@ -371,22 +371,8 @@ routerAdd("POST", `${FANGJI_API}/projects/{projectId}/pages/delete-pending`, (c)
     })
     targets.forEach((page) => txDao.delete(page))
 
-    const remaining = txDao.findRecordsByFilter(
-      "pages",
-      `project = "${projectId}"`,
-      "page_number,created",
-      100000,
-      0
-    )
-    const maxPageNumber = remaining.reduce((max, page) => Math.max(max, page.getInt("page_number")), 0)
-    remaining.forEach((page, index) => {
-      page.set("page_number", maxPageNumber + index + 1)
-      txDao.save(page)
-    })
-    remaining.forEach((page, index) => {
-      page.set("page_number", index + 1)
-      txDao.save(page)
-    })
+    const { renumberProjectPages } = require(`${__hooks}/lib/page_renumber.js`)
+    renumberProjectPages(txDao, projectId)
   })
 
   return c.json(200, { deleted_count: ids.length })
