@@ -27,12 +27,6 @@ export const PROOFREADER_ACTIVE_STATUSES = Object.freeze([
   PAGE_STATUS.PROOFREADING
 ])
 
-export const PROOFREAD_PROGRESS_STATUSES = Object.freeze([
-  PAGE_STATUS.PROOFREAD,
-  PAGE_STATUS.ARBITRATION,
-  PAGE_STATUS.APPROVED
-])
-
 export function statusLabel(status) {
   return PAGE_STATUS_LABELS[status] || status || ''
 }
