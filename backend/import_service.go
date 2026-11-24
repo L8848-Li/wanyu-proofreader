@@ -96,6 +96,7 @@ type importService struct {
 	imageCancel  context.CancelFunc
 	mu           sync.Mutex
 	pending      map[string]struct{}
+	errorCounts  map[string]int
 	pdfUploads   *pdfUploadPool
 
 	// schemes 是启动时载入的拼音规则表（#190）。载入后不变，因此读它不需要加锁。
@@ -112,6 +113,7 @@ func newImportService(app *pocketbase.PocketBase) *importService {
 		imageContext: ctx,
 		imageCancel:  cancel,
 		pending:      map[string]struct{}{},
+		errorCounts:  map[string]int{},
 	}
 }
 
