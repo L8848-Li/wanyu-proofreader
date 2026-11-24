@@ -1017,19 +1017,9 @@ func (s *importService) decideAdoptionExceptionInApp(app core.App, c *core.Reque
 	if err != nil {
 		return nil, apis.NewBadRequestError("例外存储尚未初始化。", err)
 	}
-	existing, findErr := app.FindRecordsByFilter(
-		"adoption_exceptions",
-		`batch = {:batch} && page = {:page}`,
-		"", 1, 0,
-		dbx.Params{"batch": record.Id, "page": pageID},
-	)
-	var item *core.Record
-	if findErr == nil && len(existing) > 0 {
-		item = existing[0]
-	} else {
-		item = core.NewRecord(collection)
-		item.Set("batch", record.Id)
-		item.Set("page", pageID)
+	item, err := findOrInitAdoptionException(app, collection, record.Id, pageID)
+	if err != nil {
+		return nil, apis.NewBadRequestError("读取既有例外失败。", err)
 	}
 	item.Set("decision", decision)
 	item.Set("reason_code", reasonCode)
@@ -1051,6 +1041,27 @@ func (s *importService) decideAdoptionExceptionInApp(app core.App, c *core.Reque
 		"exception": adoptionExceptionView(item),
 		"batch":     adoptionBatchView(record),
 	}, nil
+}
+
+// 读库失败必须原样上抛：吞掉它会让「已有例外」走新建并撞 (batch, page) 唯一索引，
+// 真实的 DB 故障被伪装成「保存例外失败」，排查被误导。
+func findOrInitAdoptionException(app core.App, collection *core.Collection, batchID, pageID string) (*core.Record, error) {
+	existing, findErr := app.FindRecordsByFilter(
+		"adoption_exceptions",
+		`batch = {:batch} && page = {:page}`,
+		"", 1, 0,
+		dbx.Params{"batch": batchID, "page": pageID},
+	)
+	if findErr != nil {
+		return nil, findErr
+	}
+	if len(existing) > 0 {
+		return existing[0], nil
+	}
+	item := core.NewRecord(collection)
+	item.Set("batch", batchID)
+	item.Set("page", pageID)
+	return item, nil
 }
 
 func (s *importService) exportAdoptionManifest(c *core.RequestEvent) error {
