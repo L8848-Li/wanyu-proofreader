@@ -41,7 +41,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { checkNicknameAvailable } from '@/services/authService'
@@ -59,6 +59,11 @@ const passwordConfirm = ref('')
 const loading = ref(false)
 const error = ref('')
 const success = ref(false)
+let redirectTimer = null
+
+onUnmounted(() => {
+  if (redirectTimer) clearTimeout(redirectTimer)
+})
 
 async function handleRegister() {
   if (loading.value) return
@@ -80,7 +85,7 @@ async function handleRegister() {
     }
     await auth.register(email.value, password.value, passwordConfirm.value, name.value)
     success.value = true
-    setTimeout(() => router.push(loginLocation.value), 1500)
+    redirectTimer = setTimeout(() => router.push(loginLocation.value), 1500)
   } catch (e) {
     error.value = getPbMessage(e, '注册失败，请检查填写的信息')
   } finally {

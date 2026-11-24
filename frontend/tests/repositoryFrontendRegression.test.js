@@ -1189,3 +1189,55 @@ regression(
     assert.equal(listeners.size, 0)
   }
 )
+
+regression(
+  'registration redirect timer is cancelled when leaving the view and still fires when staying',
+  async () => {
+    const mount = () => {
+      const timers = new Map()
+      const pushes = []
+      const unmounts = []
+      let nextId = 1
+      const api = evaluate(
+        'views/RegisterView.vue',
+        ['handleRegister', 'success', 'name', 'password', 'passwordConfirm'],
+        {
+          onUnmounted: (callback) => unmounts.push(callback),
+          useRouter: () => ({
+            push: (location) => {
+              pushes.push(location)
+              return Promise.resolve()
+            }
+          }),
+          useRoute: () => ({ query: {} }),
+          useAuthStore: () => ({ register: async () => {} }),
+          checkNicknameAvailable: async () => ({ available: true }),
+          authPageLocation: (path) => ({ path }),
+          setTimeout: (callback) => {
+            const id = nextId++
+            timers.set(id, callback)
+            return id
+          },
+          clearTimeout: (id) => {
+            timers.delete(id)
+          }
+        }
+      )
+      api.name.value = 'synthetic-volunteer'
+      api.password.value = api.passwordConfirm.value = 'SyntheticPassword123!'
+      return { api, timers, pushes, unmounts }
+    }
+    const leaving = mount()
+    await leaving.api.handleRegister()
+    assert.equal(leaving.api.success.value, true)
+    assert.equal(leaving.timers.size, 1)
+    leaving.unmounts.forEach((callback) => callback())
+    assert.equal(leaving.timers.size, 0, '卸载时必须清掉跳转定时器')
+    leaving.timers.forEach((callback) => callback())
+    assert.equal(leaving.pushes.length, 0, '离开注册页后不得再被拉回登录页')
+    const staying = mount()
+    await staying.api.handleRegister()
+    staying.timers.forEach((callback) => callback())
+    assert.deepEqual(staying.pushes, [{ path: '/login' }])
+  }
+)
