@@ -12,6 +12,7 @@ import * as accountSecurity from '../src/lib/accountSecurity.js'
 import * as localAccountData from '../src/lib/localAccountData.js'
 import { adminRouteKey } from '../src/lib/adminRouteKey.js'
 import * as taskDraft from '../src/lib/taskDraft.js'
+import * as adminPageList from '../src/lib/adminPageList.js'
 import * as normalizationDraft from '../src/lib/normalizationDraft.js'
 
 const regression = (name, run) => test(name, { timeout: 5000 }, run)
@@ -1187,5 +1188,115 @@ regression(
     await assert.rejects(pending, { name: 'AbortError' })
     assert.equal(store.token, originalToken)
     assert.equal(listeners.size, 0)
+  }
+)
+
+regression(
+  'batch selection fetches only pending rows and range selection fetches only the requested span',
+  async () => {
+    const source = readFileSync(
+      new URL('../src/composables/project/useProjectEntries.js', import.meta.url),
+      'utf8'
+    )
+    const fixture = [
+      { id: 'a', page_number: 1, status: 'approved' },
+      { id: 'b', page_number: 2, status: 'pending' },
+      { id: 'c', page_number: 3, status: 'pending' },
+      { id: 'd', page_number: 4, status: 'claimed' },
+      { id: 'e', page_number: 5, status: 'pending' },
+      { id: 'f', page_number: 6, status: 'approved' }
+    ]
+    const calls = []
+    const listAllProjectPages = async (_projectId, options) => {
+      calls.push(options)
+      const min = Number(/page_number >= (\d+)/.exec(options.filter)?.[1] || 1)
+      const max = Number(/page_number <= (\d+)/.exec(options.filter)?.[1] || 999)
+      return fixture.filter(
+        (row) =>
+          row.page_number >= min &&
+          row.page_number <= max &&
+          (!options.filter.includes('status="pending"') || row.status === 'pending')
+      )
+    }
+    const rangeBody = source.slice(
+      source.indexOf('  async function selectByRange()'),
+      source.indexOf('  async function applyPendingOrderByIds')
+    )
+    const mutationError = ref('')
+    const mutationSuccess = ref('')
+    const selectedPendingIds = ref([])
+    const selectByRange = new Function(
+      'mutatingRows',
+      'importJob',
+      'clearMutationFeedback',
+      'rangeSelectInput',
+      'pageStats',
+      'parseRangeInput',
+      'listAllProjectPages',
+      'projectId',
+      'mutationError',
+      'mutationSuccess',
+      'selectedPendingIds',
+      'pendingIdsAtPositions',
+      'rangeBatchFilter',
+      'getPbMessage',
+      `${rangeBody}; return selectByRange`
+    )(
+      ref(false),
+      ref(''),
+      () => {},
+      ref('2-5'),
+      ref({ total: 6 }),
+      adminPageList.parseRangeInput,
+      listAllProjectPages,
+      'p1',
+      mutationError,
+      mutationSuccess,
+      selectedPendingIds,
+      adminPageList.pendingIdsAtPositions,
+      adminPageList.rangeBatchFilter,
+      (error) => error.message
+    )
+    await selectByRange()
+    assert.deepEqual(selectedPendingIds.value, ['b', 'c', 'e'])
+    assert.equal(calls.length, 1)
+    assert.match(calls[0].filter, /page_number >= 2/)
+    assert.match(calls[0].filter, /page_number <= 5/)
+    assert.match(mutationSuccess.value, /3 条/)
+
+    const pendingBody = source.slice(
+      source.indexOf('  async function pendingOperationRows()'),
+      source.indexOf('  async function loadQualitySummary')
+    )
+    const toggleBody = source.slice(
+      source.indexOf('  async function toggleSelectAllPending()'),
+      source.indexOf('  function canMoveUp')
+    )
+    const selectedAll = ref([])
+    const toggleSelectAllPending = new Function(
+      'mutatingRows',
+      'importJob',
+      'allPendingSelected',
+      'selectedPendingIds',
+      'listAllProjectPages',
+      'projectId',
+      'pendingBatchFilter',
+      'getPbMessage',
+      'mutationError',
+      `${pendingBody}\n${toggleBody}; return toggleSelectAllPending`
+    )(
+      ref(false),
+      ref(''),
+      ref(false),
+      selectedAll,
+      listAllProjectPages,
+      'p1',
+      adminPageList.pendingBatchFilter,
+      (error) => error.message,
+      ref('')
+    )
+    await toggleSelectAllPending()
+    assert.deepEqual(selectedAll.value, ['b', 'c', 'e'])
+    assert.equal(calls[calls.length - 1].filter, 'project="p1" && status="pending"')
   }
 )

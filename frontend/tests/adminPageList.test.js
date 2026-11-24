@@ -4,7 +4,10 @@ import assert from 'node:assert/strict'
 import {
   adminPageRouteQuery,
   normalizeAdminPageQuery,
-  parseRangeInput
+  parseRangeInput,
+  pendingBatchFilter,
+  pendingIdsAtPositions,
+  rangeBatchFilter
 } from '../src/lib/adminPageList.js'
 
 const options = {
@@ -170,4 +173,44 @@ test('detail route changes are applied during project initialization', () => {
     source.indexOf('async function loadProject()')
   )
   assert.match(mounted, /applyListQuery\(route\.query\)[\s\S]*Promise\.all\(\[loadPages\(\)/)
+})
+
+test('batch filters fetch only pending rows or the requested page-number range', () => {
+  assert.equal(pendingBatchFilter('p1'), 'project="p1" && status="pending"')
+  assert.equal(
+    rangeBatchFilter('p1', [1, 4]),
+    'project="p1" && page_number >= 2 && page_number <= 5'
+  )
+  assert.equal(rangeBatchFilter('p1', [0]), 'project="p1" && page_number >= 1 && page_number <= 1')
+})
+
+test('range selection maps positions to pending ids via contiguous page numbers', () => {
+  const rows = [
+    { id: 'a', page_number: 1, status: 'approved' },
+    { id: 'b', page_number: 2, status: 'pending' },
+    { id: 'c', page_number: 3, status: 'pending' },
+    { id: 'd', page_number: 4, status: 'claimed' },
+    { id: 'e', page_number: 5, status: 'pending' },
+    { id: 'f', page_number: 6, status: 'approved' }
+  ]
+  assert.deepEqual(pendingIdsAtPositions(rows, [0, 1, 2, 3, 4, 5]), ['b', 'c', 'e'])
+  assert.deepEqual(pendingIdsAtPositions(rows, [1, 2]), ['b', 'c'])
+  assert.deepEqual(pendingIdsAtPositions(rows, [0, 5]), [])
+  assert.deepEqual(
+    pendingIdsAtPositions(
+      rows.filter((row) => row.page_number !== 3),
+      [2]
+    ),
+    []
+  )
+})
+
+test('batch operations wire to pending-only and range-bounded fetches', () => {
+  const source = projectDetailSource()
+  assert.match(source, /async function pendingOperationRows\(\)/)
+  assert.match(source, /filter: pendingBatchFilter\(projectId\)/)
+  assert.match(source, /filter: rangeBatchFilter\(projectId, indexes\)/)
+  assert.doesNotMatch(source, /async function operationRows\(\)/)
+  const moves = source.match(/pending = await pendingOperationRows\(\)/g) || []
+  assert.equal(moves.length, 2)
 })
