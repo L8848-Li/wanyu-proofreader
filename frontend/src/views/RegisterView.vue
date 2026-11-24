@@ -9,23 +9,57 @@
       <form @submit.prevent="handleRegister">
         <div class="form-group">
           <label for="register-name" class="form-label">昵称（可用于登录）</label>
-          <input id="register-name" v-model.trim="name" type="text" class="form-control" placeholder="请输入唯一昵称" autocomplete="nickname" maxlength="255" :disabled="loading" required />
+          <input
+            id="register-name"
+            v-model.trim="name"
+            type="text"
+            class="form-control"
+            placeholder="请输入唯一昵称"
+            autocomplete="nickname"
+            maxlength="255"
+            :disabled="loading"
+            required
+          />
         </div>
         <div class="form-group">
           <label for="register-email" class="form-label">邮箱</label>
-          <input id="register-email" v-model="email" type="email" class="form-control" placeholder="请输入邮箱" required />
+          <input
+            id="register-email"
+            v-model="email"
+            type="email"
+            class="form-control"
+            placeholder="请输入邮箱"
+            required
+          />
         </div>
         <div class="form-group">
           <label for="register-password" class="form-label">密码</label>
-          <input id="register-password" v-model="password" type="password" class="form-control" placeholder="至少8位" required minlength="8" />
+          <input
+            id="register-password"
+            v-model="password"
+            type="password"
+            class="form-control"
+            placeholder="至少8位"
+            required
+            minlength="8"
+          />
         </div>
         <div class="form-group">
           <label for="register-password-confirm" class="form-label">确认密码</label>
-          <input id="register-password-confirm" v-model="passwordConfirm" type="password" class="form-control" placeholder="再次输入密码" required />
+          <input
+            id="register-password-confirm"
+            v-model="passwordConfirm"
+            type="password"
+            class="form-control"
+            placeholder="再次输入密码"
+            required
+          />
         </div>
 
         <div v-if="error" class="alert alert-error" role="alert">{{ error }}</div>
-        <div v-if="success" class="alert alert-success" role="status">注册成功！正在跳转到登录页...</div>
+        <div v-if="success" class="alert alert-success" role="status">
+          注册成功！正在跳转到登录页...
+        </div>
 
         <button type="submit" class="btn btn-primary btn-block btn-lg" :disabled="loading">
           {{ loading ? '注册中...' : '注册' }}
