@@ -1195,17 +1195,28 @@ regression(
   'lease renewal keeps the token through transient network errors and only authoritative rejections mark it lost',
   async () => {
     const mount = (renewImpl) => {
-      const retryCallbacks = []
+      const timeouts = new Map()
+      const intervals = new Map()
+      let nextId = 1
       const original = globalThis.window
       globalThis.window = {
         sessionStorage: memoryStorage(),
-        setInterval: () => 1,
-        clearInterval: () => {},
-        setTimeout: (callback) => {
-          retryCallbacks.push(callback)
-          return retryCallbacks.length
+        setInterval: (callback, ms) => {
+          const id = nextId++
+          intervals.set(id, { callback, ms })
+          return id
         },
-        clearTimeout: () => {}
+        clearInterval: (id) => {
+          intervals.delete(id)
+        },
+        setTimeout: (callback, ms) => {
+          const id = nextId++
+          timeouts.set(id, { callback, ms })
+          return id
+        },
+        clearTimeout: (id) => {
+          timeouts.delete(id)
+        }
       }
       const context = {
         page: ref({ id: 'page-a', project: 'project-a' }),
@@ -1247,23 +1258,31 @@ regression(
         }
       )
       const api = useProofreadLease(context)
-      return { api, context, retryCallbacks, restore: () => (globalThis.window = original) }
+      return { api, context, timeouts, intervals, restore: () => (globalThis.window = original) }
     }
     let offline = true
-    const transient = mount(() =>
-      offline
+    let renewCalls = 0
+    const transient = mount(() => {
+      renewCalls++
+      return offline
         ? Promise.reject({ status: 0, message: 'network down' })
         : Promise.resolve({ leaseExpiresAt: '2026-11-23T12:00:00Z' })
-    )
+    })
     try {
       await transient.api.restoreOrAcquireLease()
       assert.equal(transient.context.leaseLost.value, false, '瞬时网络错误不得判丢租约')
       assert.equal(transient.context.leaseToken.value, 't'.repeat(64), '瞬时网络错误不得清空令牌')
-      assert.equal(transient.retryCallbacks.length, 1, '应安排一次稍后重试')
+      assert.equal(renewCalls, 1)
+      const retries = [...transient.timeouts.entries()].filter(([, t]) => t.ms === 20 * 1000)
+      assert.equal(retries.length, 1, '恢复入口启动常规轮询后，短重试必须仍在')
+      assert.equal(transient.intervals.size, 1, '常规续期轮询应已启动')
       offline = false
-      transient.retryCallbacks[0]()
+      const [retryId, retry] = retries[0]
+      transient.timeouts.delete(retryId)
+      retry.callback()
       await new Promise((resolve) => setTimeout(resolve, 0))
       await new Promise((resolve) => setTimeout(resolve, 0))
+      assert.equal(renewCalls, 2, '20 秒后应确有第二次续期请求')
       assert.equal(
         transient.context.leaseExpiresAt.value,
         '2026-11-23T12:00:00Z',

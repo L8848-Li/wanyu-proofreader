@@ -82,7 +82,9 @@ export function useProofreadLease({
   }
 
   function startLeaseRenewal() {
-    stopLeaseRenewal()
+    // 只重置 interval：恢复入口首次续期遇瞬时错误安排的短重试必须保留，
+    // 清理 retry 属于 stopLeaseRenewal（离场/判丢等停止路径）。
+    if (leaseRenewTimer) window.clearInterval(leaseRenewTimer)
     leaseRenewTimer = window.setInterval(() => renewCurrentLease(), 2 * 60 * 1000)
   }
 
@@ -123,6 +125,10 @@ export function useProofreadLease({
         token: leaseToken.value,
         expiresAt: leaseExpiresAt.value
       })
+      if (leaseRetryTimer) {
+        window.clearTimeout(leaseRetryTimer)
+        leaseRetryTimer = null
+      }
     } catch (e) {
       if (!isCurrentCase(scope)) return
       if (e?.isAbort || e?.name === 'AbortError') return
