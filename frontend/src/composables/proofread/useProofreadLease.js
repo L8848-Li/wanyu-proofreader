@@ -1,5 +1,5 @@
 import { unref } from 'vue'
-import { clearTaskLease, loadTaskLease, saveTaskLease } from '../../lib/taskLease.js'
+import { clearTaskLease, isTransientLeaseRenewalError, loadTaskLease, saveTaskLease } from '../../lib/taskLease.js'
 import {
   claimNextProjectPage,
   releaseTaskLease,
@@ -30,6 +30,7 @@ export function useProofreadLease({
   isCurrentCase
 }) {
   let leaseRenewTimer = null
+  let leaseRetryTimer = null
 
   function saveClaimedLease(claimedPage) {
     if (!claimedPage?.id || !claimedPage.leaseToken) return false
@@ -81,9 +82,21 @@ export function useProofreadLease({
   }
 
   function stopLeaseRenewal() {
+    if (leaseRetryTimer) {
+      window.clearTimeout(leaseRetryTimer)
+      leaseRetryTimer = null
+    }
     if (!leaseRenewTimer) return
     window.clearInterval(leaseRenewTimer)
     leaseRenewTimer = null
+  }
+
+  function scheduleLeaseRetry() {
+    if (leaseRetryTimer) return
+    leaseRetryTimer = window.setTimeout(() => {
+      leaseRetryTimer = null
+      renewCurrentLease({ force: true })
+    }, 20 * 1000)
   }
 
   function handleLeaseActivation() {
@@ -107,6 +120,12 @@ export function useProofreadLease({
       })
     } catch (e) {
       if (!isCurrentCase(scope)) return
+      if (e?.isAbort || e?.name === 'AbortError') return
+      if (isTransientLeaseRenewalError(e)) {
+        // 断网几秒不代表租约被服务端收回：保留令牌稍后重试，避免被迫重领换任务。
+        scheduleLeaseRetry()
+        return
+      }
       markLeaseLost(getPbMessage(e, '任务租约续期失败，本地草稿仍然保留，请重新领取任务。'))
     } finally {
       if (isCurrentCase(scope)) renewingLease.value = false
