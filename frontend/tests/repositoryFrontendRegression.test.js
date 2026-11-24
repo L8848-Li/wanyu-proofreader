@@ -1228,25 +1228,32 @@ regression(
         captureCase: () => 1,
         isCurrentCase: () => true
       }
-      const { useProofreadLease } = evaluate('composables/proofread/useProofreadLease.js', ['useProofreadLease'], {
-        loadTaskLease: () => ({ token: 't'.repeat(64), expiresAt: '2026-11-23T10:00:00Z' }),
-        saveTaskLease: () => {},
-        clearTaskLease: () => {},
-        renewTaskLease: renewImpl,
-        claimNextProjectPage: async () => {
-          throw new Error('transient renewal failure must not reclaim')
-        },
-        releaseTaskLease: async () => {},
-        isTransientLeaseRenewalError: taskLeaseLib.isTransientLeaseRenewalError,
-        unref: (value) => (value && typeof value === 'object' && 'value' in value ? value.value : value),
-        document: { visibilityState: 'visible', hasFocus: () => true }
-      })
+      const { useProofreadLease } = evaluate(
+        'composables/proofread/useProofreadLease.js',
+        ['useProofreadLease'],
+        {
+          loadTaskLease: () => ({ token: 't'.repeat(64), expiresAt: '2026-11-23T10:00:00Z' }),
+          saveTaskLease: () => {},
+          clearTaskLease: () => {},
+          renewTaskLease: renewImpl,
+          claimNextProjectPage: async () => {
+            throw new Error('transient renewal failure must not reclaim')
+          },
+          releaseTaskLease: async () => {},
+          isTransientLeaseRenewalError: taskLeaseLib.isTransientLeaseRenewalError,
+          unref: (value) =>
+            value && typeof value === 'object' && 'value' in value ? value.value : value,
+          document: { visibilityState: 'visible', hasFocus: () => true }
+        }
+      )
       const api = useProofreadLease(context)
       return { api, context, retryCallbacks, restore: () => (globalThis.window = original) }
     }
     let offline = true
     const transient = mount(() =>
-      offline ? Promise.reject({ status: 0, message: 'network down' }) : Promise.resolve({ leaseExpiresAt: '2026-11-23T12:00:00Z' })
+      offline
+        ? Promise.reject({ status: 0, message: 'network down' })
+        : Promise.resolve({ leaseExpiresAt: '2026-11-23T12:00:00Z' })
     )
     try {
       await transient.api.restoreOrAcquireLease()
@@ -1257,7 +1264,11 @@ regression(
       transient.retryCallbacks[0]()
       await new Promise((resolve) => setTimeout(resolve, 0))
       await new Promise((resolve) => setTimeout(resolve, 0))
-      assert.equal(transient.context.leaseExpiresAt.value, '2026-11-23T12:00:00Z', '恢复后续期应成功')
+      assert.equal(
+        transient.context.leaseExpiresAt.value,
+        '2026-11-23T12:00:00Z',
+        '恢复后续期应成功'
+      )
     } finally {
       transient.restore()
     }
@@ -1278,13 +1289,17 @@ regression(
     const claimNextFailure = ref(false)
     const noNextTask = ref(true)
     const retryingClaim = ref(false)
-    const { useProofreadSubmission } = evaluate('composables/proofread/useProofreadSubmission.js', ['useProofreadSubmission'], {
-      claimNextProjectPage: async () => {
-        throw { status: 500, message: 'server hiccup' }
-      },
-      getPbStatus: (error) => error?.status || error?.response?.status || null,
-      console: { warn: () => {} }
-    })
+    const { useProofreadSubmission } = evaluate(
+      'composables/proofread/useProofreadSubmission.js',
+      ['useProofreadSubmission'],
+      {
+        claimNextProjectPage: async () => {
+          throw { status: 500, message: 'server hiccup' }
+        },
+        getPbStatus: (error) => error?.status || error?.response?.status || null,
+        console: { warn: () => {} }
+      }
+    )
     const api = useProofreadSubmission({
       retryingClaim,
       page: ref({ id: 'page-a', project: 'project-a' }),

@@ -1,5 +1,10 @@
 import { unref } from 'vue'
-import { clearTaskLease, isTransientLeaseRenewalError, loadTaskLease, saveTaskLease } from '../../lib/taskLease.js'
+import {
+  clearTaskLease,
+  isTransientLeaseRenewalError,
+  loadTaskLease,
+  saveTaskLease
+} from '../../lib/taskLease.js'
 import {
   claimNextProjectPage,
   releaseTaskLease,
