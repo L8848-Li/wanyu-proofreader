@@ -19,6 +19,35 @@ export async function countPages(filter) {
   return Number(result.totalItems || 0)
 }
 
+export async function countProjectPages(projectId) {
+  return countPages(relationFilter('project', projectId))
+}
+
+export async function listProjectPageWindow(projectId, startIndex, endIndex) {
+  const pageSize = 100
+  const firstPage = Math.floor(startIndex / pageSize) + 1
+  const lastPage = Math.floor(endIndex / pageSize) + 1
+  const filter = relationFilter('project', projectId)
+  const rows = []
+  let totalItems = 0
+  for (let page = firstPage; page <= lastPage; page++) {
+    const result = await listPagesWithFallback({
+      page,
+      perPage: pageSize,
+      filter,
+      sort: 'page_number',
+      fields: 'id,status,page_number'
+    })
+    rows.push(...(result.items || []))
+    totalItems = Number(result.totalItems || 0)
+  }
+  const offset = startIndex - (firstPage - 1) * pageSize
+  return {
+    items: rows.slice(offset, offset + endIndex - startIndex + 1),
+    totalItems
+  }
+}
+
 export async function listPendingProofreadTasks(page, perPage) {
   return listPagesWithFallback({
     page,

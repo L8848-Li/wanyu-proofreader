@@ -6,16 +6,17 @@ import {
   normalizeAdminPageQuery,
   parseRangeInput,
   pendingBatchFilter,
-  pendingIdsAtPositions,
-  rangeBatchFilter
+  pendingIdsInWindow
 } from '@/lib/adminPageList'
 import { summarizePages } from '@/lib/workspaceInsights'
 import { PAGE_STATUS, PAGE_STATUS_LABELS } from '@/constants/pageStatus'
 import {
+  countProjectPages,
   deletePendingPages,
   getAdminProjectPageStats,
   listAdminProjectPages,
   listAllProjectPages,
+  listProjectPageWindow,
   reorderPendingPages
 } from '@/services/pagesService'
 import { getProjectQualitySummary, setPageQualityState } from '@/services/qualityStateService'
@@ -510,33 +511,29 @@ export function useProjectEntries(projectId, project, refreshLedger) {
   async function selectByRange() {
     if (mutatingRows.value || importJob.value) return
     clearMutationFeedback()
-    const indexes = parseRangeInput(rangeSelectInput.value, Number(pageStats.value?.total) || 0)
-    if (!indexes.length) {
-      mutationError.value = '范围格式无效，请输入如 1-33 或 1,3,5-8。'
-      return
-    }
-
-    let rows
     mutatingRows.value = true
     try {
-      rows = await listAllProjectPages(projectId, {
-        fields: 'id,status,page_number',
-        sort: 'page_number,id',
-        filter: rangeBatchFilter(projectId, indexes)
-      })
+      // total 与窗口必须来自同一个权限过滤后的排序集合；不能从物理页号或异步 stats 推断。
+      const total = await countProjectPages(projectId)
+      const indexes = parseRangeInput(rangeSelectInput.value, total)
+      if (!indexes.length) {
+        mutationError.value = '范围格式无效，请输入如 1-33 或 1,3,5-8。'
+        return
+      }
+      const startIndex = indexes[0]
+      const endIndex = indexes[indexes.length - 1]
+      const window = await listProjectPageWindow(projectId, startIndex, endIndex)
+      const ids = pendingIdsInWindow(window.items || [], indexes, startIndex)
+      selectedPendingIds.value = ids
+      if (!ids.length) {
+        mutationError.value = '该范围内没有可操作的待校对条目（仅待校对状态可选）。'
+      } else {
+        mutationSuccess.value = `已按范围选择 ${ids.length} 条待校对条目。`
+      }
     } catch (e) {
       mutationError.value = getPbMessage(e, '选择失败，请重试')
-      return
     } finally {
       mutatingRows.value = false
-    }
-
-    const ids = pendingIdsAtPositions(rows, indexes)
-    selectedPendingIds.value = ids
-    if (!ids.length) {
-      mutationError.value = '该范围内没有可操作的待校对条目（仅待校对状态可选）。'
-    } else {
-      mutationSuccess.value = `已按范围选择 ${ids.length} 条待校对条目。`
     }
   }
 
