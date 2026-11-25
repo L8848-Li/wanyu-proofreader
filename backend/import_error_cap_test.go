@@ -73,3 +73,45 @@ func TestAddJobErrorCapCountsPreexistingRows(t *testing.T) {
 		t.Fatalf("error rows=%d want=1001（已有 1000 条 + 截断标记，重试不重置上限）", n)
 	}
 }
+
+func TestImportErrorLimitResetsWhenJobArtifactsCleared(t *testing.T) {
+	s, jobID := importErrorCapFixture(t)
+	// 预检阶段用满配额并留下截断标记。
+	for i := 1; i <= 1001; i++ {
+		s.addJobError(jobID, i, "entry_text", "CSV_PARSE_ERROR", "preflight bad row", "x", false)
+	}
+	job, err := s.app.FindRecordById("import_jobs", jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.app.DB().NewQuery(`UPDATE import_jobs SET status = 'validated', failed_count = 1500 WHERE id = {:id}`).
+		Bind(dbx.Params{"id": jobID}).Execute(); err != nil {
+		t.Fatal(err)
+	}
+	// confirm→processing 会删除旧明细/标记；配额必须随清理失效。
+	if err := s.clearJobArtifacts(jobID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.app.CountRecords("import_job_errors", dbx.HashExp{"job": jobID}); err != nil || n != 0 {
+		t.Fatalf("error rows after cleanup=%d err=%v want=0", n, err)
+	}
+	if _, err := s.app.DB().NewQuery(`UPDATE import_jobs SET status = 'processing' WHERE id = {:id}`).
+		Bind(dbx.Params{"id": jobID}).Execute(); err != nil {
+		t.Fatal(err)
+	}
+	s.addJobError(jobID, 1, "entry_text", "PROCESSING_ERROR", "formal import bad row", "x", false)
+	records, err := s.app.FindRecordsByFilter("import_job_errors", "job = {:job}", "row_number", 10, 0, dbx.Params{"job": jobID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].GetString("error_code") != "PROCESSING_ERROR" {
+		t.Fatalf("formal import error rows=%v want=1 条 PROCESSING_ERROR（不得沿用预检配额）", records)
+	}
+	job, err = s.app.FindRecordById("import_jobs", jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.GetInt("failed_count") != 1500 {
+		t.Fatalf("failed_count=%d want=1500（清理错误明细不得改失败总数）", job.GetInt("failed_count"))
+	}
+}

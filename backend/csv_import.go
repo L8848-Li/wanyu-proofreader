@@ -238,6 +238,9 @@ func (s *importService) processCSVInspection(work importWork) {
 		s.markFatal(work, "CSV_INSPECTION_FINALIZE_FAILED", "CSV 已预检，但预检结果保存失败。", err)
 		return
 	}
+	s.mu.Lock()
+	delete(s.errorCounts, work.id)
+	s.mu.Unlock()
 	logUpload("info", "csv_inspection_completed", map[string]any{
 		"request_id":     work.requestID,
 		"job_id":         work.id,
