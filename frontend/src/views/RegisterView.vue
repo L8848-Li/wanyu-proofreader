@@ -94,8 +94,10 @@ const loading = ref(false)
 const error = ref('')
 const success = ref(false)
 let redirectTimer = null
+let viewActive = true
 
 onUnmounted(() => {
+  viewActive = false
   if (redirectTimer) clearTimeout(redirectTimer)
 })
 
@@ -118,6 +120,7 @@ async function handleRegister() {
       return
     }
     await auth.register(email.value, password.value, passwordConfirm.value, name.value)
+    if (!viewActive) return
     success.value = true
     redirectTimer = setTimeout(() => router.push(loginLocation.value), 1500)
   } catch (e) {

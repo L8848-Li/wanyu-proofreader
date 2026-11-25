@@ -1193,7 +1193,7 @@ regression(
 regression(
   'registration redirect timer is cancelled when leaving the view and still fires when staying',
   async () => {
-    const mount = () => {
+    const mount = (register = async () => {}) => {
       const timers = new Map()
       const pushes = []
       const unmounts = []
@@ -1210,7 +1210,7 @@ regression(
             }
           }),
           useRoute: () => ({ query: {} }),
-          useAuthStore: () => ({ register: async () => {} }),
+          useAuthStore: () => ({ register }),
           checkNicknameAvailable: async () => ({ available: true }),
           authPageLocation: (path) => ({ path }),
           setTimeout: (callback) => {
@@ -1239,5 +1239,17 @@ regression(
     await staying.api.handleRegister()
     staying.timers.forEach((callback) => callback())
     assert.deepEqual(staying.pushes, [{ path: '/login' }])
+
+    const waiting = deferred()
+    const pendingView = mount(() => waiting.promise)
+    const pending = pendingView.api.handleRegister()
+    await Promise.resolve()
+    await Promise.resolve()
+    pendingView.unmounts.forEach((callback) => callback())
+    waiting.resolve()
+    await pending
+    assert.equal(pendingView.api.success.value, false, '卸载后完成的注册请求不得发布成功状态')
+    assert.equal(pendingView.timers.size, 0, '卸载后完成的注册请求不得再建定时器')
+    assert.equal(pendingView.pushes.length, 0, '请求中离开后完成不得二次导航')
   }
 )
