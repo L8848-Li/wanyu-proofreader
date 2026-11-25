@@ -102,7 +102,7 @@ export function useProofreadLease({
     if (leaseRetryTimer) return
     leaseRetryTimer = window.setTimeout(() => {
       leaseRetryTimer = null
-      renewCurrentLease({ force: true })
+      renewCurrentLease()
     }, 20 * 1000)
   }
 

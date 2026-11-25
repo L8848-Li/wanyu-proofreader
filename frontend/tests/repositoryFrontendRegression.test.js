@@ -1194,7 +1194,7 @@ regression(
 regression(
   'lease renewal keeps the token through transient network errors and only authoritative rejections mark it lost',
   async () => {
-    const mount = (renewImpl) => {
+    const mount = (renewImpl, visibility = ref('visible')) => {
       const timeouts = new Map()
       const intervals = new Map()
       let nextId = 1
@@ -1254,11 +1254,23 @@ regression(
           isTransientLeaseRenewalError: taskLeaseLib.isTransientLeaseRenewalError,
           unref: (value) =>
             value && typeof value === 'object' && 'value' in value ? value.value : value,
-          document: { visibilityState: 'visible', hasFocus: () => true }
+          document: {
+            get visibilityState() {
+              return visibility.value
+            },
+            hasFocus: () => visibility.value === 'visible'
+          }
         }
       )
       const api = useProofreadLease(context)
-      return { api, context, timeouts, intervals, restore: () => (globalThis.window = original) }
+      return {
+        api,
+        context,
+        timeouts,
+        intervals,
+        visibility,
+        restore: () => (globalThis.window = original)
+      }
     }
     let offline = true
     let renewCalls = 0
@@ -1290,6 +1302,33 @@ regression(
       )
     } finally {
       transient.restore()
+    }
+    let hiddenOffline = true
+    let hiddenRenewCalls = 0
+    const hidden = mount(() => {
+      hiddenRenewCalls++
+      return hiddenOffline
+        ? Promise.reject({ status: 0, message: 'network down' })
+        : Promise.resolve({ leaseExpiresAt: '2026-11-23T12:00:00Z' })
+    })
+    try {
+      await hidden.api.restoreOrAcquireLease()
+      const [retryId, retry] = [...hidden.timeouts.entries()].find(([, t]) => t.ms === 20 * 1000)
+      hidden.visibility.value = 'hidden'
+      hidden.timeouts.delete(retryId)
+      retry.callback()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      assert.equal(hiddenRenewCalls, 1, '后台短重试不得绕过可见性/焦点检查')
+      hiddenOffline = false
+      hidden.visibility.value = 'visible'
+      hidden.api.handleLeaseActivation()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      assert.equal(hiddenRenewCalls, 2, '回到前台激活时应续期')
+      assert.equal(hidden.context.leaseExpiresAt.value, '2026-11-23T12:00:00Z')
+    } finally {
+      hidden.restore()
     }
     const rejected = mount(() => Promise.reject({ status: 409, message: '租约已被重新领取' }))
     try {
