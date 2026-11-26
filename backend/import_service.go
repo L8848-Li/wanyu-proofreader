@@ -96,6 +96,7 @@ type importService struct {
 	imageCancel  context.CancelFunc
 	mu           sync.Mutex
 	pending      map[string]struct{}
+	errorCounts  map[string]int
 	pdfUploads   *pdfUploadPool
 
 	// schemes 是启动时载入的拼音规则表（#190）。载入后不变，因此读它不需要加锁。
@@ -112,6 +113,7 @@ func newImportService(app *pocketbase.PocketBase) *importService {
 		imageContext: ctx,
 		imageCancel:  cancel,
 		pending:      map[string]struct{}{},
+		errorCounts:  map[string]int{},
 	}
 }
 
@@ -666,7 +668,14 @@ func (s *importService) openRecordFile(record *core.Record, field string) (io.Re
 }
 
 func (s *importService) clearJobArtifacts(jobID string) error {
-	return clearJobArtifacts(s.app, jobID)
+	if err := clearJobArtifacts(s.app, jobID); err != nil {
+		return err
+	}
+	// 旧错误明细已删除：配额必须随数据生命周期重置，正式导入不能沿用预检旧计数。
+	s.mu.Lock()
+	delete(s.errorCounts, jobID)
+	s.mu.Unlock()
+	return nil
 }
 
 func clearJobArtifacts(dao core.App, jobID string) error {

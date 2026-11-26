@@ -550,6 +550,9 @@ func (s *importService) processBundle(work importWork) {
 		s.markFatal(work, "JOB_FINALIZE_FAILED", "条目已处理，但作业状态更新失败。", err)
 		return
 	}
+	s.mu.Lock()
+	delete(s.errorCounts, jobID)
+	s.mu.Unlock()
 	logUpload("info", "bundle_completed", map[string]any{
 		"request_id":  work.requestID,
 		"kind":        "bundle",
