@@ -1,5 +1,10 @@
 import { unref } from 'vue'
-import { clearTaskLease, loadTaskLease, saveTaskLease } from '../../lib/taskLease.js'
+import {
+  clearTaskLease,
+  isTransientLeaseRenewalError,
+  loadTaskLease,
+  saveTaskLease
+} from '../../lib/taskLease.js'
 import {
   claimNextProjectPage,
   releaseTaskLease,
@@ -30,6 +35,7 @@ export function useProofreadLease({
   isCurrentCase
 }) {
   let leaseRenewTimer = null
+  let leaseRetryTimer = null
 
   function saveClaimedLease(claimedPage) {
     if (!claimedPage?.id || !claimedPage.leaseToken) return false
@@ -76,14 +82,28 @@ export function useProofreadLease({
   }
 
   function startLeaseRenewal() {
-    stopLeaseRenewal()
+    // 只重置 interval：恢复入口首次续期遇瞬时错误安排的短重试必须保留，
+    // 清理 retry 属于 stopLeaseRenewal（离场/判丢等停止路径）。
+    if (leaseRenewTimer) window.clearInterval(leaseRenewTimer)
     leaseRenewTimer = window.setInterval(() => renewCurrentLease(), 2 * 60 * 1000)
   }
 
   function stopLeaseRenewal() {
+    if (leaseRetryTimer) {
+      window.clearTimeout(leaseRetryTimer)
+      leaseRetryTimer = null
+    }
     if (!leaseRenewTimer) return
     window.clearInterval(leaseRenewTimer)
     leaseRenewTimer = null
+  }
+
+  function scheduleLeaseRetry() {
+    if (leaseRetryTimer) return
+    leaseRetryTimer = window.setTimeout(() => {
+      leaseRetryTimer = null
+      renewCurrentLease()
+    }, 20 * 1000)
   }
 
   function handleLeaseActivation() {
@@ -105,8 +125,18 @@ export function useProofreadLease({
         token: leaseToken.value,
         expiresAt: leaseExpiresAt.value
       })
+      if (leaseRetryTimer) {
+        window.clearTimeout(leaseRetryTimer)
+        leaseRetryTimer = null
+      }
     } catch (e) {
       if (!isCurrentCase(scope)) return
+      if (e?.isAbort || e?.name === 'AbortError') return
+      if (isTransientLeaseRenewalError(e)) {
+        // 断网几秒不代表租约被服务端收回：保留令牌稍后重试，避免被迫重领换任务。
+        scheduleLeaseRetry()
+        return
+      }
       markLeaseLost(getPbMessage(e, '任务租约续期失败，本地草稿仍然保留，请重新领取任务。'))
     } finally {
       if (isCurrentCase(scope)) renewingLease.value = false
