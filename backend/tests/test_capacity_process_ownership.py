@@ -19,6 +19,12 @@ import harness
 
 
 class ProcessOwnershipImportTest(unittest.TestCase):
+    def test_linux_process_reaped_while_reading_stat(self):
+        with patch.object(ownership.os, 'name', 'posix'), \
+             patch.object(ownership.platform, 'system', return_value='Linux'), \
+             patch.object(ownership.Path, 'read_text', side_effect=ProcessLookupError):
+            self.assertIsNone(birth_identity(123))
+
     def test_test_discovery_without_fcntl(self):
         # Isolate imports from this test runner's module cache. This simulates
         # the missing Windows module, not the rest of a Windows runtime.

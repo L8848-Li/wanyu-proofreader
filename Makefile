@@ -54,6 +54,7 @@ verify-static:
 	@cd $(BACKEND)/tests && python3 check_test_inventory.py
 	@echo 'guard and tooling self-tests'
 	@python3 -m unittest discover -s scripts -p 'test_*.py'
+	@python3 -m unittest discover -s ocr -p 'test_*.py'
 	@python3 -m unittest discover -s ops -p 'test_*.py'
 	@echo 'whitespace (committed range, working tree and index)'
 	@test -n "$(BASE)" && git diff --check $(BASE) HEAD

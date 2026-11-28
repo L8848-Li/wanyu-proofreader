@@ -563,8 +563,8 @@ jobs:
           python-version: "3.12"
 
       - name: UI debt ratchet (required Frontend context)
-        # Same policy as verify-static. All kinds start in warn mode; enabling
-        # fail in the baseline turns this required context red on an increase.
+        # Same policy as verify-static. All nine kinds are fail in the baseline;
+        # an increase over a limit turns this required context red.
         working-directory: .
         run: |
           python3 -m unittest discover -s scripts -p 'test_check_ui_debt.py'

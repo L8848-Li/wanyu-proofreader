@@ -238,6 +238,9 @@ func (s *importService) processCSVInspection(work importWork) {
 		s.markFatal(work, "CSV_INSPECTION_FINALIZE_FAILED", "CSV 已预检，但预检结果保存失败。", err)
 		return
 	}
+	s.mu.Lock()
+	delete(s.errorCounts, work.id)
+	s.mu.Unlock()
 	logUpload("info", "csv_inspection_completed", map[string]any{
 		"request_id":     work.requestID,
 		"job_id":         work.id,
@@ -425,6 +428,9 @@ func (s *importService) processCSV(work importWork) {
 		s.markFatal(work, "JOB_FINALIZE_FAILED", "条目已处理，但作业状态更新失败。", err)
 		return
 	}
+	s.mu.Lock()
+	delete(s.errorCounts, jobID)
+	s.mu.Unlock()
 	logUpload("info", "csv_completed", map[string]any{
 		"request_id":    work.requestID,
 		"kind":          "csv",
@@ -812,6 +818,11 @@ func savePage(dao core.App, jobID, projectID, projectFileID string, pageNumber i
 	return dao.Save(record)
 }
 
+// 坏 CSV 的每一坏行都落一条错误记录曾无上限：50MB 坏文件可产生百万级写入。
+// 上限对全作业生效（含重试前已落库的行），超限写一条可见的截断标记；
+// 失败总数仍由 counters 全量统计，错误定位能力保留前 1000 行。
+const maxImportJobErrorRows = 1000
+
 func (s *importService) addJobError(
 	jobID string,
 	rowNumber int,
@@ -821,6 +832,24 @@ func (s *importService) addJobError(
 	rawValue string,
 	retryable bool,
 ) {
+	s.mu.Lock()
+	if s.errorCounts == nil {
+		s.errorCounts = map[string]int{}
+	}
+	count, seen := s.errorCounts[jobID]
+	s.mu.Unlock()
+	if !seen {
+		if n, err := s.app.CountRecords("import_job_errors", dbx.HashExp{"job": jobID}); err == nil {
+			count = int(n)
+		}
+	}
+	count++
+	s.mu.Lock()
+	s.errorCounts[jobID] = count
+	s.mu.Unlock()
+	if count > maxImportJobErrorRows+1 {
+		return
+	}
 	collection, err := s.app.FindCollectionByNameOrId("import_job_errors")
 	if err != nil {
 		logUpload("error", "csv_error_collection_lookup_failed", map[string]any{
@@ -840,6 +869,13 @@ func (s *importService) addJobError(
 	record.Set("message", message)
 	record.Set("raw_value", truncateText(rawValue, 1000))
 	record.Set("retryable", retryable)
+	if count == maxImportJobErrorRows+1 {
+		record.Set("column_name", "")
+		record.Set("error_code", "ERROR_ROWS_TRUNCATED")
+		record.Set("message", fmt.Sprintf("错误行记录已达上限 %d 条，后续错误未逐条落库；失败总数仍按全量统计。请修复已列出的问题后重新导入。", maxImportJobErrorRows))
+		record.Set("raw_value", "")
+		record.Set("retryable", false)
+	}
 	if err := s.app.Save(record); err != nil {
 		logUpload("error", "csv_error_persist_failed", map[string]any{
 			"kind":       "csv",

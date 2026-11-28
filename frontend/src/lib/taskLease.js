@@ -32,6 +32,14 @@ export function leaseExpiresSoon(expiresAt, now = Date.now(), thresholdMs = 3 * 
   return !Number.isFinite(expiry) || expiry - now <= thresholdMs
 }
 
+// 续期失败不等于租约丢失：PocketBase 网络失败报 status 0，无 status 的普通错误
+// （如 fetch TypeError）也按瞬时处理；只有服务端权威拒绝（4xx）才判丢。
+export function isTransientLeaseRenewalError(error) {
+  const status = error?.status ?? error?.response?.status
+  if (status == null) return true
+  return status === 0 || status === 408 || status === 429 || status >= 500
+}
+
 // 「缺字待登记」队列选择：从大厅点进缺字按钮后，续领要一直在缺字队列里，而不是
 // 处理一条就退回混合队列。用 sessionStorage 按用户 + 项目记住这个选择。
 const glyphQueueKeyPrefix = 'fangji:glyph-queue:v1'

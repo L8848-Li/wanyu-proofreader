@@ -519,6 +519,21 @@ func deliveryEvents(app recordReader, id string) ([]*core.Record, error) {
 	return app.FindRecordsByFilter("release_events", "delivery = {:id}", "sequence", 0, 0, dbx.Params{"id": id})
 }
 
+// 与 listPagedDeliveries 同一口径：一次取齐事件再按 delivery 分组，
+// 列表/影响预览的事件查询数不随交付条数增长。
+func deliveryEventsByDelivery(app recordReader, filter string, params dbx.Params) (map[string][]*core.Record, error) {
+	events, err := app.FindRecordsByFilter("release_events", filter, "sequence,id", 0, 0, params)
+	if err != nil {
+		return nil, err
+	}
+	byDelivery := map[string][]*core.Record{}
+	for _, event := range events {
+		id := event.GetString("delivery")
+		byDelivery[id] = append(byDelivery[id], event)
+	}
+	return byDelivery, nil
+}
+
 func (s *deliveryService) listDeliveries(c *core.RequestEvent) error {
 	projectID := c.Request.PathValue("projectId")
 	if _, err := s.deliveryManager(c, projectID); err != nil {
@@ -527,9 +542,23 @@ func (s *deliveryService) listDeliveries(c *core.RequestEvent) error {
 	if c.Request.URL.Query().Has("page") || c.Request.URL.Query().Has("perPage") {
 		return s.listPagedDeliveries(c)
 	}
-	records, err := s.app.FindRecordsByFilter("release_deliveries", "project = {:project}", "-created,-id", 0, 0, dbx.Params{"project": projectID})
+	items, metrics, err := buildDeliveryList(s.app, projectID)
 	if err != nil {
 		return err
+	}
+	total := len(items)
+	page, perPage, totalPages := 1, total, 1
+	return c.JSON(200, map[string]any{"items": items, "page": page, "perPage": perPage, "totalItems": total, "totalPages": totalPages, "metrics": metrics, "dependency_gaps": []string{"接收方试导入与双方交接确认", "未保存失败检查次数与全生产线周吞吐"}})
+}
+
+func buildDeliveryList(app recordReader, projectID string) ([]map[string]any, map[string]any, error) {
+	records, err := app.FindRecordsByFilter("release_deliveries", "project = {:project}", "-created,-id", 0, 0, dbx.Params{"project": projectID})
+	if err != nil {
+		return nil, nil, err
+	}
+	byDelivery, err := deliveryEventsByDelivery(app, "delivery.project = {:project}", dbx.Params{"project": projectID})
+	if err != nil {
+		return nil, nil, err
 	}
 	items := []map[string]any{}
 	states := map[string]int{"awaiting_receipt": 0, "success": 0, "partial_conflict": 0, "failed_rolled_back": 0}
@@ -540,15 +569,11 @@ func (s *deliveryService) listDeliveries(c *core.RequestEvent) error {
 	reconciliationStates := map[string]int{"consistent": 0, "inconsistent": 0}
 	rightsCache := map[string]bool{}
 	for _, record := range records {
-		events, err := deliveryEvents(s.app, record.Id)
-		if err != nil {
-			return err
-		}
-		v := deliveryView(record, events)
+		v := deliveryView(record, byDelivery[record.Id])
 		key := record.GetString("source_ref") + "\n" + record.GetString("purpose")
 		blocked, known := rightsCache[key]
 		if !known {
-			blocked = deliveryRights(s.app, record.GetString("source_ref"), record.GetString("purpose")) != nil || deliveryRights(s.app, record.GetString("source_ref"), "raw_third_party_transfer") != nil
+			blocked = deliveryRights(app, record.GetString("source_ref"), record.GetString("purpose")) != nil || deliveryRights(app, record.GetString("source_ref"), "raw_third_party_transfer") != nil
 			rightsCache[key] = blocked
 		}
 		v["rights_blocked"] = blocked
@@ -568,9 +593,8 @@ func (s *deliveryService) listDeliveries(c *core.RequestEvent) error {
 		}
 		items = append(items, v)
 	}
-	total := len(items)
-	page, perPage, totalPages := 1, total, 1
-	return c.JSON(200, map[string]any{"items": items, "page": page, "perPage": perPage, "totalItems": total, "totalPages": totalPages, "metrics": map[string]any{"scope": "generated_packages_only", "reconciliation_scope": "immutable_package_snapshot", "rights_scope": "current_source_permissions", "package_count": total, "receipt_states": states, "awaiting_receipt_packages": awaitingReceipts, "withdrawn_packages": withdrawn, "rights_impacted_packages": rightsImpacted, "pending_consumer_notices": pendingNotices, "reconciliation_states": reconciliationStates}, "dependency_gaps": []string{"接收方试导入与双方交接确认", "未保存失败检查次数与全生产线周吞吐"}})
+	metrics := map[string]any{"scope": "generated_packages_only", "reconciliation_scope": "immutable_package_snapshot", "rights_scope": "current_source_permissions", "package_count": len(items), "receipt_states": states, "awaiting_receipt_packages": awaitingReceipts, "withdrawn_packages": withdrawn, "rights_impacted_packages": rightsImpacted, "pending_consumer_notices": pendingNotices, "reconciliation_states": reconciliationStates}
+	return items, metrics, nil
 }
 
 func (s *deliveryService) loadManagedDelivery(c *core.RequestEvent) (*core.Record, error) {
@@ -764,19 +788,34 @@ func (s *deliveryService) deliveryImpacts(c *core.RequestEvent) error {
 	if ref == "" {
 		return apis.NewBadRequestError("请指定来源 logical_id。", nil)
 	}
-	rows, err := s.app.FindRecordsByFilter("release_deliveries", "project = {:project} && source_ref = {:source}", "version", 0, 0, dbx.Params{"project": projectID, "source": ref})
+	items, err := buildDeliveryImpacts(s.app, projectID, ref)
 	if err != nil {
 		return err
 	}
+	return c.JSON(200, map[string]any{"items": items, "source_ref": ref, "action": "追加停用事件，升级 Steering，并由责任人通知消费方停用；不得改写旧包。"})
+}
+
+func buildDeliveryImpacts(app recordReader, projectID, ref string) ([]map[string]any, error) {
+	rows, err := app.FindRecordsByFilter("release_deliveries", "project = {:project} && source_ref = {:source}", "version", 0, 0, dbx.Params{"project": projectID, "source": ref})
+	if err != nil {
+		return nil, err
+	}
+	byDelivery, err := deliveryEventsByDelivery(app, "delivery.project = {:project} && delivery.source_ref = {:source}", dbx.Params{"project": projectID, "source": ref})
+	if err != nil {
+		return nil, err
+	}
 	items := []map[string]any{}
+	rightsCache := map[string]bool{}
 	for _, row := range rows {
-		events, err := deliveryEvents(s.app, row.Id)
-		if err != nil {
-			return err
+		v := deliveryView(row, byDelivery[row.Id])
+		purpose := row.GetString("purpose")
+		blocked, known := rightsCache[purpose]
+		if !known {
+			blocked = deliveryRights(app, ref, purpose) != nil || deliveryRights(app, ref, "raw_third_party_transfer") != nil
+			rightsCache[purpose] = blocked
 		}
-		v := deliveryView(row, events)
-		v["rights_blocked"] = deliveryRights(s.app, ref, row.GetString("purpose")) != nil || deliveryRights(s.app, ref, "raw_third_party_transfer") != nil
+		v["rights_blocked"] = blocked
 		items = append(items, v)
 	}
-	return c.JSON(200, map[string]any{"items": items, "source_ref": ref, "action": "追加停用事件，升级 Steering，并由责任人通知消费方停用；不得改写旧包。"})
+	return items, nil
 }

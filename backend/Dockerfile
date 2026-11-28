@@ -1,7 +1,7 @@
 FROM golang:1.27.4-alpine AS builder
 
 WORKDIR /src
-COPY go.mod go.sum* ./
+COPY go.mod go.sum ./
 # Bound compiler/test concurrency on shared deployment hosts.
 ENV GOMAXPROCS=1
 ENV GOFLAGS="-p=1"
