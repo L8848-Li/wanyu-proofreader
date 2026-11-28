@@ -18,8 +18,8 @@ RUN NODE_OPTIONS=--max-old-space-size=768 npm run build
 
 FROM nginx:1.31-alpine
 
-# Refresh the inherited libxslt package for CVE-2026-87636 / CVE-2026-9947.
-RUN apk add --no-cache --upgrade 'libxslt>=1.1.43-r4'
+# Refresh inherited XML libraries for CVE-2026-87636, CVE-2026-9947 and CVE-2026-11979.
+RUN apk add --no-cache --upgrade 'libxslt>=1.1.43-r4' 'libxml2>=2.13.9-r5'
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY nginx/pocketbase-admin-disabled.conf /opt/fangji/nginx/pocketbase-admin-disabled.conf
