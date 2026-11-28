@@ -189,6 +189,8 @@ export function useProofreadSubmission({
         noNextTask.value = true
         saved.value = '缺字待登记队列已清空。'
       } else {
+        claimNextFailure.value = true
+        noNextTask.value = false
         console.warn('Failed to retry claim after proofread submit:', claimError)
       }
     } finally {

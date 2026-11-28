@@ -12,6 +12,7 @@ import * as accountSecurity from '../src/lib/accountSecurity.js'
 import * as localAccountData from '../src/lib/localAccountData.js'
 import { adminRouteKey } from '../src/lib/adminRouteKey.js'
 import * as taskDraft from '../src/lib/taskDraft.js'
+import * as taskLeaseLib from '../src/lib/taskLease.js'
 import * as adminPageList from '../src/lib/adminPageList.js'
 import * as normalizationDraft from '../src/lib/normalizationDraft.js'
 
@@ -1188,6 +1189,196 @@ regression(
     await assert.rejects(pending, { name: 'AbortError' })
     assert.equal(store.token, originalToken)
     assert.equal(listeners.size, 0)
+  }
+)
+
+regression(
+  'lease renewal keeps the token through transient network errors and only authoritative rejections mark it lost',
+  async () => {
+    const mount = (renewImpl, visibility = ref('visible')) => {
+      const timeouts = new Map()
+      const intervals = new Map()
+      let nextId = 1
+      const original = globalThis.window
+      globalThis.window = {
+        sessionStorage: memoryStorage(),
+        setInterval: (callback, ms) => {
+          const id = nextId++
+          intervals.set(id, { callback, ms })
+          return id
+        },
+        clearInterval: (id) => {
+          intervals.delete(id)
+        },
+        setTimeout: (callback, ms) => {
+          const id = nextId++
+          timeouts.set(id, { callback, ms })
+          return id
+        },
+        clearTimeout: (id) => {
+          timeouts.delete(id)
+        }
+      }
+      const context = {
+        page: ref({ id: 'page-a', project: 'project-a' }),
+        currentUserId: ref('user-a'),
+        leaseToken: ref('t'.repeat(64)),
+        leaseExpiresAt: ref(''),
+        leaseLost: ref(false),
+        saveError: ref(''),
+        reviewingSubmission: ref(false),
+        renewingLease: ref(false),
+        reclaiming: ref(false),
+        releasing: ref(false),
+        leaseNavigationAllowed: ref(false),
+        verificationPanel: ref(null),
+        flushDraft: () => {},
+        glyphQueueFor: () => false,
+        router: { push: async () => {} },
+        returnTarget: '/tasks',
+        taskEditTarget: (id) => `/tasks/${id}/edit`,
+        captureCase: () => 1,
+        isCurrentCase: () => true
+      }
+      const { useProofreadLease } = evaluate(
+        'composables/proofread/useProofreadLease.js',
+        ['useProofreadLease'],
+        {
+          loadTaskLease: () => ({ token: 't'.repeat(64), expiresAt: '2026-11-23T10:00:00Z' }),
+          saveTaskLease: () => {},
+          clearTaskLease: () => {},
+          renewTaskLease: renewImpl,
+          claimNextProjectPage: async () => {
+            throw new Error('transient renewal failure must not reclaim')
+          },
+          releaseTaskLease: async () => {},
+          isTransientLeaseRenewalError: taskLeaseLib.isTransientLeaseRenewalError,
+          unref: (value) =>
+            value && typeof value === 'object' && 'value' in value ? value.value : value,
+          document: {
+            get visibilityState() {
+              return visibility.value
+            },
+            hasFocus: () => visibility.value === 'visible'
+          }
+        }
+      )
+      const api = useProofreadLease(context)
+      return {
+        api,
+        context,
+        timeouts,
+        intervals,
+        visibility,
+        restore: () => (globalThis.window = original)
+      }
+    }
+    let offline = true
+    let renewCalls = 0
+    const transient = mount(() => {
+      renewCalls++
+      return offline
+        ? Promise.reject({ status: 0, message: 'network down' })
+        : Promise.resolve({ leaseExpiresAt: '2026-11-23T12:00:00Z' })
+    })
+    try {
+      await transient.api.restoreOrAcquireLease()
+      assert.equal(transient.context.leaseLost.value, false, '瞬时网络错误不得判丢租约')
+      assert.equal(transient.context.leaseToken.value, 't'.repeat(64), '瞬时网络错误不得清空令牌')
+      assert.equal(renewCalls, 1)
+      const retries = [...transient.timeouts.entries()].filter(([, t]) => t.ms === 20 * 1000)
+      assert.equal(retries.length, 1, '恢复入口启动常规轮询后，短重试必须仍在')
+      assert.equal(transient.intervals.size, 1, '常规续期轮询应已启动')
+      offline = false
+      const [retryId, retry] = retries[0]
+      transient.timeouts.delete(retryId)
+      retry.callback()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      assert.equal(renewCalls, 2, '20 秒后应确有第二次续期请求')
+      assert.equal(
+        transient.context.leaseExpiresAt.value,
+        '2026-11-23T12:00:00Z',
+        '恢复后续期应成功'
+      )
+    } finally {
+      transient.restore()
+    }
+    let hiddenOffline = true
+    let hiddenRenewCalls = 0
+    const hidden = mount(() => {
+      hiddenRenewCalls++
+      return hiddenOffline
+        ? Promise.reject({ status: 0, message: 'network down' })
+        : Promise.resolve({ leaseExpiresAt: '2026-11-23T12:00:00Z' })
+    })
+    try {
+      await hidden.api.restoreOrAcquireLease()
+      const [retryId, retry] = [...hidden.timeouts.entries()].find(([, t]) => t.ms === 20 * 1000)
+      hidden.visibility.value = 'hidden'
+      hidden.timeouts.delete(retryId)
+      retry.callback()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      assert.equal(hiddenRenewCalls, 1, '后台短重试不得绕过可见性/焦点检查')
+      hiddenOffline = false
+      hidden.visibility.value = 'visible'
+      hidden.api.handleLeaseActivation()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      assert.equal(hiddenRenewCalls, 2, '回到前台激活时应续期')
+      assert.equal(hidden.context.leaseExpiresAt.value, '2026-11-23T12:00:00Z')
+    } finally {
+      hidden.restore()
+    }
+    const rejected = mount(() => Promise.reject({ status: 409, message: '租约已被重新领取' }))
+    try {
+      await rejected.api.restoreOrAcquireLease()
+      assert.equal(rejected.context.leaseLost.value, true, '服务端权威拒绝仍应判丢')
+      assert.equal(rejected.context.leaseToken.value, '')
+    } finally {
+      rejected.restore()
+    }
+  }
+)
+
+regression(
+  'retrying the next claim after a submit surfaces a visible failure instead of only logging',
+  async () => {
+    const claimNextFailure = ref(false)
+    const noNextTask = ref(true)
+    const retryingClaim = ref(false)
+    const { useProofreadSubmission } = evaluate(
+      'composables/proofread/useProofreadSubmission.js',
+      ['useProofreadSubmission'],
+      {
+        claimNextProjectPage: async () => {
+          throw { status: 500, message: 'server hiccup' }
+        },
+        getPbStatus: (error) => error?.status || error?.response?.status || null,
+        console: { warn: () => {} }
+      }
+    )
+    const api = useProofreadSubmission({
+      retryingClaim,
+      page: ref({ id: 'page-a', project: 'project-a' }),
+      currentUserId: ref('user-a'),
+      claimNextFailure,
+      noNextTask,
+      saved: ref(''),
+      leaseNavigationAllowed: ref(false),
+      router: { push: async () => {} },
+      taskEditTarget: (id) => `/tasks/${id}/edit`,
+      captureCase: () => 1,
+      isCurrentCase: () => true,
+      glyphQueueFor: () => false,
+      clearGlyphQueue: () => {},
+      saveClaimedLease: () => true
+    })
+    await api.retryClaimNext()
+    assert.equal(claimNextFailure.value, true, '重试领取失败必须置可见失败状态')
+    assert.equal(noNextTask.value, false)
+    assert.equal(retryingClaim.value, false)
   }
 )
 

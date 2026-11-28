@@ -25,7 +25,8 @@ def birth_identity(pid):
     if platform.system() == 'Linux':
         try:
             raw = Path(f'/proc/{pid}/stat').read_text()
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
+            # procfs can return ESRCH if the task is reaped after opening stat.
             return None
         fields = raw[raw.rindex(')')+2:].split()
         return None if fields[0] == 'Z' else 'linux:' + fields[19]

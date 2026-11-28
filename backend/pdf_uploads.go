@@ -444,23 +444,37 @@ func (s *importService) completePDFUpload(c *core.RequestEvent, p *pdfUploadPool
 	if err := s.authorizePDFUpload(c); err != nil {
 		return err
 	}
+	record, fresh, err := s.finishPDFUpload(c, p)
+	if err != nil {
+		return err
+	}
+	if fresh {
+		// 入队是有意背压（见 import_queue.go），队列满时可能等很久；
+		// 绝不能持 p.mu 等，否则所有用户的上传/取消/查询都被同一把锁挡死。
+		s.enqueue(importWork{kind: "pdf", id: record.Id, requestID: newRequestID()})
+		return c.JSON(202, record)
+	}
+	return c.JSON(200, record)
+}
+
+func (s *importService) finishPDFUpload(c *core.RequestEvent, p *pdfUploadPool) (*core.Record, bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	u, err := p.session(c)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	if u.recordID != "" {
 		record, err := s.app.FindRecordById("project_files", u.recordID)
 		if err != nil {
-			return apis.NewNotFoundError("已上传文件不存在。", nil)
+			return nil, false, apis.NewNotFoundError("已上传文件不存在。", nil)
 		}
 		u.touched = time.Now()
 		_ = u.persist()
-		return c.JSON(200, record)
+		return record, false, nil
 	}
 	if len(u.hashes) != int((u.size+pdfChunkBytes-1)/pdfChunkBytes) {
-		return apis.NewApiError(409, "分片尚未上传完整。", nil)
+		return nil, false, apis.NewApiError(409, "分片尚未上传完整。", nil)
 	}
 	completeID := pdfCompleteRecordID(u.id)
 	if existing, err := s.app.FindRecordById("project_files", completeID); err == nil {
@@ -468,21 +482,21 @@ func (s *importService) completePDFUpload(c *core.RequestEvent, p *pdfUploadPool
 		u.touched = time.Now()
 		u.released = removeUploadParts(u.dir)
 		_ = u.persist()
-		return c.JSON(200, existing)
+		return existing, false, nil
 	}
 	assembled := filepath.Join(u.dir, "assembled.pdf")
 	hash, err := assemblePDFUpload(u, assembled)
 	if err != nil {
 		_ = os.Remove(assembled)
-		return apis.NewBadRequestError("分片校验或合并失败，请重新上传。", nil)
+		return nil, false, apis.NewBadRequestError("分片校验或合并失败，请重新上传。", nil)
 	}
 	defer os.Remove(assembled)
 	if hash != u.contentHash {
-		return apis.NewBadRequestError("文件内容与声明的身份不一致，请重新选择原 PDF。", nil)
+		return nil, false, apis.NewBadRequestError("文件内容与声明的身份不一致，请重新选择原 PDF。", nil)
 	}
 	file, err := filesystem.NewFileFromPath(assembled)
 	if err != nil {
-		return apis.NewApiError(500, "读取合并文件失败。", nil)
+		return nil, false, apis.NewApiError(500, "读取合并文件失败。", nil)
 	}
 	record, err := s.saveUploadedPDF(u.project, u.name, u.size, hash, file, completeID)
 	if err != nil {
@@ -491,15 +505,15 @@ func (s *importService) completePDFUpload(c *core.RequestEvent, p *pdfUploadPool
 			u.touched = time.Now()
 			u.released = removeUploadParts(u.dir)
 			_ = u.persist()
-			return c.JSON(200, existing)
+			return existing, false, nil
 		}
-		return err
+		return nil, false, err
 	}
 	u.recordID = record.Id
 	u.touched = time.Now()
 	u.released = removeUploadParts(u.dir)
 	_ = u.persist()
-	return c.JSON(202, record)
+	return record, true, nil
 }
 
 func assemblePDFUpload(u *pdfUploadSession, dest string) (string, error) {
@@ -573,6 +587,5 @@ func (s *importService) saveUploadedPDF(projectID, name string, size int64, hash
 	if err := form.Submit(); err != nil {
 		return nil, apis.NewBadRequestError("保存 PDF 失败。", err)
 	}
-	s.enqueue(importWork{kind: "pdf", id: record.Id, requestID: newRequestID()})
 	return record, nil
 }

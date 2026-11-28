@@ -261,6 +261,9 @@ func (s *importService) recoverPendingWork() {
 }
 
 func (s *importService) markFatal(work importWork, code, message string, cause error) {
+	s.mu.Lock()
+	delete(s.errorCounts, work.id)
+	s.mu.Unlock()
 	// 集合从 workRoutes 读，与 runWorker 的分派同一份事实（见 workRoutes 的注释）。
 	// conversion 那一格是空串：它的记录在 conversion_jobs，形状与 import_jobs 不同
 	// （有自己的 finished_at 与错误列语义），整支交给它自己的收尾函数。
