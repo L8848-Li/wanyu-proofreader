@@ -1380,3 +1380,67 @@ regression(
     assert.equal(retryingClaim.value, false)
   }
 )
+
+regression(
+  'registration redirect timer is cancelled when leaving the view and still fires when staying',
+  async () => {
+    const mount = (register = async () => {}) => {
+      const timers = new Map()
+      const pushes = []
+      const unmounts = []
+      let nextId = 1
+      const api = evaluate(
+        'views/RegisterView.vue',
+        ['handleRegister', 'success', 'name', 'password', 'passwordConfirm'],
+        {
+          onUnmounted: (callback) => unmounts.push(callback),
+          useRouter: () => ({
+            push: (location) => {
+              pushes.push(location)
+              return Promise.resolve()
+            }
+          }),
+          useRoute: () => ({ query: {} }),
+          useAuthStore: () => ({ register }),
+          checkNicknameAvailable: async () => ({ available: true }),
+          authPageLocation: (path) => ({ path }),
+          setTimeout: (callback) => {
+            const id = nextId++
+            timers.set(id, callback)
+            return id
+          },
+          clearTimeout: (id) => {
+            timers.delete(id)
+          }
+        }
+      )
+      api.name.value = 'synthetic-volunteer'
+      api.password.value = api.passwordConfirm.value = 'SyntheticPassword123!'
+      return { api, timers, pushes, unmounts }
+    }
+    const leaving = mount()
+    await leaving.api.handleRegister()
+    assert.equal(leaving.api.success.value, true)
+    assert.equal(leaving.timers.size, 1)
+    leaving.unmounts.forEach((callback) => callback())
+    assert.equal(leaving.timers.size, 0, '卸载时必须清掉跳转定时器')
+    leaving.timers.forEach((callback) => callback())
+    assert.equal(leaving.pushes.length, 0, '离开注册页后不得再被拉回登录页')
+    const staying = mount()
+    await staying.api.handleRegister()
+    staying.timers.forEach((callback) => callback())
+    assert.deepEqual(staying.pushes, [{ path: '/login' }])
+
+    const waiting = deferred()
+    const pendingView = mount(() => waiting.promise)
+    const pending = pendingView.api.handleRegister()
+    await Promise.resolve()
+    await Promise.resolve()
+    pendingView.unmounts.forEach((callback) => callback())
+    waiting.resolve()
+    await pending
+    assert.equal(pendingView.api.success.value, false, '卸载后完成的注册请求不得发布成功状态')
+    assert.equal(pendingView.timers.size, 0, '卸载后完成的注册请求不得再建定时器')
+    assert.equal(pendingView.pushes.length, 0, '请求中离开后完成不得二次导航')
+  }
+)
